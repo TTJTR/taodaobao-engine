@@ -31,3 +31,7 @@ build/
 /淘到宝引擎V0.5_后端与AI_Harness需求文档.md
 /docs/开发文档.md
 /docs/Molly_GitHub协作说明.md
+
+# Local PostgreSQL runtime and credentials
+/.local/
+/.env

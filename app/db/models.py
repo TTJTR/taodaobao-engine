@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -95,7 +96,7 @@ class EntityMixin:
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
     is_deleted: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default="false", index=True
+        Boolean, nullable=False, default=False, server_default=text("false"), index=True
     )
 
 
@@ -175,7 +176,7 @@ class Source(EntityMixin, WorkspaceMixin, Base):
         enum_column(SourceStatus, "source_status"), nullable=False, default=SourceStatus.PENDING
     )
     is_demo: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default="false"
+        Boolean, nullable=False, default=False, server_default=text("false")
     )
 
     customer_profile: Mapped[CustomerProfile | None] = relationship(back_populates="sources")
@@ -311,7 +312,7 @@ class SolutionRun(EntityMixin, WorkspaceMixin, Base):
     )
     error_code: Mapped[str | None] = mapped_column(String(64))
     retryable: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default="false"
+        Boolean, nullable=False, default=False, server_default=text("false")
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
