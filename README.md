@@ -39,8 +39,3 @@ uvicorn main:app --reload
 
 Swagger UI is available at `http://127.0.0.1:8000/docs` and the health endpoint
 at `http://127.0.0.1:8000/api/v1/health`.
-
-## Development documentation
-
-All implementation steps, contract changes, verification results, and known gaps must be
-recorded in [`docs/开发文档.md`](docs/开发文档.md) before a Git commit or pull request.
