@@ -1,0 +1,1211 @@
+openapi: 3.1.0
+info:
+  title: 淘到宝引擎 API
+  version: 0.5.0
+  description: |
+    淘到宝引擎 V0.5 P0 服务端契约。所有业务接口使用安全 Cookie 登录态；
+    所有 POST/PATCH 写请求必须携带 Idempotency-Key，并在同一用户和工作空间内保持 24 小时幂等。
+servers:
+  - url: /api/v1
+    description: Same-origin API
+tags:
+  - name: Auth
+  - name: Sources
+  - name: Jobs
+  - name: Profiles
+  - name: Experiences
+  - name: Capabilities
+  - name: Sessions
+  - name: Solutions
+  - name: Operations
+
+paths:
+  /auth/feishu/start:
+    get:
+      tags: [Auth]
+      operationId: startFeishuAuthorization
+      summary: 获取飞书授权地址
+      security: []
+      responses:
+        '200':
+          description: 授权地址与防伪 state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthStartResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /auth/feishu/callback:
+    get:
+      tags: [Auth]
+      operationId: handleFeishuCallback
+      summary: 处理飞书 OAuth 回调并建立登录态
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '302':
+          description: 登录成功并跳转至前端工作台
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /me:
+    get:
+      tags: [Auth]
+      operationId: getCurrentUser
+      summary: 获取当前用户与工作空间
+      responses:
+        '200':
+          description: 当前用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: 退出登录
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          $ref: '#/components/responses/MutationAccepted'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /sources/import-link:
+    post:
+      tags: [Sources]
+      operationId: importSourceLink
+      summary: 通过飞书文档链接导入资料
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportLinkRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /sources/import-text:
+    post:
+      tags: [Sources]
+      operationId: importSourceText
+      summary: 导入普通文本、聊天记录或妙记转写
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportTextRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /sources:
+    get:
+      tags: [Sources]
+      operationId: listSources
+      summary: 查询资料列表
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Keyword'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/SourceStatus'
+      responses:
+        '200':
+          description: 资料分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /sources/{source_id}:
+    parameters:
+      - $ref: '#/components/parameters/SourceId'
+    get:
+      tags: [Sources]
+      operationId: getSource
+      summary: 查询资料详情与处理状态
+      responses:
+        '200':
+          description: 资料详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [Sources]
+      operationId: updateSource
+      summary: 修改资料用途、标题或标签
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSourceRequest'
+      responses:
+        '200':
+          description: 更新后的资料
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /sources/{source_id}/refresh:
+    post:
+      tags: [Sources]
+      operationId: refreshSource
+      summary: 手动刷新飞书来源
+      parameters:
+        - $ref: '#/components/parameters/SourceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /sources/{source_id}/retry:
+    post:
+      tags: [Sources]
+      operationId: retrySource
+      summary: 重试失败的资料处理任务
+      parameters:
+        - $ref: '#/components/parameters/SourceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /jobs/{job_id}:
+    get:
+      tags: [Jobs]
+      operationId: getJob
+      summary: 查询异步任务状态
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: 任务状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /customer-profiles:
+    post:
+      tags: [Profiles]
+      operationId: createCustomerProfile
+      summary: 创建客户与空画像
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProfileRequest'
+      responses:
+        '201':
+          description: 已创建画像
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    get:
+      tags: [Profiles]
+      operationId: listCustomerProfiles
+      summary: 查询客户画像列表
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Keyword'
+      responses:
+        '200':
+          description: 画像分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /customer-profiles/{profile_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProfileId'
+    get:
+      tags: [Profiles]
+      operationId: getCustomerProfile
+      summary: 查询画像详情
+      responses:
+        '200':
+          description: 画像详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [Profiles]
+      operationId: updateCustomerProfile
+      summary: 修改画像
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: 更新后的画像
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /customer-profiles/{profile_id}/generate:
+    post:
+      tags: [Profiles]
+      operationId: generateCustomerProfile
+      summary: 根据资料和文本生成画像草稿
+      parameters:
+        - $ref: '#/components/parameters/ProfileId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateProfileRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /customer-profiles/{profile_id}/confirm:
+    post:
+      tags: [Profiles]
+      operationId: confirmCustomerProfile
+      summary: 确认当前画像
+      parameters:
+        - $ref: '#/components/parameters/ProfileId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          $ref: '#/components/responses/MutationAccepted'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /experiences:
+    get:
+      tags: [Experiences]
+      operationId: listExperiences
+      summary: 查询经验资产
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Keyword'
+        - $ref: '#/components/parameters/ReviewStatusQuery'
+      responses:
+        '200':
+          description: 经验分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExperienceListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /experiences/{experience_id}:
+    parameters:
+      - $ref: '#/components/parameters/ExperienceId'
+    get:
+      tags: [Experiences]
+      operationId: getExperience
+      summary: 查询经验详情与来源
+      responses:
+        '200':
+          description: 经验详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExperienceResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [Experiences]
+      operationId: updateExperience
+      summary: 修改经验字段
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExperienceData'
+      responses:
+        '200':
+          description: 更新后的经验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExperienceResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /experiences/{experience_id}/review:
+    post:
+      tags: [Experiences]
+      operationId: reviewExperience
+      summary: 通过或打回经验
+      parameters:
+        - $ref: '#/components/parameters/ExperienceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+      responses:
+        '200':
+          description: 审核后的经验
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExperienceResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /capabilities:
+    get:
+      tags: [Capabilities]
+      operationId: listCapabilities
+      summary: 查询原子能力
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Keyword'
+        - $ref: '#/components/parameters/ReviewStatusQuery'
+      responses:
+        '200':
+          description: 能力分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /capabilities/{capability_id}:
+    parameters:
+      - $ref: '#/components/parameters/CapabilityId'
+    get:
+      tags: [Capabilities]
+      operationId: getCapability
+      summary: 查询能力详情与来源
+      responses:
+        '200':
+          description: 能力详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [Capabilities]
+      operationId: updateCapability
+      summary: 修改能力字段
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CapabilityData'
+      responses:
+        '200':
+          description: 更新后的能力
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /capabilities/{capability_id}/review:
+    post:
+      tags: [Capabilities]
+      operationId: reviewCapability
+      summary: 通过或打回能力
+      parameters:
+        - $ref: '#/components/parameters/CapabilityId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+      responses:
+        '200':
+          description: 审核后的能力
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /sessions:
+    post:
+      tags: [Sessions]
+      operationId: createSession
+      summary: 创建客户会话
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: 已创建会话
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    get:
+      tags: [Sessions]
+      operationId: listSessions
+      summary: 查询会话列表
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: profile_id
+          in: query
+          schema: { $ref: '#/components/schemas/BusinessId' }
+      responses:
+        '200':
+          description: 会话分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /sessions/{session_id}:
+    get:
+      tags: [Sessions]
+      operationId: getSession
+      summary: 恢复会话与消息
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: 会话及消息
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDetailResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /sessions/{session_id}/turns:
+    post:
+      tags: [Sessions, Solutions]
+      operationId: createSessionTurn
+      summary: 提交一轮需求或追问并启动快速方案任务
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTurnRequest'
+      responses:
+        '202':
+          description: 方案任务已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolutionAcceptedResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /solution-runs/{run_id}:
+    get:
+      tags: [Solutions]
+      operationId: getSolutionRun
+      summary: 轮询生成状态并获取结构化结果
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: 方案运行状态及结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolutionRunResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /health:
+    get:
+      tags: [Operations]
+      operationId: healthCheck
+      summary: 服务健康检查
+      security: []
+      responses:
+        '200':
+          description: 服务和必要依赖状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: taodaobao_session
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 写请求幂等键；同一用户和工作空间内有效 24 小时。
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: page_size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Keyword:
+      name: keyword
+      in: query
+      schema: { type: string, maxLength: 200 }
+    ReviewStatusQuery:
+      name: review_status
+      in: query
+      schema:
+        $ref: '#/components/schemas/ReviewStatus'
+    SourceId: { name: source_id, in: path, required: true, schema: { $ref: '#/components/schemas/BusinessId' } }
+    JobId: { name: job_id, in: path, required: true, schema: { $ref: '#/components/schemas/BusinessId' } }
+    ProfileId: { name: profile_id, in: path, required: true, schema: { $ref: '#/components/schemas/BusinessId' } }
+    ExperienceId: { name: experience_id, in: path, required: true, schema: { $ref: '#/components/schemas/BusinessId' } }
+    CapabilityId: { name: capability_id, in: path, required: true, schema: { $ref: '#/components/schemas/BusinessId' } }
+    SessionId: { name: session_id, in: path, required: true, schema: { $ref: '#/components/schemas/BusinessId' } }
+    RunId: { name: run_id, in: path, required: true, schema: { $ref: '#/components/schemas/BusinessId' } }
+
+  responses:
+    ErrorResponse:
+      description: 统一错误响应
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    JobAccepted:
+      description: 后台任务已接受
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/JobAcceptedResponse'
+    MutationAccepted:
+      description: 写操作成功
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MutationResponse'
+
+  schemas:
+    RequestId:
+      type: string
+      examples: [req_01JXYZ]
+    BusinessId:
+      type: string
+      format: uuid
+    Timestamp:
+      type: string
+      format: date-time
+    ErrorCode:
+      type: string
+      enum:
+        - AUTH_REQUIRED
+        - INVITE_CODE_INVALID
+        - FEISHU_AUTH_EXPIRED
+        - FEISHU_PERMISSION_DENIED
+        - SOURCE_NOT_FOUND
+        - SOURCE_TYPE_UNSUPPORTED
+        - SOURCE_TEMPORARILY_UNAVAILABLE
+        - CONTENT_EMPTY
+        - VALIDATION_FAILED
+        - IDEMPOTENCY_KEY_CONFLICT
+        - MODEL_TEMPORARILY_UNAVAILABLE
+        - JOB_FAILED
+        - RATE_LIMITED
+        - INTERNAL_ERROR
+    ErrorDetail:
+      type: object
+      required: [code, message, retryable, details]
+      properties:
+        code: { $ref: '#/components/schemas/ErrorCode' }
+        message: { type: string }
+        retryable: { type: boolean }
+        details: { type: object, additionalProperties: true }
+    ErrorEnvelope:
+      type: object
+      required: [request_id, error]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        error: { $ref: '#/components/schemas/ErrorDetail' }
+    MutationResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          type: object
+          required: [success]
+          properties:
+            success: { type: boolean, const: true }
+    AuthStartResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          type: object
+          required: [authorization_url, state]
+          properties:
+            authorization_url: { type: string, format: uri }
+            state: { type: string }
+    MeResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          type: object
+          required: [id, name, workspace_id]
+          properties:
+            id: { $ref: '#/components/schemas/BusinessId' }
+            name: { type: string }
+            avatar: { type: [string, 'null'], format: uri }
+            workspace_id: { $ref: '#/components/schemas/BusinessId' }
+    SourcePurpose:
+      type: string
+      enum: [customer_profile, experience, capability]
+    ContentType:
+      type: string
+      enum: [plain_text, chat_record, meeting_transcript]
+    SourceStatus:
+      type: string
+      enum: [pending, fetching, parsing, extracting, pending_review, completed, failed]
+    JobStatus:
+      type: string
+      enum: [pending, running, completed, failed]
+    ReviewStatus:
+      type: string
+      enum: [pending_review, verified, rejected, source_updated]
+    ProfileStatus:
+      type: string
+      enum: [pending_confirmation, confirmed]
+    RunStatus:
+      type: string
+      enum: [pending, running, completed, failed]
+    ImportLinkRequest:
+      type: object
+      required: [url, purpose]
+      properties:
+        url: { type: string, format: uri }
+        purpose: { $ref: '#/components/schemas/SourcePurpose' }
+        customer_profile_id:
+          anyOf:
+            - $ref: '#/components/schemas/BusinessId'
+            - type: 'null'
+    ImportTextRequest:
+      type: object
+      required: [title, content, content_type, purpose]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        content: { type: string, minLength: 1, maxLength: 50000 }
+        content_type: { $ref: '#/components/schemas/ContentType' }
+        purpose: { $ref: '#/components/schemas/SourcePurpose' }
+        customer_profile_id:
+          anyOf:
+            - $ref: '#/components/schemas/BusinessId'
+            - type: 'null'
+    UpdateSourceRequest:
+      type: object
+      minProperties: 1
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        purpose: { $ref: '#/components/schemas/SourcePurpose' }
+        tags:
+          type: array
+          maxItems: 20
+          items: { type: string, maxLength: 50 }
+    Source:
+      type: object
+      required: [id, customer_profile_id, type, purpose, title, status, tags, is_demo, created_at, updated_at, is_deleted]
+      properties:
+        id: { $ref: '#/components/schemas/BusinessId' }
+        customer_profile_id:
+          anyOf:
+            - $ref: '#/components/schemas/BusinessId'
+            - type: 'null'
+        type: { type: string, enum: [feishu_doc, pasted_text] }
+        purpose: { $ref: '#/components/schemas/SourcePurpose' }
+        title: { type: string }
+        content: { type: [string, 'null'] }
+        source_url: { type: [string, 'null'], format: uri }
+        author: { type: [string, 'null'] }
+        source_updated_at: { anyOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }
+        synced_at: { anyOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }
+        tags: { type: array, items: { type: string } }
+        status: { $ref: '#/components/schemas/SourceStatus' }
+        is_demo: { type: boolean }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+        is_deleted: { type: boolean }
+    SourceResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data: { $ref: '#/components/schemas/Source' }
+    SourceListResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          type: object
+          required: [items, page, page_size, total, has_more]
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/Source' } }
+            page: { type: integer, minimum: 1 }
+            page_size: { type: integer, minimum: 1 }
+            total: { type: integer, minimum: 0 }
+            has_more: { type: boolean }
+    JobAcceptedResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          type: object
+          required: [job_id, target_id, status, poll_after_ms]
+          properties:
+            job_id: { $ref: '#/components/schemas/BusinessId' }
+            target_id: { $ref: '#/components/schemas/BusinessId' }
+            status: { $ref: '#/components/schemas/JobStatus' }
+            poll_after_ms: { type: integer, minimum: 100, default: 1000 }
+    Job:
+      type: object
+      required: [id, type, target_id, status, stage, retry_count, created_at, updated_at, is_deleted]
+      properties:
+        id: { $ref: '#/components/schemas/BusinessId' }
+        type: { type: string, enum: [source_processing, profile_generation] }
+        target_id: { $ref: '#/components/schemas/BusinessId' }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        stage: { type: string }
+        error_code: { anyOf: [{ $ref: '#/components/schemas/ErrorCode' }, { type: 'null' }] }
+        error_summary: { type: [string, 'null'] }
+        retry_count: { type: integer, minimum: 0 }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+        is_deleted: { type: boolean }
+        finished_at: { anyOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }
+    JobResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data: { $ref: '#/components/schemas/Job' }
+    CustomerProfileData:
+      type: object
+      properties:
+        industry: { type: [string, 'null'] }
+        background: { type: [string, 'null'] }
+        current_problem: { type: [string, 'null'] }
+        goals: { type: array, items: { type: string } }
+        constraints: { type: array, items: { type: string } }
+        existing_systems: { type: array, items: { type: string } }
+        information_gaps: { type: array, items: { type: string } }
+    CustomerProfile:
+      type: object
+      required: [id, customer_name, profile, source_ids, status, created_at, updated_at, is_deleted]
+      properties:
+        id: { $ref: '#/components/schemas/BusinessId' }
+        customer_name: { type: string }
+        profile: { $ref: '#/components/schemas/CustomerProfileData' }
+        source_ids: { type: array, items: { $ref: '#/components/schemas/BusinessId' } }
+        status: { $ref: '#/components/schemas/ProfileStatus' }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+        is_deleted: { type: boolean }
+    CreateProfileRequest:
+      type: object
+      required: [customer_name]
+      properties:
+        customer_name: { type: string, minLength: 1, maxLength: 200 }
+    GenerateProfileRequest:
+      type: object
+      properties:
+        source_ids: { type: array, items: { $ref: '#/components/schemas/BusinessId' }, maxItems: 20 }
+        supplemental_text: { type: [string, 'null'], maxLength: 20000 }
+    UpdateProfileRequest:
+      type: object
+      required: [profile]
+      properties:
+        customer_name: { type: string, minLength: 1, maxLength: 200 }
+        profile: { $ref: '#/components/schemas/CustomerProfileData' }
+        source_ids: { type: array, items: { $ref: '#/components/schemas/BusinessId' }, maxItems: 20 }
+    ProfileResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data: { $ref: '#/components/schemas/CustomerProfile' }
+    ProfileListResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          type: object
+          required: [items, page, page_size, total, has_more]
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/CustomerProfile' } }
+            page: { type: integer, minimum: 1 }
+            page_size: { type: integer, minimum: 1 }
+            total: { type: integer, minimum: 0 }
+            has_more: { type: boolean }
+    ExperienceData:
+      type: object
+      required: [name, applicable_problem, solution]
+      properties:
+        name: { type: string }
+        applicable_problem: { type: string }
+        solution: { type: string }
+        prerequisites: { type: array, items: { type: string } }
+        result: { type: [string, 'null'] }
+        risks: { type: array, items: { type: string } }
+        follow_up_foundation: { type: [string, 'null'] }
+        applicable_conditions: { type: array, items: { type: string } }
+        tags: { type: array, items: { type: string } }
+    Experience:
+      type: object
+      required: [id, source_id, data, review_status, created_at, updated_at, is_deleted]
+      properties:
+        id: { $ref: '#/components/schemas/BusinessId' }
+        source_id: { $ref: '#/components/schemas/BusinessId' }
+        data: { $ref: '#/components/schemas/ExperienceData' }
+        review_status: { $ref: '#/components/schemas/ReviewStatus' }
+        review_note: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+        is_deleted: { type: boolean }
+    ExperienceResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data: { $ref: '#/components/schemas/Experience' }
+    ExperienceListResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          type: object
+          required: [items, page, page_size, total, has_more]
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/Experience' } }
+            page: { type: integer, minimum: 1 }
+            page_size: { type: integer, minimum: 1 }
+            total: { type: integer, minimum: 0 }
+            has_more: { type: boolean }
+    CapabilityData:
+      type: object
+      required: [name, description, inputs, outputs, limitations]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        inputs: { type: array, minItems: 1, items: { type: string } }
+        outputs: { type: array, minItems: 1, items: { type: string } }
+        prerequisites: { type: array, items: { type: string } }
+        limitations: { type: array, minItems: 1, items: { type: string } }
+        tags: { type: array, items: { type: string } }
+    Capability:
+      type: object
+      required: [id, source_id, data, review_status, created_at, updated_at, is_deleted]
+      properties:
+        id: { $ref: '#/components/schemas/BusinessId' }
+        source_id: { $ref: '#/components/schemas/BusinessId' }
+        data: { $ref: '#/components/schemas/CapabilityData' }
+        review_status: { $ref: '#/components/schemas/ReviewStatus' }
+        review_note: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+        is_deleted: { type: boolean }
+    CapabilityResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data: { $ref: '#/components/schemas/Capability' }
+    CapabilityListResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          type: object
+          required: [items, page, page_size, total, has_more]
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/Capability' } }
+            page: { type: integer, minimum: 1 }
+            page_size: { type: integer, minimum: 1 }
+            total: { type: integer, minimum: 0 }
+            has_more: { type: boolean }
+    ReviewRequest:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [approve, reject, reopen] }
+        note: { type: [string, 'null'], maxLength: 1000 }
+    CreateSessionRequest:
+      type: object
+      required: [customer_profile_id]
+      properties:
+        customer_profile_id: { $ref: '#/components/schemas/BusinessId' }
+        title: { type: [string, 'null'], maxLength: 200 }
+    Session:
+      type: object
+      required: [id, customer_profile_id, title, created_at, updated_at, is_deleted]
+      properties:
+        id: { $ref: '#/components/schemas/BusinessId' }
+        customer_profile_id: { $ref: '#/components/schemas/BusinessId' }
+        title: { type: string }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+        is_deleted: { type: boolean }
+    Message:
+      type: object
+      required: [id, solution_run_id, role, content, sequence, created_at, updated_at, is_deleted]
+      properties:
+        id: { $ref: '#/components/schemas/BusinessId' }
+        solution_run_id:
+          anyOf:
+            - $ref: '#/components/schemas/BusinessId'
+            - type: 'null'
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        sequence: { type: integer, minimum: 1 }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+        is_deleted: { type: boolean }
+    SessionResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data: { $ref: '#/components/schemas/Session' }
+    SessionDetailResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          allOf:
+            - $ref: '#/components/schemas/Session'
+            - type: object
+              required: [messages]
+              properties:
+                messages: { type: array, items: { $ref: '#/components/schemas/Message' } }
+    SessionListResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          type: object
+          required: [items, page, page_size, total, has_more]
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/Session' } }
+            page: { type: integer, minimum: 1 }
+            page_size: { type: integer, minimum: 1 }
+            total: { type: integer, minimum: 0 }
+            has_more: { type: boolean }
+    CreateTurnRequest:
+      type: object
+      required: [content, mode]
+      properties:
+        content: { type: string, minLength: 1, maxLength: 10000 }
+        mode: { type: string, const: quick }
+    SolutionAcceptedResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          type: object
+          required: [run_id, message_id, status, poll_after_ms]
+          properties:
+            run_id: { $ref: '#/components/schemas/BusinessId' }
+            message_id: { $ref: '#/components/schemas/BusinessId' }
+            status: { $ref: '#/components/schemas/RunStatus' }
+            poll_after_ms: { type: integer, minimum: 100, default: 1000 }
+    EvidenceBoundary:
+      type: string
+      enum: [historical_fact, enterprise_capability, ai_inference, pending_confirmation]
+    CitedItem:
+      type: object
+      required: [text, boundary]
+      properties:
+        text: { type: string }
+        boundary: { $ref: '#/components/schemas/EvidenceBoundary' }
+        asset_id:
+          anyOf:
+            - $ref: '#/components/schemas/BusinessId'
+            - type: 'null'
+        source_id:
+          anyOf:
+            - $ref: '#/components/schemas/BusinessId'
+            - type: 'null'
+    Solution:
+      type: object
+      required:
+        - requirement_understanding
+        - initial_recommendations
+        - historical_evidence
+        - capability_composition
+        - prerequisites_and_risks
+        - pending_confirmations
+        - sources
+        - suggested_questions
+      properties:
+        requirement_understanding: { type: array, items: { $ref: '#/components/schemas/CitedItem' } }
+        initial_recommendations: { type: array, items: { $ref: '#/components/schemas/CitedItem' } }
+        historical_evidence: { type: array, items: { $ref: '#/components/schemas/CitedItem' } }
+        capability_composition: { type: array, items: { $ref: '#/components/schemas/CitedItem' } }
+        prerequisites_and_risks: { type: array, items: { $ref: '#/components/schemas/CitedItem' } }
+        pending_confirmations: { type: array, items: { $ref: '#/components/schemas/CitedItem' } }
+        sources: { type: array, items: { type: object, additionalProperties: true } }
+        suggested_questions: { type: array, items: { type: string }, maxItems: 5 }
+    RetrievalSnapshot:
+      type: object
+      required: [experiences, capabilities, created_at]
+      description: 独立历史快照；资产软删除后仍可完整展示。
+      properties:
+        experiences: { type: array, maxItems: 3, items: { type: object, additionalProperties: true } }
+        capabilities: { type: array, maxItems: 5, items: { type: object, additionalProperties: true } }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+    SolutionRun:
+      type: object
+      required: [id, session_id, request_message_id, status, created_at, updated_at, is_deleted]
+      properties:
+        id: { $ref: '#/components/schemas/BusinessId' }
+        session_id: { $ref: '#/components/schemas/BusinessId' }
+        request_message_id: { $ref: '#/components/schemas/BusinessId' }
+        status: { $ref: '#/components/schemas/RunStatus' }
+        retrieval_snapshot: { anyOf: [{ $ref: '#/components/schemas/RetrievalSnapshot' }, { type: 'null' }] }
+        result: { anyOf: [{ $ref: '#/components/schemas/Solution' }, { type: 'null' }] }
+        error_code: { anyOf: [{ $ref: '#/components/schemas/ErrorCode' }, { type: 'null' }] }
+        retryable: { type: boolean, default: false }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+        is_deleted: { type: boolean }
+        completed_at: { anyOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }
+    SolutionRunResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data: { $ref: '#/components/schemas/SolutionRun' }
+    HealthResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          type: object
+          required: [status, service, database, ai, ai_mode]
+          properties:
+            status: { type: string, enum: [ok, degraded] }
+            service: { type: string, enum: [ok] }
+            database: { type: string, enum: [ok, unavailable, not_configured] }
+            ai: { type: string, enum: [ok, unavailable, mock, not_configured] }
+            ai_mode: { type: string, enum: [mock, live] }
+
+security:
+  - sessionCookie: []

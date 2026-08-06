@@ -1,0 +1,37 @@
+from enum import StrEnum
+from typing import Any
+
+
+class ErrorCode(StrEnum):
+    AUTH_REQUIRED = "AUTH_REQUIRED"
+    INVITE_CODE_INVALID = "INVITE_CODE_INVALID"
+    FEISHU_AUTH_EXPIRED = "FEISHU_AUTH_EXPIRED"
+    FEISHU_PERMISSION_DENIED = "FEISHU_PERMISSION_DENIED"
+    SOURCE_NOT_FOUND = "SOURCE_NOT_FOUND"
+    SOURCE_TYPE_UNSUPPORTED = "SOURCE_TYPE_UNSUPPORTED"
+    SOURCE_TEMPORARILY_UNAVAILABLE = "SOURCE_TEMPORARILY_UNAVAILABLE"
+    CONTENT_EMPTY = "CONTENT_EMPTY"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
+    IDEMPOTENCY_KEY_CONFLICT = "IDEMPOTENCY_KEY_CONFLICT"
+    MODEL_TEMPORARILY_UNAVAILABLE = "MODEL_TEMPORARILY_UNAVAILABLE"
+    JOB_FAILED = "JOB_FAILED"
+    RATE_LIMITED = "RATE_LIMITED"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
+class AppError(Exception):
+    def __init__(
+        self,
+        code: ErrorCode,
+        message: str,
+        *,
+        status_code: int = 400,
+        retryable: bool = False,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+        self.retryable = retryable
+        self.details = details or {}
