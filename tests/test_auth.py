@@ -1,0 +1,150 @@
+import time
+import uuid
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.api.deps import get_auth_service, get_current_user, get_feishu_adapter
+from app.core.config import settings
+from app.core.security import InvalidSessionError, SessionCodec
+from app.db.models import User
+from app.integrations import MockFeishuAdapter
+from app.main import create_app
+from app.services.auth import AuthService
+
+
+def make_user() -> User:
+    user = User(
+        workspace_id=settings.demo_workspace_id,
+        feishu_user_id="mock_user_001",
+        name="演示售前顾问",
+        avatar=None,
+    )
+    user.id = uuid.uuid4()
+    return user
+
+
+def test_session_codec_round_trip_and_tamper_detection() -> None:
+    codec = SessionCodec("test-secret-at-least-16-characters", 60)
+    user_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
+
+    claims = codec.decode(codec.encode(user_id, workspace_id))
+
+    assert claims.user_id == user_id
+    assert claims.workspace_id == workspace_id
+    with pytest.raises(InvalidSessionError):
+        codec.decode(codec.encode(user_id, workspace_id) + "tampered")
+
+
+def test_session_codec_rejects_expired_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    codec = SessionCodec("test-secret-at-least-16-characters", 1)
+    monkeypatch.setattr(time, "time", lambda: 100)
+    token = codec.encode(uuid.uuid4(), uuid.uuid4())
+    monkeypatch.setattr(time, "time", lambda: 102)
+
+    with pytest.raises(InvalidSessionError, match="expired"):
+        codec.decode(token)
+
+
+@pytest.mark.asyncio
+async def test_mock_feishu_adapter_supports_golden_flow() -> None:
+    adapter = MockFeishuAdapter("http://localhost:8000")
+
+    user = await adapter.exchange_code("mock-code", "http://localhost/callback")
+    document = await adapter.fetch_document("https://example.feishu.cn/docx/demo")
+
+    assert user.feishu_user_id == "mock_user_001"
+    assert user.name == "演示售前顾问"
+    assert document.content.startswith("# 客户背景")
+    with pytest.raises(ValueError):
+        await adapter.exchange_code("bad-code", "http://localhost/callback")
+
+
+@pytest.mark.asyncio
+async def test_auth_service_creates_new_user() -> None:
+    session = AsyncMock()
+    repository = AsyncMock()
+    repository.get_by_feishu_user_id.return_value = None
+    created_user = make_user()
+    repository.create.return_value = created_user
+    service = AuthService(
+        session,
+        MockFeishuAdapter("http://localhost"),
+        settings.demo_workspace_id,
+        repository,
+    )
+
+    result = await service.handle_feishu_callback("mock-code", "http://localhost/callback")
+
+    assert result is created_user
+    repository.create.assert_awaited_once_with(
+        feishu_user_id="mock_user_001",
+        name="演示售前顾问",
+        avatar=None,
+    )
+    session.commit.assert_awaited_once()
+    session.refresh.assert_awaited_once_with(created_user)
+
+
+def test_auth_routes_and_secure_cookies() -> None:
+    app = create_app()
+    user = make_user()
+    auth_service = Mock()
+    auth_service.handle_feishu_callback = AsyncMock(return_value=user)
+    app.dependency_overrides[get_auth_service] = lambda: auth_service
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_feishu_adapter] = lambda: MockFeishuAdapter(
+        settings.public_base_url
+    )
+
+    with TestClient(app, base_url="https://testserver") as client:
+        start = client.get("/api/v1/auth/feishu/start")
+        assert start.status_code == 200
+        assert start.json()["data"]["authorization_url"].startswith(
+            f"{settings.public_base_url}/api/v1/auth/feishu/callback"
+        )
+        state = start.json()["data"]["state"]
+        assert "HttpOnly" in start.headers["set-cookie"]
+        assert "Secure" in start.headers["set-cookie"]
+
+        invalid_callback = client.get(
+            "/api/v1/auth/feishu/callback",
+            params={"code": "mock-code", "state": "wrong-state"},
+            follow_redirects=False,
+        )
+        assert invalid_callback.status_code == 400
+        assert invalid_callback.json()["error"]["code"] == "VALIDATION_FAILED"
+
+        client.cookies.set(settings.oauth_state_cookie_name, state)
+        callback = client.get(
+            "/api/v1/auth/feishu/callback",
+            params={"code": "mock-code", "state": state},
+            follow_redirects=False,
+        )
+        assert callback.status_code == 302
+        assert callback.headers["location"] == settings.frontend_redirect_url
+        assert settings.session_cookie_name in callback.headers["set-cookie"]
+
+        me = client.get("/api/v1/me")
+        assert me.status_code == 200
+        assert me.json()["data"]["id"] == str(user.id)
+        assert me.json()["data"]["workspace_id"] == str(user.workspace_id)
+
+        missing_key = client.post("/api/v1/auth/logout")
+        assert missing_key.status_code == 422
+        logout = client.post(
+            "/api/v1/auth/logout",
+            headers={"Idempotency-Key": "logout-test-key-0001"},
+        )
+        assert logout.status_code == 200
+        assert logout.json()["data"] == {"success": True}
+        assert f"{settings.session_cookie_name}=\"\"" in logout.headers["set-cookie"]
+
+
+def test_me_requires_session_cookie() -> None:
+    response = TestClient(create_app()).get("/api/v1/me")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTH_REQUIRED"
