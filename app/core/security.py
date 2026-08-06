@@ -72,4 +72,3 @@ class SessionCodec:
         if claims.expires_at < int(time.time()):
             raise InvalidSessionError("session token has expired")
         return claims
-

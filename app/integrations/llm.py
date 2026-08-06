@@ -12,4 +12,3 @@ class MockLLMAdapter:
             "messages_received": len(messages),
             "schema_title": response_schema.get("title"),
         }
-

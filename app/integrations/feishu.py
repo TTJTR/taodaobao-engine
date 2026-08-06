@@ -101,4 +101,3 @@ class LiveFeishuAdapter:
 
     async def fetch_document(self, url: str) -> FeishuDocument:
         raise NotImplementedError("Live Feishu document import is implemented in the source module")
-

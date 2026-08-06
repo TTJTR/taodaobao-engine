@@ -34,4 +34,3 @@ class LLMAdapter(Protocol):
         messages: list[dict[str, str]],
         response_schema: dict[str, Any],
     ) -> dict[str, Any]: ...
-
