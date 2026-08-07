@@ -22,12 +22,5 @@ Thumbs.db
 dist/
 build/
 *.log
-
-# Local project planning and internal documentation
-/需求详细信息.txt
-/抽象.txt
-/分工.md
-/分工.pdf
-/淘到宝引擎V0.5_后端与AI_Harness需求文档.md
-/docs/开发文档.md
-/docs/Molly_GitHub协作说明.md
+examples/**/result.json
+evals/latest_report.json
