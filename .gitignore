@@ -33,3 +33,7 @@ build/
 # Local PostgreSQL runtime and credentials
 /.local/
 /.env
+
+# Deferred V1 requirements
+/v1需求.zip
+/v1需求/

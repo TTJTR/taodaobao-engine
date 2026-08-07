@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.db.models import ProcessStatus
+from app.integrations.ai_engine import MockAIEngine
 from app.services import solution_pipeline as module
 
 
@@ -25,6 +26,7 @@ async def test_solution_pipeline_completes_and_appends_assistant_message(
         completed_at=None,
         error_code=None,
         retryable=False,
+        profile_snapshot={"customer_name": "制造客户"},
     )
     request_message = SimpleNamespace(id=run.request_message_id, content="视觉质检")
     run_repository = SimpleNamespace(get=AsyncMock(return_value=run))
@@ -50,7 +52,7 @@ async def test_solution_pipeline_completes_and_appends_assistant_message(
     )
     monkeypatch.setattr(module.asyncio, "sleep", AsyncMock())
 
-    await module.run_solution_pipeline(run.id, workspace_id)
+    await module.run_solution_pipeline(run.id, workspace_id, MockAIEngine())
 
     assert run.status == ProcessStatus.COMPLETED
     assert run.retrieval_snapshot == snapshot

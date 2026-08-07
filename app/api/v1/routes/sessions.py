@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 
-from app.api.deps import CurrentUser, DatabaseSession, WorkspaceId
+from app.api.deps import AIEngineDependency, CurrentUser, DatabaseSession, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.schemas.chat import CreateSessionRequest, CreateTurnRequest, MessageRead, SessionRead
@@ -84,12 +84,13 @@ async def create_turn(
     session: DatabaseSession,
     current_user: CurrentUser,
     workspace_id: WorkspaceId,
+    ai_engine: AIEngineDependency,
     _: str = Depends(require_idempotency_key),
 ) -> dict[str, object]:
     message, run = await SessionService(
         session, workspace_id, current_user.id
     ).create_turn(session_id, payload.content)
-    background_tasks.add_task(run_solution_pipeline, run.id, workspace_id)
+    background_tasks.add_task(run_solution_pipeline, run.id, workspace_id, ai_engine)
     return success_response(
         request,
         {
