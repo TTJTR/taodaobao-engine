@@ -13,6 +13,7 @@ from app.db.models import (
     Capability,
     CustomerProfile,
     Experience,
+    IdempotencyRecord,
     Job,
     Message,
     Session,
@@ -51,6 +52,16 @@ def test_dynamic_fields_use_postgresql_jsonb() -> None:
     assert isinstance(SolutionRun.__table__.c.profile_snapshot.type, JSONB)
     assert isinstance(SolutionRun.__table__.c.retrieval_snapshot.type, JSONB)
     assert isinstance(SolutionRun.__table__.c.result.type, JSONB)
+    assert isinstance(IdempotencyRecord.__table__.c.response_data.type, JSONB)
+
+
+def test_idempotency_record_has_workspace_key_uniqueness() -> None:
+    constraints = {
+        constraint.name
+        for constraint in IdempotencyRecord.__table__.constraints
+    }
+    assert "uq_idempotency_records_workspace_key" in constraints
+    assert IdempotencyRecord.__table__.c.request_hash.type.length == 64
 
 
 def test_expected_relationships_configure_without_ambiguity() -> None:
@@ -68,7 +79,7 @@ def test_expected_relationships_configure_without_ambiguity() -> None:
     )
 
 
-def test_metadata_contains_exactly_nine_core_tables() -> None:
+def test_metadata_contains_core_and_idempotency_tables() -> None:
     assert set(Base.metadata.tables) == {
         "users",
         "sources",
@@ -79,6 +90,7 @@ def test_metadata_contains_exactly_nine_core_tables() -> None:
         "messages",
         "solution_runs",
         "jobs",
+        "idempotency_records",
     }
 
 
@@ -88,7 +100,7 @@ def test_all_tables_compile_to_postgresql_ddl() -> None:
         for table in Base.metadata.sorted_tables
     ]
 
-    assert len(statements) == 9
+    assert len(statements) == 10
     assert all("UUID" in statement for statement in statements)
 
 

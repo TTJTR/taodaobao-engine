@@ -12,10 +12,10 @@ from app.api.deps import (
 )
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
-from app.core.idempotency import require_idempotency_key
+from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 
-router = APIRouter()
+router = APIRouter(route_class=IdempotencyRoute)
 
 
 def get_redirect_uri() -> str:

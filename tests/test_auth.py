@@ -88,7 +88,8 @@ async def test_auth_service_creates_new_user() -> None:
     session.refresh.assert_awaited_once_with(created_user)
 
 
-def test_auth_routes_and_secure_cookies() -> None:
+def test_auth_routes_and_secure_cookies(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "cookie_secure", True)
     app = create_app()
     user = make_user()
     auth_service = Mock()
@@ -136,7 +137,7 @@ def test_auth_routes_and_secure_cookies() -> None:
         assert missing_key.status_code == 422
         logout = client.post(
             "/api/v1/auth/logout",
-            headers={"Idempotency-Key": "logout-test-key-0001"},
+            headers={"Idempotency-Key": f"logout-{uuid.uuid4()}"},
         )
         assert logout.status_code == 200
         assert logout.json()["data"] == {"success": True}
