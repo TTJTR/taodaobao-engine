@@ -68,6 +68,39 @@ async def test_get_filters_workspace_and_soft_deleted_rows() -> None:
 
 
 @pytest.mark.asyncio
+async def test_source_url_lookup_filters_workspace_and_soft_deleted_rows() -> None:
+    session = AsyncMock()
+    repository = SourceRepository(session, uuid.uuid4())
+
+    await repository.get_by_source_url("https://example.feishu.cn/docx/demo")
+
+    sql = compile_statement(session.scalar.await_args.args[0])
+    assert "sources.source_url" in sql
+    assert "sources.workspace_id" in sql
+    assert "sources.is_deleted IS false" in sql
+
+
+@pytest.mark.asyncio
+async def test_source_filtered_list_applies_keyword_and_status() -> None:
+    session = AsyncMock()
+    result = Mock()
+    result.all.return_value = []
+    session.scalars.return_value = result
+    repository = SourceRepository(session, uuid.uuid4())
+
+    await repository.list_filtered(
+        offset=0,
+        limit=20,
+        keyword="零售",
+        status="pending_review",
+    )
+
+    sql = compile_statement(session.scalars.await_args.args[0])
+    assert "sources.title ILIKE" in sql
+    assert "sources.status = 'pending_review'" in sql
+
+
+@pytest.mark.asyncio
 async def test_list_filters_soft_deleted_rows_and_applies_pagination() -> None:
     session = AsyncMock()
     scalar_result = Mock()
