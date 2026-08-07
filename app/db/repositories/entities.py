@@ -198,9 +198,45 @@ class CapabilityRepository(BaseRepository[Capability]):
 class SessionRepository(BaseRepository[Session]):
     model = Session
 
+    async def list_filtered(
+        self, *, offset: int, limit: int, profile_id=None
+    ) -> list[Session]:
+        filters = list(self._active_filters())
+        if profile_id is not None:
+            filters.append(Session.customer_profile_id == profile_id)
+        statement = (
+            select(Session)
+            .where(*filters)
+            .order_by(Session.updated_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list((await self.session.scalars(statement)).all())
+
+    async def count_filtered(self, *, profile_id=None) -> int:
+        filters = list(self._active_filters())
+        if profile_id is not None:
+            filters.append(Session.customer_profile_id == profile_id)
+        statement = select(func.count()).select_from(Session).where(*filters)
+        return int(await self.session.scalar(statement) or 0)
+
 
 class MessageRepository(BaseRepository[Message]):
     model = Message
+
+    async def list_for_session(self, session_id) -> list[Message]:
+        statement = (
+            select(Message)
+            .where(Message.session_id == session_id, *self._active_filters())
+            .order_by(Message.sequence.asc())
+        )
+        return list((await self.session.scalars(statement)).all())
+
+    async def next_sequence(self, session_id) -> int:
+        statement = select(func.max(Message.sequence)).where(
+            Message.session_id == session_id, *self._active_filters()
+        )
+        return int(await self.session.scalar(statement) or 0) + 1
 
 
 class SolutionRunRepository(BaseRepository[SolutionRun]):

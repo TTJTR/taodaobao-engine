@@ -15,6 +15,10 @@ def test_profile_and_asset_contract_routes_are_mounted() -> None:
         "/api/v1/capabilities": {"get"},
         "/api/v1/capabilities/{capability_id}": {"get", "patch"},
         "/api/v1/capabilities/{capability_id}/review": {"post"},
+        "/api/v1/sessions": {"get", "post"},
+        "/api/v1/sessions/{session_id}": {"get"},
+        "/api/v1/sessions/{session_id}/turns": {"post"},
+        "/api/v1/solution-runs/{run_id}": {"get"},
     }
     for path, methods in expected_operations.items():
         assert methods.issubset(paths[path])
