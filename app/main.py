@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
 from app.core.config import settings
@@ -25,6 +26,7 @@ def create_app() -> FastAPI:
     application.add_middleware(RequestContextMiddleware)
     register_exception_handlers(application)
     application.include_router(api_router, prefix=settings.api_prefix)
+    application.mount("/", StaticFiles(directory="static", html=True), name="static")
     return application
 
 
