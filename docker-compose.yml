@@ -1,0 +1,75 @@
+name: xianjintuan-engine
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-taodaobao}
+      POSTGRES_USER: ${POSTGRES_USER:-taodaobao}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_DATABASE_URL: >-
+        postgresql+asyncpg://${POSTGRES_USER:-taodaobao}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-taodaobao}
+      APP_PUBLIC_BASE_URL: https://${DOMAIN:-localhost}
+      APP_FRONTEND_REDIRECT_URL: https://${DOMAIN:-localhost}/
+      APP_COOKIE_SECURE: "true"
+      APP_SESSION_SECRET: ${APP_SESSION_SECRET:?APP_SESSION_SECRET is required}
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
