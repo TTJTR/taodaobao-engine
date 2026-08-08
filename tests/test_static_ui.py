@@ -25,6 +25,8 @@ def test_static_index_is_served_at_root() -> None:
     assert "制造业智能质检PRD v3.1" not in response.text
     assert "项目交付风险复盘" not in response.text
     assert "example.feishu.cn/docx/demoToken" not in response.text
+    assert "async function bootstrap()" in response.text
+    assert "if(Store.state.loggedIn){try{await loadWorkspace()}" in response.text
     assert "function renderDeep()" in response.text
     assert "function renderExperts()" in response.text
     assert "V1.0 规划能力，不进入当前MVP主流程" not in response.text

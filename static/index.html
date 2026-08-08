@@ -395,7 +395,8 @@
     document.addEventListener("keydown",event=>{if(event.key==="Escape"){closeModal();closeDrawer()}if((event.ctrlKey||event.metaKey)&&event.key==="Enter"){if($("#quick-query"))runQuick();else if($("#follow-input"))sendFollow()}});
     $("#modal-layer").addEventListener("click",event=>{if(event.target.id==="modal-layer")closeModal()});
     $("#drawer-layer").addEventListener("click",event=>{if(event.target.id==="drawer-layer")closeDrawer()});
-    CalmPet.init();Store.load();render();
+    async function bootstrap(){Store.load();if(Store.state.loggedIn){try{await loadWorkspace()}catch(e){if(e.status===401||e.code==="AUTH_REQUIRED")Store.state.loggedIn=false;else toast(e.message)}}render()}
+    CalmPet.init();void bootstrap();
   </script>
 </body>
 </html>
