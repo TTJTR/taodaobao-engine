@@ -38,10 +38,22 @@ async def health_check(request: Request) -> dict[str, Any]:
         ai_status = "mock"
     else:
         ai_status = "ok" if os.getenv("DASHSCOPE_API_KEY") else "not_configured"
+    if settings.feishu_mode == "mock":
+        feishu_status = "mock"
+    else:
+        required_feishu_settings = (
+            settings.feishu_app_id,
+            settings.feishu_app_secret,
+            settings.feishu_verification_token,
+            settings.feishu_encrypt_key,
+            settings.feishu_token_encryption_key,
+        )
+        feishu_status = "configured" if all(required_feishu_settings) else "not_configured"
     status = (
         "ok"
         if database_status in {"ok", "not_configured"}
         and ai_status in {"ok", "mock"}
+        and feishu_status in {"configured", "mock"}
         else "degraded"
     )
     return success_response(
@@ -52,5 +64,7 @@ async def health_check(request: Request) -> dict[str, Any]:
             "database": database_status,
             "ai": ai_status,
             "ai_mode": settings.ai_mode,
+            "feishu": feishu_status,
+            "feishu_mode": settings.feishu_mode,
         },
     )

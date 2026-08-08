@@ -13,4 +13,6 @@ def test_health_check_uses_standard_envelope() -> None:
     assert payload["data"]["database"] == "ok"
     assert payload["data"]["ai"] == "mock"
     assert payload["data"]["ai_mode"] == "mock"
+    assert payload["data"]["feishu"] == "mock"
+    assert payload["data"]["feishu_mode"] == "mock"
     assert response.headers["X-Request-ID"] == payload["request_id"]
