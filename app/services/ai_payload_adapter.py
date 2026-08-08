@@ -67,6 +67,9 @@ def _normalize_experience(item: dict[str, Any], rank: int) -> dict[str, Any]:
             "source_id": source_id,
         }
     )
+    for field in ("prerequisites", "risks", "applicable_conditions"):
+        if field in data:
+            data[field] = _optional_text(data[field])
     return {
         "asset_id": str(item.get("asset_id") or item["id"]),
         "source_id": source_id,
@@ -87,6 +90,9 @@ def _normalize_capability(item: dict[str, Any], rank: int) -> dict[str, Any]:
             "source_id": source_id,
         }
     )
+    for field in ("prerequisites", "limitations"):
+        if field in data:
+            data[field] = _optional_text(data[field])
     return {
         "asset_id": str(item.get("asset_id") or item["id"]),
         "source_id": source_id,
@@ -102,3 +108,13 @@ def _string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if str(item).strip()]
     return [str(value)] if str(value).strip() else []
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        parts = [str(item).strip() for item in value if str(item).strip()]
+        return "；".join(parts) or None
+    text = str(value).strip()
+    return text or None

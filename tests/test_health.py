@@ -10,5 +10,7 @@ def test_health_check_uses_standard_envelope() -> None:
     payload = response.json()
     assert payload["request_id"].startswith("req_")
     assert payload["data"]["status"] == "ok"
+    assert payload["data"]["database"] == "ok"
+    assert payload["data"]["ai"] == "mock"
     assert payload["data"]["ai_mode"] == "mock"
     assert response.headers["X-Request-ID"] == payload["request_id"]
