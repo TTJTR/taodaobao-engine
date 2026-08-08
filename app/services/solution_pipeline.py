@@ -10,6 +10,10 @@ from app.db.database import get_session_factory
 from app.db.models import MessageRole, ProcessStatus
 from app.db.repositories import MessageRepository, SolutionRunRepository
 from app.services.ai_harness import AIHarness
+from app.services.ai_payload_adapter import (
+    build_solution_context,
+    normalize_retrieval_snapshot,
+)
 from app.services.retrieval_service import RetrievalService
 
 
@@ -38,16 +42,14 @@ async def run_solution_pipeline(
             snapshot = await RetrievalService(session, workspace_id).retrieve(
                 request_message.content
             )
-            run.retrieval_snapshot = snapshot
+            ai_snapshot = normalize_retrieval_snapshot(snapshot)
+            run.retrieval_snapshot = ai_snapshot
             solution = await AIHarness(
                 ai_engine, session, workspace_id
             ).run_solution_generation(
                 run.id,
-                {
-                    "requirement": request_message.content,
-                    "profile_snapshot": run.profile_snapshot,
-                },
-                snapshot,
+                build_solution_context(request_message.content, run.profile_snapshot),
+                ai_snapshot,
             )
             if solution is None:
                 return

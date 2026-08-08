@@ -22,6 +22,8 @@ Thumbs.db
 dist/
 build/
 *.log
+examples/**/result.json
+evals/latest_report.json
 
 # Local project planning and private source material
 /需求详细信息.txt
@@ -29,6 +31,8 @@ build/
 /分工.md
 /分工.pdf
 /淘到宝引擎V0.5_后端与AI_Harness需求文档.md
+/AI服务交接说明.md
+/开发文档molly.md
 
 # Local PostgreSQL runtime and credentials
 /.local/

@@ -1,0 +1,46 @@
+from datetime import UTC, datetime
+
+from app.ai.schemas import RetrievalSnapshot, SolutionContext
+from app.services.ai_payload_adapter import (
+    build_solution_context,
+    normalize_retrieval_snapshot,
+)
+
+
+def test_adapter_converts_backend_payloads_to_ai_contracts() -> None:
+    context = build_solution_context(
+        "视觉质检",
+        {
+            "id": "profile-1",
+            "customer_name": "制造客户",
+            "status": "confirmed",
+            "profile": {"industry": "制造", "background": "产线升级"},
+        },
+    )
+    snapshot = normalize_retrieval_snapshot(
+        {
+            "experiences": [
+                {
+                    "id": "experience-1",
+                    "source_id": "source-1",
+                    "data": {"name": "质检试点", "solution": "旁路部署"},
+                }
+            ],
+            "capabilities": [
+                {
+                    "id": "capability-1",
+                    "source_id": "source-2",
+                    "data": {"name": "缺陷识别", "description": "识别产品缺陷"},
+                }
+            ],
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    )
+
+    validated_context = SolutionContext.model_validate(context)
+    validated_snapshot = RetrievalSnapshot.model_validate(snapshot)
+
+    assert validated_context.current_requirement == "视觉质检"
+    assert validated_context.customer_profile.source_ids == ["profile-snapshot:profile-1"]
+    assert validated_snapshot.experiences[0].rank == 1
+    assert validated_snapshot.capabilities[0].data.source_id == "source-2"

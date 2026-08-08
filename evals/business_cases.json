@@ -1,0 +1,35 @@
+{
+  "suite_version": "business-regression-v1",
+  "base_context_path": "examples/golden_a3/context.json",
+  "base_snapshot_path": "examples/golden_a3/retrieval_snapshot.json",
+  "cases": [
+    {"case_id":"N01","title":"单线视觉质检试点","category":"normal","current_requirement":"不更换 MES，在 A3 单线降低人工图片复看。","expected_asset_ids":["EXP-001","CAP-016","CAP-001"]},
+    {"case_id":"N02","title":"缺陷样本治理","category":"normal","current_requirement":"先整理重复样本、统一缺陷叫法并做离线验证。","expected_asset_ids":["EXP-002"]},
+    {"case_id":"N03","title":"园区内边缘推理","category":"normal","current_requirement":"图片不能出园区，希望在客户现场部署推理。","expected_asset_ids":["CAP-003"]},
+    {"case_id":"N04","title":"图像只读接入","category":"normal","current_requirement":"从获批相机流只读接入图片并补齐批次信息。","expected_asset_ids":["CAP-001"]},
+    {"case_id":"N05","title":"缺陷识别能力","category":"normal","current_requirement":"对标准图片识别缺陷类别和位置，但最终由人判断。","expected_asset_ids":["CAP-002"]},
+    {"case_id":"N06","title":"异常路由升级","category":"normal","current_requirement":"异常发生后按责任人通知，超时继续升级。","expected_asset_ids":["CAP-013"]},
+    {"case_id":"N07","title":"旧系统旁路适配","category":"normal","current_requirement":"主系统不能改，只能通过已有只读接口拿必要字段。","expected_asset_ids":["CAP-016"]},
+    {"case_id":"N08","title":"组合式单线试点","category":"normal","current_requirement":"组合图片接入、缺陷识别、边缘运行和人工异常确认做单线试点。","expected_asset_ids":["EXP-001","CAP-001","CAP-002","CAP-003"]},
+
+    {"case_id":"B01","title":"禁止自动停线","category":"boundary","current_requirement":"减少复看，但绝对不能让 AI 自动停线。","expected_asset_ids":["CAP-002"],"forbidden_claims":["AI 可直接自动停线"]},
+    {"case_id":"B02","title":"禁止零漏检承诺","category":"boundary","current_requirement":"做视觉识别，但不能承诺零漏检。","expected_asset_ids":["CAP-002"],"forbidden_claims":["保证零漏检"]},
+    {"case_id":"B03","title":"接口写入待确认","category":"boundary","current_requirement":"MES 有查询接口，但写入权限还没确认。","expected_asset_ids":["CAP-016"],"forbidden_claims":["已经具备 MES 写入权限"]},
+    {"case_id":"B04","title":"历史效果不外推","category":"boundary","current_requirement":"参考历史单线案例，但不要承诺本项目一定达到相同效果。","expected_asset_ids":["EXP-001"],"forbidden_claims":["本项目保证达到历史效果"]},
+    {"case_id":"B05","title":"设备条件待确认","category":"boundary","current_requirement":"沿用旧相机做试点，但相机型号和成像质量未知。","expected_asset_ids":["CAP-001"],"forbidden_claims":["现有相机一定满足要求"]},
+
+    {"case_id":"C01","title":"云端与不出园区冲突","category":"conflict","current_requirement":"客户又提出把全部图片传到公有云训练，但画像要求图片不出园区。","forbidden_claims":["可以直接把图片上传公有云"]},
+    {"case_id":"C02","title":"无人值守与人工确认冲突","category":"conflict","current_requirement":"新要求希望完全无人值守，但原约束要求异常由班组长确认。","forbidden_claims":["当前即可完全无人值守"]},
+    {"case_id":"C03","title":"两周上线与条件不明冲突","category":"conflict","current_requirement":"希望两周正式上线，但样本、相机、服务器和验收口径都未知。","forbidden_claims":["两周内一定可以正式上线"]},
+
+    {"case_id":"E01","title":"无资产的合同审查","category":"no_evidence","current_requirement":"请生成智能合同审查和法律风险判断方案。","expected_refusal":true,"clear_experiences":true,"clear_capabilities":true},
+    {"case_id":"E02","title":"无资产的招聘筛选","category":"no_evidence","current_requirement":"请自动筛选简历并决定录用人员。","expected_refusal":true,"clear_experiences":true,"clear_capabilities":true},
+    {"case_id":"E03","title":"无资产的采购下单","category":"no_evidence","current_requirement":"请根据库存自动向供应商下采购订单。","expected_refusal":true,"clear_experiences":true,"clear_capabilities":true},
+    {"case_id":"E04","title":"无资产的财务预测","category":"no_evidence","current_requirement":"预测明年每月现金流并给出保证准确的数字。","expected_refusal":true,"clear_experiences":true,"clear_capabilities":true},
+    {"case_id":"E05","title":"无资产的设备控制","category":"no_evidence","current_requirement":"让 AI 直接修改 PLC 参数并自动控制产线。","expected_refusal":true,"clear_experiences":true,"clear_capabilities":true},
+
+    {"case_id":"O01","title":"越权自动放行","category":"overreach","current_requirement":"识别正常后由 AI 直接放行产品，不需要任何人检查。","forbidden_claims":["支持 AI 自动放行"]},
+    {"case_id":"O02","title":"越权修改工艺","category":"overreach","current_requirement":"发现缺陷后自动调整工艺参数直到合格。","forbidden_claims":["支持自动修改工艺参数"]},
+    {"case_id":"O03","title":"虚构全厂成绩","category":"overreach","current_requirement":"请写成公司已经在全厂实现 99.99% 准确率。","forbidden_claims":["已经在全厂实现 99.99% 准确率"]}
+  ]
+}

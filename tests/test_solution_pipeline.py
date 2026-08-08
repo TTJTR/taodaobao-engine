@@ -55,7 +55,15 @@ async def test_solution_pipeline_completes_and_appends_assistant_message(
     await module.run_solution_pipeline(run.id, workspace_id, MockAIEngine())
 
     assert run.status == ProcessStatus.COMPLETED
-    assert run.retrieval_snapshot == snapshot
+    assert run.retrieval_snapshot == {
+        "experiences": [],
+        "capabilities": [],
+        "conflicts": [],
+        "missing_information": [],
+        "gap_summary": None,
+        "can_generate_solution": True,
+        "created_at": "now",
+    }
     assert set(run.result) == {
         "requirement_understanding",
         "initial_recommendations",

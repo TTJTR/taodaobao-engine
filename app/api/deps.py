@@ -1,10 +1,12 @@
 import uuid
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Cookie, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai import BailianAIEngine, BailianChatClient, BailianSettings, MockAIEngine
 from app.contracts.ai import AIEngine
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
@@ -12,7 +14,7 @@ from app.core.security import InvalidSessionError, SessionCodec
 from app.db.database import get_db
 from app.db.models import User
 from app.db.repositories import UserRepository
-from app.integrations import FeishuAdapter, LiveFeishuAdapter, MockAIEngine, MockFeishuAdapter
+from app.integrations import FeishuAdapter, LiveFeishuAdapter, MockFeishuAdapter
 from app.services.auth import AuthService
 
 DatabaseSession = Annotated[AsyncSession, Depends(get_db)]
@@ -40,7 +42,8 @@ FeishuAdapterDependency = Annotated[FeishuAdapter, Depends(get_feishu_adapter)]
 def get_ai_engine() -> AIEngine:
     if settings.ai_mode == "mock":
         return MockAIEngine()
-    raise RuntimeError("Live AI mode requires a configured AIEngine implementation")
+    bailian_settings = BailianSettings.from_env(Path(".env"))
+    return BailianAIEngine(BailianChatClient(bailian_settings))
 
 
 AIEngineDependency = Annotated[AIEngine, Depends(get_ai_engine)]
