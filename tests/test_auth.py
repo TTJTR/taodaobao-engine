@@ -69,6 +69,22 @@ def test_invitation_proof_is_signed_and_expires(monkeypatch: pytest.MonkeyPatch)
     assert not auth_routes.verify_invitation_proof(proof)
 
 
+def test_invitation_proof_can_only_be_consumed_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "session_secret", "test-secret-at-least-16-characters")
+    monkeypatch.setattr(settings, "invitation_code", "private-invite")
+    monkeypatch.setattr(settings, "invitation_ttl_seconds", 60)
+    monkeypatch.setattr(auth_routes.time, "time", lambda: 1_000)
+    with auth_routes._invitation_proof_lock:
+        auth_routes._consumed_invitation_proofs.clear()
+
+    proof = auth_routes.create_invitation_proof()
+
+    assert auth_routes.consume_invitation_proof(proof)
+    assert not auth_routes.consume_invitation_proof(proof)
+
+
 @pytest.mark.asyncio
 async def test_mock_feishu_adapter_supports_golden_flow() -> None:
     adapter = MockFeishuAdapter("http://localhost:8000")
@@ -197,6 +213,8 @@ def test_invitation_must_be_verified_before_oauth_and_is_single_use(
         assert verified.status_code == 200
         assert "HttpOnly" in verified.headers["set-cookie"]
         assert "SameSite=strict" in verified.headers["set-cookie"]
+        proof = verified.cookies.get(settings.invitation_cookie_name)
+        assert proof
 
         started = client.get("/api/v1/auth/feishu/start")
         assert started.status_code == 200
@@ -204,6 +222,14 @@ def test_invitation_must_be_verified_before_oauth_and_is_single_use(
 
         blocked_again = client.get("/api/v1/auth/feishu/start")
         assert blocked_again.status_code == 401
+
+        with TestClient(app) as replay_client:
+            replayed = replay_client.get(
+                "/api/v1/auth/feishu/start",
+                headers={"Cookie": f"{settings.invitation_cookie_name}={proof}"},
+            )
+        assert replayed.status_code == 401
+        assert replayed.json()["error"]["code"] == "INVITE_CODE_INVALID"
 
 
 def test_me_requires_session_cookie() -> None:

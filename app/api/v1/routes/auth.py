@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import secrets
 import time
+from threading import Lock
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -19,6 +20,10 @@ from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 
 router = APIRouter(route_class=IdempotencyRoute)
+
+_MAX_CONSUMED_INVITATION_PROOFS = 10_000
+_consumed_invitation_proofs: dict[str, int] = {}
+_invitation_proof_lock = Lock()
 
 
 class VerifyInvitationRequest(BaseModel):
@@ -54,6 +59,30 @@ def verify_invitation_proof(proof: str | None) -> bool:
         _invitation_signing_key(), payload.encode(), hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(signature, expected)
+
+
+def consume_invitation_proof(proof: str | None) -> bool:
+    """Atomically accept a valid invitation proof no more than once per process."""
+    if not verify_invitation_proof(proof):
+        return False
+    assert proof is not None
+    expires_at = int(proof.split(".", maxsplit=1)[0])
+    fingerprint = hashlib.sha256(proof.encode()).hexdigest()
+    now = int(time.time())
+    with _invitation_proof_lock:
+        expired = [
+            item
+            for item, item_expires_at in _consumed_invitation_proofs.items()
+            if item_expires_at < now
+        ]
+        for item in expired:
+            del _consumed_invitation_proofs[item]
+        if fingerprint in _consumed_invitation_proofs:
+            return False
+        if len(_consumed_invitation_proofs) >= _MAX_CONSUMED_INVITATION_PROOFS:
+            return False
+        _consumed_invitation_proofs[fingerprint] = expires_at
+    return True
 
 
 @router.post("/auth/invitation/verify")
@@ -92,7 +121,7 @@ async def start_feishu_authorization(
     adapter: FeishuAdapterDependency,
     invitation: str | None = Cookie(default=None, alias=settings.invitation_cookie_name),
 ) -> JSONResponse:
-    if settings.invitation_required and not verify_invitation_proof(invitation):
+    if settings.invitation_required and not consume_invitation_proof(invitation):
         raise AppError(ErrorCode.INVITE_CODE_INVALID, "请先验证邀请码", status_code=401)
     state = secrets.token_urlsafe(32)
     authorization_url = adapter.get_authorization_url(state, get_redirect_uri())
