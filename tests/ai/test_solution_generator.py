@@ -229,6 +229,28 @@ def test_generate_solution_rejects_invented_citation() -> None:
         )
 
 
+def test_generate_solution_rejects_one_claim_that_mentions_another_asset() -> None:
+    result = valid_model_result()
+    result["historical_evidence"][0]["text"] = (
+        "EXP-001 和 CAP-001 都证明当前路线已经在历史项目中完成验收。"
+    )
+
+    with pytest.raises(ValueError, match="must not mention another asset id"):
+        asyncio.run(
+            generate_solution(make_context(), make_snapshot(), StaticJsonModelClient(result))
+        )
+
+
+def test_generate_solution_rejects_uncited_inference_that_mentions_enterprise_asset() -> None:
+    result = valid_model_result()
+    result["initial_recommendations"][0]["text"] = "建议直接采用 CAP-001。"
+
+    with pytest.raises(ValueError, match="uncited items must not mention"):
+        asyncio.run(
+            generate_solution(make_context(), make_snapshot(), StaticJsonModelClient(result))
+        )
+
+
 def test_generate_solution_rejects_wrong_evidence_boundary() -> None:
     result = valid_model_result()
     result["capability_composition"][0].update(

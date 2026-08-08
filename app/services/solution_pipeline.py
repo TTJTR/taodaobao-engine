@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import text
 
+from app.ai.embedding import EmbeddingProvider
 from app.contracts.ai import AIEngine
 from app.core.errors import ErrorCode
 from app.db.database import get_session_factory
@@ -14,6 +15,7 @@ from app.services.ai_payload_adapter import (
     build_solution_context,
     normalize_retrieval_snapshot,
 )
+from app.services.ai_run_service import persist_last_ai_run
 from app.services.retrieval_service import RetrievalService
 
 
@@ -21,6 +23,7 @@ async def run_solution_pipeline(
     run_id: uuid.UUID,
     workspace_id: uuid.UUID,
     ai_engine: AIEngine,
+    embedding_provider: EmbeddingProvider | None = None,
     *,
     delay_seconds: float = 2.0,
 ) -> None:
@@ -39,20 +42,55 @@ async def run_solution_pipeline(
             if request_message is None:
                 raise RuntimeError("request message is missing")
 
+            solution_context = build_solution_context(request_message.content, run.profile_snapshot)
+            conversation = (
+                await messages.list_for_session(run.session_id)
+                if hasattr(messages, "list_for_session")
+                else []
+            )
+            solution_context["conversation_history"] = [
+                {"role": item.role.value, "content": item.content} for item in conversation[-20:]
+            ]
             snapshot = await RetrievalService(session, workspace_id).retrieve(
-                request_message.content
+                request_message.content,
+                context=solution_context,
+                ai_engine=ai_engine,
+                embedding_provider=embedding_provider,
+            )
+            persist_last_ai_run(
+                session,
+                workspace_id,
+                ai_engine,
+                target_type="solution_run",
+                target_id=run.id,
+                input_summary={"stage": "search_intent"},
             )
             ai_snapshot = normalize_retrieval_snapshot(snapshot)
             run.retrieval_snapshot = ai_snapshot
-            solution = await AIHarness(
-                ai_engine, session, workspace_id
-            ).run_solution_generation(
+            solution = await AIHarness(ai_engine, session, workspace_id).run_solution_generation(
                 run.id,
-                build_solution_context(request_message.content, run.profile_snapshot),
+                solution_context,
                 ai_snapshot,
             )
             if solution is None:
+                persist_last_ai_run(
+                    session,
+                    workspace_id,
+                    ai_engine,
+                    target_type="solution_run",
+                    target_id=run.id,
+                    input_summary={"stage": "generate_solution", "failed": True},
+                )
+                await session.commit()
                 return
+            persist_last_ai_run(
+                session,
+                workspace_id,
+                ai_engine,
+                target_type="solution_run",
+                target_id=run.id,
+                input_summary={"session_id": str(run.session_id)},
+            )
 
             run.result = solution
             run.display_text = "快速方案已生成，请按八区块核对依据与待确认项。"
@@ -74,6 +112,14 @@ async def run_solution_pipeline(
             await session.rollback()
             run = await runs.get(run_id)
             if run is not None:
+                persist_last_ai_run(
+                    session,
+                    workspace_id,
+                    ai_engine,
+                    target_type="solution_run",
+                    target_id=run.id,
+                    input_summary={"stage": "failed"},
+                )
                 run.status = ProcessStatus.FAILED
                 run.error_code = ErrorCode.INTERNAL_ERROR.value
                 run.retryable = True

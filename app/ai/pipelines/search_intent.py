@@ -1,3 +1,5 @@
+import re
+from difflib import SequenceMatcher
 from typing import Protocol
 
 from app.ai.pipelines.expert_routing import route_experts
@@ -12,14 +14,48 @@ class JsonModelClient(Protocol):
     async def generate_json(self, system_prompt: str, user_prompt: str) -> dict: ...
 
 
+SEMANTIC_DEDUP_RULES = (
+    ("constraint:image-residency", (("图片", "图像"), ("离开园区", "出园区"))),
+    ("constraint:ai-control", (("AI",), ("自动停线", "工艺参数"))),
+    ("constraint:remote-write-security", (("远程升级",), ("接口写入",), ("安全评审",))),
+    ("gap:camera", (("相机",), ("型号", "分辨率", "图像质量", "覆盖范围"))),
+    ("gap:samples", (("样本",), ("缺陷", "标注"))),
+    ("gap:acceptance", (("验收",), ("指标", "基线", "口径"))),
+    ("gap:mes-interface", (("MES",), ("接口",))),
+    ("gap:edge-server", (("边缘服务器",), ("规格", "位置", "部署窗口"))),
+    ("gap:budget", (("预算",),)),
+)
+
+
+def semantic_dedup_key(value: str, fallback: str) -> str:
+    for label, token_groups in SEMANTIC_DEDUP_RULES:
+        matches_all_groups = all(
+            any(token.casefold() in value.casefold() for token in group)
+            for group in token_groups
+        )
+        if matches_all_groups:
+            return label
+    return fallback
+
+
 def merge_unique(*groups: list[str]) -> list[str]:
     merged: list[str] = []
     seen: set[str] = set()
     for group in groups:
         for value in group:
             normalized = value.strip()
-            key = normalized.casefold()
-            if normalized and key not in seen:
+            key = re.sub(r"[^\w]+", "", normalized.casefold())
+            key = key.replace("不得", "不").replace("或影响", "")
+            key = semantic_dedup_key(normalized, key)
+            near_duplicate = any(
+                key == existing
+                or (
+                    min(len(key), len(existing)) >= 18
+                    and SequenceMatcher(None, key, existing).ratio() >= 0.86
+                )
+                for existing in seen
+            )
+            if normalized and key and not near_duplicate:
                 merged.append(normalized)
                 seen.add(key)
     return merged

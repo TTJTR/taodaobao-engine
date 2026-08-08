@@ -37,5 +37,17 @@ python -m pip install -e ".[dev]"
 uvicorn main:app --reload
 ```
 
+V1 使用 pgvector。可先启动独立数据库并执行迁移：
+
+```powershell
+docker compose up -d postgres
+$env:APP_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:55433/taodaobao_v1"
+python -m alembic upgrade head
+python -m app.cli.seed_demo --reset
+```
+
+V1 增量 HTTP 契约见 `docs/openapi-v1-incremental.yaml`；根目录
+`openapi.yaml` 继续作为冻结的 V0.5 前后端契约。
+
 Swagger UI is available at `http://127.0.0.1:8000/docs` and the health endpoint
 at `http://127.0.0.1:8000/api/v1/health`.

@@ -1,10 +1,17 @@
 from app.db.repositories.base import BaseRepository
 from app.db.repositories.entities import (
+    AIRunRecordRepository,
     CapabilityRepository,
     CustomerProfileRepository,
     ExperienceRepository,
+    ExpertCollaborationRepository,
+    ExpertContributionRepository,
+    ExpertReplyRepository,
     JobRepository,
     MessageRepository,
+    ResearchStepRepository,
+    ResearchTaskRepository,
+    ReviewRecordRepository,
     SessionRepository,
     SolutionRunRepository,
     SourceRepository,
@@ -12,15 +19,21 @@ from app.db.repositories.entities import (
 )
 
 __all__ = [
+    "AIRunRecordRepository",
     "BaseRepository",
     "CapabilityRepository",
     "CustomerProfileRepository",
+    "ExpertCollaborationRepository",
+    "ExpertContributionRepository",
+    "ExpertReplyRepository",
     "ExperienceRepository",
     "JobRepository",
     "MessageRepository",
+    "ResearchStepRepository",
+    "ResearchTaskRepository",
+    "ReviewRecordRepository",
     "SessionRepository",
     "SolutionRunRepository",
     "SourceRepository",
     "UserRepository",
 ]
-

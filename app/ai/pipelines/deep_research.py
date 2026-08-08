@@ -29,6 +29,21 @@ class JsonModelClient(Protocol):
 MODEL_FIELDS = {"research_plan", "findings", "routes", "audit", "expert_questions"}
 
 
+def normalize_research_plan(raw_plan: object) -> object:
+    if not isinstance(raw_plan, dict):
+        return raw_plan
+    normalized = dict(raw_plan)
+    subquestions = normalized.get("subquestions")
+    if isinstance(subquestions, list):
+        normalized["subquestions"] = [
+            {**item, "question_id": item.get("question_id") or f"Q{index}"}
+            if isinstance(item, dict)
+            else item
+            for index, item in enumerate(subquestions, start=1)
+        ]
+    return normalized
+
+
 def allowed_research_citations(
     snapshot: RetrievalSnapshot,
 ) -> dict[tuple[str, str], EvidenceBoundary]:
@@ -186,7 +201,7 @@ async def generate_deep_research_stage(
         raise ValueError("deep research model output has unexpected fields")
 
     plan = (
-        ResearchPlan.model_validate(result["research_plan"])
+        ResearchPlan.model_validate(normalize_research_plan(result["research_plan"]))
         if result["research_plan"] is not None
         else context.research_plan
     )

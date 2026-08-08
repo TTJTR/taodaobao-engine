@@ -25,6 +25,7 @@ def test_adapter_converts_backend_payloads_to_ai_contracts() -> None:
                     "source_id": "source-1",
                     "data": {
                         "name": "质检试点",
+                        "problem": "人工复检压力",
                         "solution": "旁路部署",
                         "prerequisites": ["摄像设备", "缺陷样本"],
                         "risks": ["现场光照变化"],
@@ -54,6 +55,7 @@ def test_adapter_converts_backend_payloads_to_ai_contracts() -> None:
     assert validated_context.current_requirement == "视觉质检"
     assert validated_context.customer_profile.source_ids == ["profile-snapshot:profile-1"]
     assert validated_snapshot.experiences[0].rank == 1
+    assert validated_snapshot.experiences[0].data.applicable_problem == "人工复检压力"
     assert validated_snapshot.experiences[0].data.prerequisites == "摄像设备；缺陷样本"
     assert validated_snapshot.capabilities[0].data.source_id == "source-2"
     assert validated_snapshot.capabilities[0].data.limitations == "需要现场校准；依赖样本质量"

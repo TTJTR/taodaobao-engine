@@ -1,6 +1,6 @@
 import uuid
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -54,6 +54,7 @@ def make_entities() -> tuple[uuid.UUID, Source, Job]:
 
 def configure_runner(monkeypatch, source: Source, job: Job) -> AsyncMock:
     session = AsyncMock()
+    session.add = Mock()
     stages: list[str] = []
 
     async def capture_commit() -> None:

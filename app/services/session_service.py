@@ -5,7 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, ErrorCode
-from app.db.models import Message, MessageRole, ProcessStatus, Session, SolutionRun
+from app.db.models import Message, MessageRole, ProcessStatus, ProfileStatus, Session, SolutionRun
 from app.db.repositories import (
     CustomerProfileRepository,
     MessageRepository,
@@ -15,9 +15,7 @@ from app.db.repositories import (
 
 
 class SessionService:
-    def __init__(
-        self, session: AsyncSession, workspace_id: uuid.UUID, user_id: uuid.UUID
-    ) -> None:
+    def __init__(self, session: AsyncSession, workspace_id: uuid.UUID, user_id: uuid.UUID) -> None:
         self.session = session
         self.workspace_id = workspace_id
         self.user_id = user_id
@@ -27,8 +25,15 @@ class SessionService:
         self.profiles = CustomerProfileRepository(session, workspace_id)
 
     async def create(self, customer_profile_id: uuid.UUID, title: str | None) -> Session:
-        if await self.profiles.get(customer_profile_id) is None:
+        profile = await self.profiles.get(customer_profile_id)
+        if profile is None:
             raise AppError(ErrorCode.VALIDATION_FAILED, "客户画像不存在", status_code=404)
+        if profile.status != ProfileStatus.CONFIRMED:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "快速方案只能使用已确认客户画像",
+                status_code=409,
+            )
         chat = await self.sessions.create(
             customer_profile_id=customer_profile_id,
             created_by_id=self.user_id,
@@ -60,13 +65,17 @@ class SessionService:
         )
         return items, await self.sessions.count_filtered(profile_id=profile_id)
 
-    async def create_turn(
-        self, session_id: uuid.UUID, content: str
-    ) -> tuple[Message, SolutionRun]:
+    async def create_turn(self, session_id: uuid.UUID, content: str) -> tuple[Message, SolutionRun]:
         chat = await self.get(session_id)
         profile = await self.profiles.get(chat.customer_profile_id)
         if profile is None:
             raise AppError(ErrorCode.VALIDATION_FAILED, "客户画像不存在", status_code=404)
+        if profile.status != ProfileStatus.CONFIRMED:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "快速方案只能使用已确认客户画像",
+                status_code=409,
+            )
         await self.session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
             {"key": f"{self.workspace_id}:session-sequence:{session_id}"},

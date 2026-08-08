@@ -23,8 +23,10 @@ from app.ai.schemas import (
     CustomerProfileDraft,
     DeepResearchStageResult,
     ExperienceDraft,
+    ExpertQuestion,
     ProfileStatus,
     ResearchAudit,
+    ResearchContextPackage,
     ResearchPlan,
     ResearchStage,
     ResearchSubquestion,
@@ -463,6 +465,8 @@ class MockAIEngine:
                 status=(
                     ResearchTaskStatus.COMPLETED
                     if stage == ResearchStage.FINAL_REPORT
+                    else ResearchTaskStatus.AWAITING_EXPERT
+                    if stage == ResearchStage.FACT_AUDIT and validated_snapshot.missing_information
                     else ResearchTaskStatus.RUNNING
                 ),
                 research_plan=plan,
@@ -473,6 +477,27 @@ class MockAIEngine:
                         knowledge_gaps=validated_snapshot.missing_information,
                     )
                     if stage == ResearchStage.FACT_AUDIT
+                    else None
+                ),
+                expert_context=(
+                    ResearchContextPackage(
+                        research_task_id=validated_context.research_task_id,
+                        conversation_summary=validated_context.current_requirement,
+                        research_document_summary=validated_context.current_requirement,
+                        profile_summary=validated_context.customer_profile.profile_summary,
+                        evidence_snapshot=validated_snapshot,
+                        knowledge_gaps=validated_snapshot.missing_information,
+                        questions=[
+                            ExpertQuestion(
+                                question_id=f"GAP-{index}",
+                                question=gap,
+                            )
+                            for index, gap in enumerate(
+                                validated_snapshot.missing_information, start=1
+                            )
+                        ],
+                    )
+                    if stage == ResearchStage.FACT_AUDIT and validated_snapshot.missing_information
                     else None
                 ),
                 final_solution=(solution if stage == ResearchStage.FINAL_REPORT else None),

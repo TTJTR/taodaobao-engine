@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.db.models import Message, ProcessStatus, Session, SolutionRun
+from app.db.models import Message, ProcessStatus, ProfileStatus, Session, SolutionRun
 from app.services import session_service as module
 
 
@@ -45,7 +45,7 @@ async def test_create_turn_persists_user_message_and_pending_run(
         id=profile_id,
         customer_name="制造客户",
         profile={"industry": "制造"},
-        status=SimpleNamespace(value="confirmed"),
+        status=ProfileStatus.CONFIRMED,
     )
     monkeypatch.setattr(module, "SessionRepository", lambda *_: session_repository)
     monkeypatch.setattr(module, "MessageRepository", lambda *_: message_repository)

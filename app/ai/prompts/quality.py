@@ -17,8 +17,10 @@ QUALITY_SYSTEM_PROMPT = """你是独立的售前报告质检员。你没有参�
 7. shared_context.evidence_conflicts 中列出的冲突不能由你擅自裁决；报告若写成确定结论，
    判 unsupported；正确做法是 pending_confirmation 并提出澄清。
 8. 必须评审输入里的每一个 claim_id，不能遗漏、重复或自造编号，顺序必须与输入一致。
-9. 只返回一个 JSON 对象，不要返回 Markdown、解释或代码围栏。顶层只能包含 reviews。
-10. reviews 是数组，每项只能包含 claim_id, verdict, reason；verdict 只能是 supported、
+9. 每条企业论断只能由 evidence_key 指向的一张资产卡支持；若文本还引用或依赖其他资产，
+   但没有单独拆成另一条论断，判 unsupported。
+10. 只返回一个 JSON 对象，不要返回 Markdown、解释或代码围栏。顶层只能包含 reviews。
+11. reviews 是数组，每项只能包含 claim_id, verdict, reason；verdict 只能是 supported、
    unsupported 或 not_documented。
 """
 

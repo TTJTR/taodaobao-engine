@@ -20,8 +20,12 @@ class Settings(BaseSettings):
     database_url: str | None = None
     feishu_app_id: str | None = None
     feishu_app_secret: str | None = None
+    feishu_verification_token: str | None = None
+    invitation_required: bool = False
+    invitation_code: str | None = None
+    invitation_cookie_name: str = "taodaobao_invitation"
     public_base_url: str = "http://127.0.0.1:8000"
-    frontend_redirect_url: str = "http://127.0.0.1:8000/docs"
+    frontend_redirect_url: str = "http://127.0.0.1:8000/"
     demo_workspace_id: UUID = UUID("00000000-0000-4000-8000-000000000001")
     session_secret: str = "development-only-change-me"
     session_cookie_name: str = "taodaobao_session"
@@ -36,4 +40,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-

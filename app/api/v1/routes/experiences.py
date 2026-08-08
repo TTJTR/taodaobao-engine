@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from app.api.deps import DatabaseSession, WorkspaceId
+from app.api.deps import CurrentUser, DatabaseSession, EmbeddingProviderDependency, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.db.models import ReviewStatus
@@ -77,10 +77,12 @@ async def review_experience(
     payload: ReviewRequest,
     request: Request,
     session: DatabaseSession,
+    current_user: CurrentUser,
     workspace_id: WorkspaceId,
+    embedding_provider: EmbeddingProviderDependency,
     _: str = Depends(require_idempotency_key),
 ) -> dict[str, object]:
-    asset = await ExperienceService(session, workspace_id).review(
-        experience_id, payload.action, payload.note
-    )
+    asset = await ExperienceService(
+        session, workspace_id, current_user.id, embedding_provider
+    ).review(experience_id, payload.action, payload.note)
     return success_response(request, serialize_experience(asset))

@@ -1,9 +1,11 @@
 import uuid
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from app.db.models import Experience, ReviewStatus
+from app.ai.embedding import MockEmbeddingProvider
+from app.db.models import Experience, ReviewStatus, Source, SourceFreshness
+from app.services import asset_service as module
 from app.services.asset_service import ExperienceService
 
 
@@ -25,18 +27,57 @@ class FakeExperienceRepository:
         return 1
 
 
+class FakeSourceRepository:
+    source: Source
+
+    def __init__(self, session, workspace_id: uuid.UUID) -> None:
+        pass
+
+    async def get(self, source_id: uuid.UUID) -> Source | None:
+        return self.source if self.source.id == source_id else None
+
+
+class FakeContributionRepository:
+    def __init__(self, session, workspace_id: uuid.UUID) -> None:
+        pass
+
+    async def get_for_user_source_role(self, *args):
+        return None
+
+    async def create(self, **values):
+        return values
+
+
 @pytest.fixture
 def experience(monkeypatch: pytest.MonkeyPatch) -> Experience:
     asset = Experience(
         id=uuid.uuid4(),
         workspace_id=uuid.uuid4(),
         source_id=uuid.uuid4(),
-        data={"name": "试点经验"},
+        data={
+            "name": "试点经验",
+            "applicable_problem": "门店质检试点",
+            "solution": "先旁路验证",
+        },
         review_status=ReviewStatus.PENDING_REVIEW,
     )
     FakeExperienceRepository.asset = asset
     FakeExperienceRepository.last_review_filter = None
+    FakeSourceRepository.source = Source(
+        id=asset.source_id,
+        workspace_id=asset.workspace_id,
+        imported_by_id=uuid.uuid4(),
+        title="来源",
+        type="pasted_text",
+        purpose="experience",
+        status="pending_review",
+        freshness_status=SourceFreshness.CURRENT,
+        content_version=1,
+        tags=[],
+    )
     monkeypatch.setattr(ExperienceService, "repository_type", FakeExperienceRepository)
+    monkeypatch.setattr(module, "SourceRepository", FakeSourceRepository)
+    monkeypatch.setattr(module, "ExpertContributionRepository", FakeContributionRepository)
     return asset
 
 
@@ -53,12 +94,19 @@ async def test_review_maps_action_and_saves_note(
     experience: Experience, action: str, expected: ReviewStatus
 ) -> None:
     session = AsyncMock()
-    service = ExperienceService(session, experience.workspace_id)
+    session.add = Mock()
+    service = ExperienceService(
+        session,
+        experience.workspace_id,
+        uuid.uuid4(),
+        MockEmbeddingProvider(dimension=1024),
+    )
 
     result = await service.review(experience.id, action, "审核备注")
 
     assert result.review_status == expected
     assert result.review_note == "审核备注"
+    assert result.embedding_ready is (action == "approve")
     session.commit.assert_awaited_once()
     session.refresh.assert_awaited_once_with(experience)
 

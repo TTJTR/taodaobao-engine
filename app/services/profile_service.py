@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,12 +10,18 @@ from app.db.repositories import CustomerProfileRepository, JobRepository, Source
 
 
 class CustomerProfileService:
-    def __init__(self, session: AsyncSession, workspace_id: uuid.UUID) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        workspace_id: uuid.UUID,
+        user_id: uuid.UUID | None = None,
+    ) -> None:
         self.session = session
         self.workspace_id = workspace_id
         self.profiles = CustomerProfileRepository(session, workspace_id)
         self.sources = SourceRepository(session, workspace_id)
         self.jobs = JobRepository(session, workspace_id)
+        self.user_id = user_id
 
     async def create(self, customer_name: str) -> tuple[CustomerProfile, bool]:
         normalized_name = customer_name.strip()
@@ -66,6 +73,9 @@ class CustomerProfileService:
                 )
             profile.customer_name = normalized_name
         profile.profile = profile_data
+        profile.status = ProfileStatus.PENDING_CONFIRMATION
+        profile.confirmed_by_id = None
+        profile.confirmed_at = None
         if source_ids is not None:
             await self._replace_sources(profile, source_ids)
         await self.session.commit()
@@ -85,6 +95,7 @@ class CustomerProfileService:
         # The AI worker reads source links and supplemental text in the later Harness phase.
         if supplemental_text:
             profile.profile = {**profile.profile, "supplemental_text": supplemental_text}
+        profile.status = ProfileStatus.PENDING_CONFIRMATION
         job = await self.jobs.create(
             type=JobType.PROFILE_GENERATION,
             target_id=profile.id,
@@ -98,12 +109,14 @@ class CustomerProfileService:
 
     async def confirm(self, profile_id: uuid.UUID) -> None:
         profile = await self.get(profile_id)
+        if self.user_id is None:
+            raise AppError(ErrorCode.AUTH_REQUIRED, "缺少画像确认人", status_code=401)
         profile.status = ProfileStatus.CONFIRMED
+        profile.confirmed_by_id = self.user_id
+        profile.confirmed_at = datetime.now(UTC)
         await self.session.commit()
 
-    async def _replace_sources(
-        self, profile: CustomerProfile, source_ids: list[uuid.UUID]
-    ) -> None:
+    async def _replace_sources(self, profile: CustomerProfile, source_ids: list[uuid.UUID]) -> None:
         selected = []
         for source_id in dict.fromkeys(source_ids):
             source = await self.sources.get(source_id)

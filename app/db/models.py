@@ -3,6 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -70,6 +71,48 @@ class MessageRole(StrEnum):
     ASSISTANT = "assistant"
 
 
+class SourceFreshness(StrEnum):
+    CURRENT = "current"
+    UPDATED = "updated"
+    PERMISSION_DENIED = "permission_denied"
+    DELETED = "deleted"
+
+
+class ResearchTaskStatus(StrEnum):
+    QUEUED = "queued"
+    PLANNING = "planning"
+    RESEARCHING = "researching"
+    WAITING_EXPERT = "waiting_expert"
+    SYNTHESIZING = "synthesizing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class CollaborationStatus(StrEnum):
+    DRAFT = "draft"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    GROUP_CREATED = "group_created"
+    SENT = "sent"
+    CLOSED = "closed"
+    FAILED = "failed"
+
+
+class ExpertQuestionStatus(StrEnum):
+    OPEN = "open"
+    INVITED = "invited"
+    ANSWERED = "answered"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    CLOSED = "closed"
+
+
+class ContributionRole(StrEnum):
+    SOURCE_AUTHOR = "source_author"
+    ASSET_CONTRIBUTOR = "asset_contributor"
+    REVIEWER = "reviewer"
+
+
 def enum_column(enum_type: type[StrEnum], name: str) -> SAEnum:
     return SAEnum(
         enum_type,
@@ -86,9 +129,7 @@ class Base(DeclarativeBase):
 
 
 class EntityMixin:
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -113,6 +154,10 @@ class User(EntityMixin, WorkspaceMixin, Base):
     feishu_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     avatar: Mapped[str | None] = mapped_column(String(1000))
+    feishu_tenant_key: Mapped[str | None] = mapped_column(String(128))
+    feishu_access_token: Mapped[str | None] = mapped_column(Text)
+    feishu_refresh_token: Mapped[str | None] = mapped_column(Text)
+    feishu_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     imported_sources: Mapped[list["Source"]] = relationship(
         back_populates="imported_by", foreign_keys="Source.imported_by_id"
@@ -137,6 +182,10 @@ class CustomerProfile(EntityMixin, WorkspaceMixin, Base):
         nullable=False,
         default=ProfileStatus.PENDING_CONFIRMATION,
     )
+    confirmed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     sources: Mapped[list["Source"]] = relationship(back_populates="customer_profile")
     sessions: Mapped[list["Session"]] = relationship(back_populates="customer_profile")
@@ -156,12 +205,13 @@ class Source(EntityMixin, WorkspaceMixin, Base):
     customer_profile_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("customer_profiles.id", ondelete="SET NULL"), index=True
     )
+    previous_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sources.id", ondelete="SET NULL"), index=True
+    )
     imported_by_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
     )
-    type: Mapped[SourceType] = mapped_column(
-        enum_column(SourceType, "source_type"), nullable=False
-    )
+    type: Mapped[SourceType] = mapped_column(enum_column(SourceType, "source_type"), nullable=False)
     purpose: Mapped[SourcePurpose] = mapped_column(
         enum_column(SourcePurpose, "source_purpose"), nullable=False
     )
@@ -178,14 +228,23 @@ class Source(EntityMixin, WorkspaceMixin, Base):
     is_demo: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    freshness_status: Mapped[SourceFreshness] = mapped_column(
+        enum_column(SourceFreshness, "source_freshness_status"),
+        nullable=False,
+        default=SourceFreshness.CURRENT,
+        server_default=SourceFreshness.CURRENT.value,
+    )
+    content_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    content_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
+    permission_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     customer_profile: Mapped[CustomerProfile | None] = relationship(back_populates="sources")
     imported_by: Mapped[User] = relationship(
         back_populates="imported_sources", foreign_keys=[imported_by_id]
     )
-    experience: Mapped["Experience | None"] = relationship(
-        back_populates="source", uselist=False
-    )
+    experience: Mapped["Experience | None"] = relationship(back_populates="source", uselist=False)
     capabilities: Mapped[list["Capability"]] = relationship(back_populates="source")
 
 
@@ -206,15 +265,25 @@ class Experience(EntityMixin, WorkspaceMixin, Base):
         default=ReviewStatus.PENDING_REVIEW,
     )
     review_note: Mapped[str | None] = mapped_column(Text)
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_version_at_review: Mapped[int | None] = mapped_column(Integer)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024))
+    embedding_text: Mapped[str | None] = mapped_column(Text)
+    embedding_version: Mapped[str | None] = mapped_column(String(128))
+    embedding_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    embedding_ready: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     source: Mapped[Source] = relationship(back_populates="experience")
 
 
 class Capability(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "capabilities"
-    __table_args__ = (
-        Index("ix_capabilities_workspace_review", "workspace_id", "review_status"),
-    )
+    __table_args__ = (Index("ix_capabilities_workspace_review", "workspace_id", "review_status"),)
 
     source_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("sources.id", ondelete="RESTRICT"), nullable=False
@@ -226,15 +295,25 @@ class Capability(EntityMixin, WorkspaceMixin, Base):
         default=ReviewStatus.PENDING_REVIEW,
     )
     review_note: Mapped[str | None] = mapped_column(Text)
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_version_at_review: Mapped[int | None] = mapped_column(Integer)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024))
+    embedding_text: Mapped[str | None] = mapped_column(Text)
+    embedding_version: Mapped[str | None] = mapped_column(String(128))
+    embedding_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    embedding_ready: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     source: Mapped[Source] = relationship(back_populates="capabilities")
 
 
 class Session(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "sessions"
-    __table_args__ = (
-        Index("ix_sessions_profile_updated", "customer_profile_id", "updated_at"),
-    )
+    __table_args__ = (Index("ix_sessions_profile_updated", "customer_profile_id", "updated_at"),)
 
     customer_profile_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -281,9 +360,7 @@ class Message(EntityMixin, WorkspaceMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    session: Mapped[Session] = relationship(
-        back_populates="messages", foreign_keys=[session_id]
-    )
+    session: Mapped[Session] = relationship(back_populates="messages", foreign_keys=[session_id])
     solution_run: Mapped["SolutionRun | None"] = relationship(
         back_populates="response_messages", foreign_keys=[solution_run_id]
     )
@@ -291,9 +368,7 @@ class Message(EntityMixin, WorkspaceMixin, Base):
 
 class SolutionRun(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "solution_runs"
-    __table_args__ = (
-        Index("ix_solution_runs_session_created", "session_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_solution_runs_session_created", "session_id", "created_at"),)
 
     session_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="RESTRICT"), nullable=False
@@ -357,13 +432,9 @@ class IdempotencyRecord(Base):
         Index("ix_idempotency_records_expires_at", "expires_at"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     key: Mapped[str] = mapped_column(String(128), nullable=False)
-    workspace_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False, index=True
-    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     response_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -372,4 +443,217 @@ class IdempotencyRecord(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ReviewRecord(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "review_records"
+    __table_args__ = (Index("ix_review_records_asset", "asset_type", "asset_id"),)
+
+    asset_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    reviewer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    note: Mapped[str | None] = mapped_column(Text)
+    before_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    after_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+
+class AIRunRecord(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "ai_run_records"
+    __table_args__ = (
+        Index("ix_ai_run_records_trace", "trace_id", "created_at"),
+        Index("ix_ai_run_records_target", "target_type", "target_id"),
+    )
+
+    request_id: Mapped[str | None] = mapped_column(String(128))
+    trace_id: Mapped[str | None] = mapped_column(String(128))
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    method: Mapped[str] = mapped_column(String(64), nullable=False)
+    stage: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[ProcessStatus] = mapped_column(
+        enum_column(ProcessStatus, "ai_run_status"), nullable=False
+    )
+    model_version: Mapped[str | None] = mapped_column(String(128))
+    prompt_version: Mapped[str | None] = mapped_column(String(128))
+    schema_version: Mapped[str | None] = mapped_column(String(128))
+    embedding_version: Mapped[str | None] = mapped_column(String(128))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    input_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class ResearchTask(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "research_tasks"
+    __table_args__ = (
+        Index("ix_research_tasks_workspace_status", "workspace_id", "status"),
+        Index("ix_research_tasks_profile_updated", "customer_profile_id", "updated_at"),
+    )
+
+    customer_profile_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customer_profiles.id", ondelete="RESTRICT"), nullable=False
+    )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="SET NULL")
+    )
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    completion_conditions: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    status: Mapped[ResearchTaskStatus] = mapped_column(
+        enum_column(ResearchTaskStatus, "research_task_status"),
+        nullable=False,
+        default=ResearchTaskStatus.QUEUED,
+    )
+    stage: Mapped[str] = mapped_column(String(64), nullable=False, default="queued")
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    profile_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    conversation_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    evidence_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    research_plan: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    findings: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    routes: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    audit: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    knowledge_gaps: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    expert_questions: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    report: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    research_document_url: Mapped[str | None] = mapped_column(String(2000))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_summary: Mapped[str | None] = mapped_column(String(1000))
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cancel_reason: Mapped[str | None] = mapped_column(String(1000))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ResearchStep(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "research_steps"
+    __table_args__ = (
+        UniqueConstraint("research_task_id", "sequence", name="uq_research_steps_task_sequence"),
+        Index("ix_research_steps_task_status", "research_task_id", "status"),
+    )
+
+    research_task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("research_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    stage: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[ProcessStatus] = mapped_column(
+        enum_column(ProcessStatus, "research_step_status"), nullable=False
+    )
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    input_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    output_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_summary: Mapped[str | None] = mapped_column(String(1000))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ExpertContribution(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "expert_contributions"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "source_id", "role", name="uq_expert_contributions_user_source_role"
+        ),
+        Index("ix_expert_contributions_source", "source_id", "updated_at"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sources.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[ContributionRole] = mapped_column(
+        enum_column(ContributionRole, "contribution_role"), nullable=False
+    )
+    asset_type: Mapped[str | None] = mapped_column(String(32))
+    asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    tags: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+
+class ExpertCollaboration(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "expert_collaborations"
+    __table_args__ = (
+        Index("ix_expert_collaborations_task_status", "research_task_id", "status"),
+        Index(
+            "uq_expert_collaborations_active_task",
+            "workspace_id",
+            "research_task_id",
+            unique=True,
+            postgresql_where=text(
+                "is_deleted = false AND status IN "
+                "('draft', 'awaiting_confirmation', 'group_created', 'sent')"
+            ),
+        ),
+    )
+
+    research_task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("research_tasks.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[CollaborationStatus] = mapped_column(
+        enum_column(CollaborationStatus, "expert_collaboration_status"),
+        nullable=False,
+        default=CollaborationStatus.DRAFT,
+    )
+    group_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    candidate_records: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    selected_expert_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    questions: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    context_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    content_bundle: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    feishu_document_id: Mapped[str | None] = mapped_column(String(256))
+    feishu_document_url: Mapped[str | None] = mapped_column(String(2000))
+    feishu_group_id: Mapped[str | None] = mapped_column(String(256))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_summary: Mapped[str | None] = mapped_column(String(1000))
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ExpertReply(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "expert_replies"
+    __table_args__ = (
+        UniqueConstraint("feishu_message_id", name="uq_expert_replies_message"),
+        Index("ix_expert_replies_task", "research_task_id", "created_at"),
+    )
+
+    research_task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("research_tasks.id", ondelete="RESTRICT"), nullable=False
+    )
+    collaboration_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("expert_collaborations.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    question_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    author_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    author_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    answer_text: Mapped[str] = mapped_column(Text, nullable=False)
+    feishu_message_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    message_url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    status: Mapped[ExpertQuestionStatus] = mapped_column(
+        enum_column(ExpertQuestionStatus, "expert_reply_status"),
+        nullable=False,
+        default=ExpertQuestionStatus.ANSWERED,
+    )
+    adopted_experience_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("experiences.id", ondelete="SET NULL")
     )

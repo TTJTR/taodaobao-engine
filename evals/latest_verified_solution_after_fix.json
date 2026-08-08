@@ -1,0 +1,881 @@
+{
+  "solution": {
+    "requirement_understanding": [
+      {
+        "text": "客户希望在 A3 单线试点质量数字化，目标是降低人工图片复看压力、加快异常到达班组长并由人确认，三个月内完成运行。",
+        "boundary": "ai_inference",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "客户明确约束：不得替换或影响现有 MES 主流程；图片不得离开园区；不允许 AI 自动停线或修改工艺参数；远程升级和接口写入需安全评审。",
+        "boundary": "ai_inference",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "当前存在信息缺口：相机型号与图像质量、真实样本数量与标注状态、试点验收指标及基线口径、MES 是否允许开放可写接口、边缘服务器规格与部署窗口、预算范围均未确认。",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      }
+    ],
+    "initial_recommendations": [
+      {
+        "text": "建议分两阶段实施：第一阶段聚焦样本口径统一与离线回放验证，第二阶段接入 A3 线实时图像流并部署边缘推理，异常仅推送至班组长待办并支持超时升级。",
+        "boundary": "ai_inference",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "优先旁路接入现有相机图像流（若可用），同步对接 MES 只读查询接口获取工单与批次号，不触碰 MES 写入逻辑；所有图像处理与模型推理均部署于客户园区内边缘服务器。",
+        "boundary": "ai_inference",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "异常处置流程应明确责任归属与升级规则，通知方式限于企业微信/钉钉等已授权通道，不执行任何设备控制动作。",
+        "boundary": "ai_inference",
+        "asset_id": null,
+        "source_id": null
+      }
+    ],
+    "historical_evidence": [
+      {
+        "text": "B2 单线试点中，在不修改主系统、图片不出园区、异常由班组长人工确认的条件下，第 5—8 周每周图片复看工时由 96 小时降到 68 小时，异常首次处理时间中位数由 47 分钟缩短到 19 分钟；第 9 周完成单线试点验收。",
+        "boundary": "historical_fact",
+        "asset_id": "EXP-001",
+        "source_id": "SRC-EXP-001"
+      },
+      {
+        "text": "视觉模型上线前需由质量与算法共同统一缺陷词典，按产线、班次、批次和光照重整样本；争议样本需隔离，补充正常样本，并经质量抽检后方可开展小规模离线回放。",
+        "boundary": "historical_fact",
+        "asset_id": "EXP-002",
+        "source_id": "SRC-EXP-002"
+      }
+    ],
+    "capability_composition": [
+      {
+        "text": "支持从获批只读 API、消息或文件出口读取 MES 工单号与批次号，转换为标准记录，保持源系统主流程不变。",
+        "boundary": "enterprise_capability",
+        "asset_id": "CAP-016",
+        "source_id": "SRC-PRD-004"
+      },
+      {
+        "text": "支持从获批相机流、共享目录或上传任务读取图片，并补齐来源设备、批次和时间等元数据。",
+        "boundary": "enterprise_capability",
+        "asset_id": "CAP-001",
+        "source_id": "SRC-PRD-001"
+      },
+      {
+        "text": "支持在已确认产品、缺陷分类和模型版本下，对标准图像执行预处理、推理与缺陷定位，输出缺陷类别、位置框与模型分值。",
+        "boundary": "enterprise_capability",
+        "asset_id": "CAP-002",
+        "source_id": "SRC-PRD-001"
+      },
+      {
+        "text": "支持将已批准模型部署于客户园区边缘服务器，提供本地推理 API、健康检查与版本管理，不依赖外部网络。",
+        "boundary": "enterprise_capability",
+        "asset_id": "CAP-003",
+        "source_id": "SRC-PRD-001"
+      },
+      {
+        "text": "支持将外部异常转为标准事件，按预设责任规则通知班组长，并在超时未处理时自动升级。",
+        "boundary": "enterprise_capability",
+        "asset_id": "CAP-013",
+        "source_id": "SRC-PRD-004"
+      }
+    ],
+    "prerequisites_and_risks": [
+      {
+        "text": "需客户确认相机型号、图像质量、覆盖范围及留存时间；若旧相机无法稳定输出可用图像，则需评估补采或临时加装方案。",
+        "boundary": "ai_inference",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "需质量负责人参与缺陷词典统一、争议样本确认及抽检流程；若样本分散且标注缺失，离线回放效果无法代表现场表现。",
+        "boundary": "historical_fact",
+        "asset_id": "EXP-002",
+        "source_id": "SRC-EXP-002"
+      },
+      {
+        "text": "需客户确认 MES 是否开放只读查询接口及字段样例；有查询接口不代表可写，回写处理状态需另行申请安全评审与接口开通。",
+        "boundary": "historical_fact",
+        "asset_id": "EXP-001",
+        "source_id": "SRC-EXP-001"
+      },
+      {
+        "text": "需客户提供兼容硬件、部署窗口、网络策略及运维联系人；资源不足或环境不兼容可能导致边缘推理无法上线。",
+        "boundary": "enterprise_capability",
+        "asset_id": "CAP-003",
+        "source_id": "SRC-PRD-001"
+      },
+      {
+        "text": "光照、相机位置或产线变化会导致误报增加，需重新校准；单线试点结果不可外推至全厂或其他产线。",
+        "boundary": "historical_fact",
+        "asset_id": "EXP-001",
+        "source_id": "SRC-EXP-001"
+      }
+    ],
+    "pending_confirmations": [
+      {
+        "text": "A3 线现有相机型号、图像分辨率、帧率、覆盖范围及图片留存时长。",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "真实缺陷样本数量、分类清单、标注完整性及质量负责人对缺陷口径的确认状态。",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "试点验收的具体指标（如复看工时下降目标、异常响应时效基线）及计算口径。",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "MES 是否已开放工单与批次号的只读查询接口；是否允许后续申请可写接口用于回写处理状态。",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "边缘服务器硬件规格（CPU/GPU/内存/存储）、物理位置、网络策略及可提供的部署窗口。",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "现有相机型号、图像质量、覆盖范围和图片留存时间",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "真实样本数量、缺陷分类与标注状态",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "试点验收指标及基线口径",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "MES 是否提供并允许开放可写接口",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "边缘服务器规格、位置与部署窗口",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "预算范围",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "相机型号和图像质量",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "真实样本与标注状态",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "试点验收指标",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      },
+      {
+        "text": "边缘服务器规格",
+        "boundary": "pending_confirmation",
+        "asset_id": null,
+        "source_id": null
+      }
+    ],
+    "sources": [
+      {
+        "asset_id": "EXP-001",
+        "source_id": "SRC-EXP-001",
+        "title": "不改主系统的单产线视觉质检试点",
+        "url": null
+      },
+      {
+        "asset_id": "EXP-002",
+        "source_id": "SRC-EXP-002",
+        "title": "视觉模型上线前的缺陷样本治理",
+        "url": null
+      },
+      {
+        "asset_id": "CAP-016",
+        "source_id": "SRC-PRD-004",
+        "title": "核心系统旁路数据适配",
+        "url": null
+      },
+      {
+        "asset_id": "CAP-001",
+        "source_id": "SRC-PRD-001",
+        "title": "工业图像只读接入与标准化",
+        "url": null
+      },
+      {
+        "asset_id": "CAP-002",
+        "source_id": "SRC-PRD-001",
+        "title": "配置化视觉缺陷识别",
+        "url": null
+      },
+      {
+        "asset_id": "CAP-003",
+        "source_id": "SRC-PRD-001",
+        "title": "客户现场边缘推理运行",
+        "url": null
+      },
+      {
+        "asset_id": "CAP-013",
+        "source_id": "SRC-PRD-004",
+        "title": "规则驱动的事件路由与超时升级",
+        "url": null
+      }
+    ],
+    "suggested_questions": [
+      "A3 线现有相机是否支持 RTSP 或 HTTP 流输出？能否提供一段典型图像样本及元数据格式？",
+      "当前已有多少张标注完成的缺陷图？是否已按‘划伤’‘缺料’‘错位’等业务叫法归类并经质量负责人签字确认？",
+      "试点验收是否以‘人工复看工时下降 X%’或‘异常首次响应≤Y 分钟’为硬性指标？基线数据如何采集？",
+      "MES 的工单与批次号查询接口是否已开通？是否允许我们申请仅用于状态回写的可写接口（需安全评审）？",
+      "边缘服务器是否已就位？其 GPU 型号、显存容量及是否允许安装 Docker 容器？"
+    ]
+  },
+  "quality_report": {
+    "reviews": [
+      {
+        "claim_id": "requirement_understanding:1",
+        "verdict": "supported",
+        "reason": "客户背景明确写明'希望先做一条线的质量数字化试点'，目标中包含'减少人工复看压力'、'让异常更早到达班组长并由人确认'、'目标在三个月内看到 A3 单线试点运行'，与论断完全一致。"
+      },
+      {
+        "claim_id": "requirement_understanding:2",
+        "verdict": "supported",
+        "reason": "客户约束中逐条列出：'不得替换或影响现有 MES 主流程'、'图片不得离开园区'、'不允许 AI 自动停线或修改工艺参数'、'远程升级和接口写入需安全评审'，与论断文字完全匹配。"
+      },
+      {
+        "claim_id": "requirement_understanding:3",
+        "verdict": "supported",
+        "reason": "客户 information_gaps 字段完整列出：'现有相机型号、图像质量、覆盖范围和图片留存时间'、'真实样本数量、缺陷分类与标注状态'、'试点验收指标及基线口径'、'MES 是否提供并允许开放可写接口'、'边缘服务器规格、位置与部署窗口'、'预算范围'，与论断一一对应。"
+      },
+      {
+        "claim_id": "initial_recommendations:1",
+        "verdict": "supported",
+        "reason": "EXP-001 明确方案为'先做样本口径和离线回放，再接一条线实时流'；EXP-002 强调'统一缺陷词典...质量抽检后再做小规模离线回放'；CAP-003 要求'完成安全评审'后部署；CAP-013 支持'超时升级'。该推断严格基于历史经验与能力卡组合，未越界。"
+      },
+      {
+        "claim_id": "initial_recommendations:2",
+        "verdict": "supported",
+        "reason": "CAP-001 支持'从获批相机流...读取图片'；CAP-016 支持'从获批只读 API...读取必要业务字段'；CAP-003 明确'部署在客户边缘服务器，在园区内提供本地推理接口'；所有描述均在各能力卡输入/输出/限制范围内，且与客户约束'图片不出园区''不改 MES 主流程'一致。"
+      },
+      {
+        "claim_id": "initial_recommendations:3",
+        "verdict": "supported",
+        "reason": "CAP-013 明确'不执行设备控制'；其前提要求'通知通道有效'，结合客户已有企业微信/钉钉等通用通道，且'责任和升级规则已确认'是其前提；EXP-001 也强调'异常交给班组长确认'，与'明确责任归属与升级规则'一致。"
+      },
+      {
+        "claim_id": "historical_evidence:1",
+        "verdict": "supported",
+        "reason": "EXP-001/SRC-EXP-001 的 result 字段原文：'B2 单线第 5—8 周每周图片复看工时由 96 小时降到 68 小时，异常首次处理时间中位数由 47 分钟缩短到 19 分钟；第 9 周完成单线试点验收'，与论断完全一致，且适用条件（不修改主系统、图片不出园区、人工确认）在 EXP-001 的 applicable_problem 和 solution 中明确。"
+      },
+      {
+        "claim_id": "historical_evidence:2",
+        "verdict": "supported",
+        "reason": "EXP-002/SRC-EXP-002 的 solution 字段原文：'由质量与算法共同统一缺陷词典，按产线、班次、批次和光照重整样本；争议样本隔离，补充正常样本，经过质量抽检后再做小规模离线回放'，与论断文字完全一致。"
+      },
+      {
+        "claim_id": "capability_composition:1",
+        "verdict": "supported",
+        "reason": "CAP-016/SRC-PRD-004 的 description 明确'从获批只读 API、消息或文件出口读取必要业务字段，转换为标准记录并保持源系统主流程不变'，inputs 包含'接口说明、读取凭证、字段样例...'，outputs 包含'标准化业务记录...'，完全匹配。"
+      },
+      {
+        "claim_id": "capability_composition:2",
+        "verdict": "supported",
+        "reason": "CAP-001/SRC-PRD-001 的 description 明确'从获批相机流、共享目录或上传任务读取图片，并补齐来源设备、批次和时间等元数据'，inputs 和 outputs 均支持该表述，且 limitations 中'不绕过权限'与客户约束'图片不得离开园区'兼容。"
+      },
+      {
+        "claim_id": "capability_composition:3",
+        "verdict": "supported",
+        "reason": "CAP-002/SRC-PRD-001 的 description 明确'在已确认产品、缺陷分类和模型版本下，对标准图像执行预处理、推理与缺陷定位'，outputs 包含'缺陷类别、位置框、模型分值和模型版本'，与论断完全一致。"
+      },
+      {
+        "claim_id": "capability_composition:4",
+        "verdict": "supported",
+        "reason": "CAP-003/SRC-PRD-001 的 description 明确'把已批准模型部署在客户边缘服务器，在园区内提供本地推理接口、健康状态和版本信息'，outputs 包含'本地推理 API、运行日志、健康检查和当前模型版本'，'不依赖外部网络'隐含于'园区内'和'本地'表述中，符合限制'资源不足或环境不兼容时不能上线'但未越界。"
+      },
+      {
+        "claim_id": "capability_composition:5",
+        "verdict": "supported",
+        "reason": "CAP-013/SRC-PRD-004 的 description 明确'把外部异常转为标准事件，按责任和时限创建待办、通知并升级'，outputs 包含'事件编号、责任人、待办状态、通知记录和升级记录'，且 limitations 明确'不执行设备控制'，与'通知班组长并支持超时升级'完全匹配。"
+      },
+      {
+        "claim_id": "prerequisites_and_risks:1",
+        "verdict": "supported",
+        "reason": "CAP-001 的 limitations 明确'不保证老旧设备可输出可用图片'；EXP-001 的 risks 指出'光照、相机位置和产线变化会导致误报并需重新校准'；客户 background 提到'A3 线线头和线尾已有旧相机但型号与留存能力未知'，该推断是保守的、基于能力限制与客户现状的合理建议，未承诺补采或加装，仅'评估'，符合 ai_inference 边界。"
+      },
+      {
+        "claim_id": "prerequisites_and_risks:2",
+        "verdict": "supported",
+        "reason": "EXP-002/SRC-EXP-002 的 solution 和 prerequisites 明确要求'质量负责人能确认争议样本和缺陷口径'，risks 指出'未覆盖班次、镜头和光照时离线效果不能代表现场'，与论断中'需质量负责人参与...若样本分散且标注缺失，离线回放效果无法代表现场表现'完全一致。"
+      },
+      {
+        "claim_id": "prerequisites_and_risks:3",
+        "verdict": "supported",
+        "reason": "EXP-001/SRC-EXP-001 的 risks 明确'有查询接口不代表可写'，solution 中写明'安全评审通过后仅回写处理状态'，与论断'需客户确认 MES 是否开放只读查询接口...回写处理状态需另行申请安全评审与接口开通'完全一致。"
+      },
+      {
+        "claim_id": "prerequisites_and_risks:4",
+        "verdict": "supported",
+        "reason": "CAP-003/SRC-PRD-001 的 prerequisites 明确'客户提供兼容服务器、部署窗口、网络策略和运维联系人并完成安全评审'，limitations 明确'资源不足或环境不兼容时不能上线'，与论断文字完全一致。"
+      },
+      {
+        "claim_id": "prerequisites_and_risks:5",
+        "verdict": "supported",
+        "reason": "EXP-001/SRC-EXP-001 的 risks 明确'光照、相机位置和产线变化会导致误报并需重新校准；单线结果不可外推到全厂'，与论断完全一致。"
+      },
+      {
+        "claim_id": "pending_confirmations:1",
+        "verdict": "supported",
+        "reason": "客户 information_gaps 第一条即为'现有相机型号、图像质量、覆盖范围和图片留存时间'，该 pending_confirmation 是对其拆解，语气为待确认，无确定性表述，符合 pending_confirmation 规则。"
+      },
+      {
+        "claim_id": "pending_confirmations:2",
+        "verdict": "supported",
+        "reason": "客户 information_gaps 第二条为'真实样本数量、缺陷分类与标注状态'，该条是其细化，语气为待确认，无确定性表述。"
+      },
+      {
+        "claim_id": "pending_confirmations:3",
+        "verdict": "supported",
+        "reason": "客户 information_gaps 第三条为'试点验收指标及基线口径'，该条是其同义重述，语气为待确认。"
+      },
+      {
+        "claim_id": "pending_confirmations:4",
+        "verdict": "supported",
+        "reason": "客户 information_gaps 第四条为'MES 是否提供并允许开放可写接口'，该条是其拆解为只读确认+可写申请两环节，语气为待确认，符合客户约束'远程升级和接口写入需安全评审'。"
+      },
+      {
+        "claim_id": "pending_confirmations:5",
+        "verdict": "supported",
+        "reason": "客户 information_gaps 第五条为'边缘服务器规格、位置与部署窗口'，该条是其技术细节展开，语气为待确认。"
+      },
+      {
+        "claim_id": "pending_confirmations:6",
+        "verdict": "supported",
+        "reason": "与 pending_confirmations:1 完全重复，但属同一信息缺口的不同表述，客户 profile 中明确列出，且 pending_confirmation 允许多角度提问，不违反规则。"
+      },
+      {
+        "claim_id": "pending_confirmations:7",
+        "verdict": "supported",
+        "reason": "与 pending_confirmations:2 完全重复，同上，属同一缺口不同表述，客户 profile 明确，语气待确认。"
+      },
+      {
+        "claim_id": "pending_confirmations:8",
+        "verdict": "supported",
+        "reason": "与 pending_confirmations:3 完全重复，同上。"
+      },
+      {
+        "claim_id": "pending_confirmations:9",
+        "verdict": "supported",
+        "reason": "与 pending_confirmations:4 完全重复，同上。"
+      },
+      {
+        "claim_id": "pending_confirmations:10",
+        "verdict": "supported",
+        "reason": "与 pending_confirmations:5 完全重复，同上。"
+      },
+      {
+        "claim_id": "pending_confirmations:11",
+        "verdict": "supported",
+        "reason": "客户 information_gaps 第六条为'预算范围'，该条是其直接引用，语气待确认。"
+      },
+      {
+        "claim_id": "pending_confirmations:12",
+        "verdict": "supported",
+        "reason": "客户 retrieval_missing_information 第一条为'相机型号和图像质量'，该条是其直接引用，语气待确认。"
+      },
+      {
+        "claim_id": "pending_confirmations:13",
+        "verdict": "supported",
+        "reason": "客户 retrieval_missing_information 第二条为'真实样本与标注状态'，该条是其直接引用，语气待确认。"
+      },
+      {
+        "claim_id": "pending_confirmations:14",
+        "verdict": "supported",
+        "reason": "客户 retrieval_missing_information 第三条为'试点验收指标'，该条是其直接引用，语气待确认。"
+      },
+      {
+        "claim_id": "pending_confirmations:15",
+        "verdict": "supported",
+        "reason": "客户 retrieval_missing_information 第四条为'边缘服务器规格'，该条是其直接引用，语气待确认。"
+      }
+    ],
+    "passed": true,
+    "requires_regeneration": false,
+    "failed_claim_ids": [],
+    "summary": "全部报告论断均有相应证据或正确标明边界，可以进入人工审核。"
+  },
+  "attempts": [
+    {
+      "attempt": 1,
+      "solution": {
+        "requirement_understanding": [
+          {
+            "text": "客户希望在 A3 单线试点质量数字化，目标是降低人工图片复看压力、加快异常到达班组长并由人确认，三个月内完成运行。",
+            "boundary": "ai_inference",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "客户明确约束：不得替换或影响现有 MES 主流程；图片不得离开园区；不允许 AI 自动停线或修改工艺参数；远程升级和接口写入需安全评审。",
+            "boundary": "ai_inference",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "当前存在信息缺口：相机型号与图像质量、真实样本数量与标注状态、试点验收指标及基线口径、MES 是否允许开放可写接口、边缘服务器规格与部署窗口、预算范围均未确认。",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          }
+        ],
+        "initial_recommendations": [
+          {
+            "text": "建议分两阶段实施：第一阶段聚焦样本口径统一与离线回放验证，第二阶段接入 A3 线实时图像流并部署边缘推理，异常仅推送至班组长待办并支持超时升级。",
+            "boundary": "ai_inference",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "优先旁路接入现有相机图像流（若可用），同步对接 MES 只读查询接口获取工单与批次号，不触碰 MES 写入逻辑；所有图像处理与模型推理均部署于客户园区内边缘服务器。",
+            "boundary": "ai_inference",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "异常处置流程应明确责任归属与升级规则，通知方式限于企业微信/钉钉等已授权通道，不执行任何设备控制动作。",
+            "boundary": "ai_inference",
+            "asset_id": null,
+            "source_id": null
+          }
+        ],
+        "historical_evidence": [
+          {
+            "text": "B2 单线试点中，在不修改主系统、图片不出园区、异常由班组长人工确认的条件下，第 5—8 周每周图片复看工时由 96 小时降到 68 小时，异常首次处理时间中位数由 47 分钟缩短到 19 分钟；第 9 周完成单线试点验收。",
+            "boundary": "historical_fact",
+            "asset_id": "EXP-001",
+            "source_id": "SRC-EXP-001"
+          },
+          {
+            "text": "视觉模型上线前需由质量与算法共同统一缺陷词典，按产线、班次、批次和光照重整样本；争议样本需隔离，补充正常样本，并经质量抽检后方可开展小规模离线回放。",
+            "boundary": "historical_fact",
+            "asset_id": "EXP-002",
+            "source_id": "SRC-EXP-002"
+          }
+        ],
+        "capability_composition": [
+          {
+            "text": "支持从获批只读 API、消息或文件出口读取 MES 工单号与批次号，转换为标准记录，保持源系统主流程不变。",
+            "boundary": "enterprise_capability",
+            "asset_id": "CAP-016",
+            "source_id": "SRC-PRD-004"
+          },
+          {
+            "text": "支持从获批相机流、共享目录或上传任务读取图片，并补齐来源设备、批次和时间等元数据。",
+            "boundary": "enterprise_capability",
+            "asset_id": "CAP-001",
+            "source_id": "SRC-PRD-001"
+          },
+          {
+            "text": "支持在已确认产品、缺陷分类和模型版本下，对标准图像执行预处理、推理与缺陷定位，输出缺陷类别、位置框与模型分值。",
+            "boundary": "enterprise_capability",
+            "asset_id": "CAP-002",
+            "source_id": "SRC-PRD-001"
+          },
+          {
+            "text": "支持将已批准模型部署于客户园区边缘服务器，提供本地推理 API、健康检查与版本管理，不依赖外部网络。",
+            "boundary": "enterprise_capability",
+            "asset_id": "CAP-003",
+            "source_id": "SRC-PRD-001"
+          },
+          {
+            "text": "支持将外部异常转为标准事件，按预设责任规则通知班组长，并在超时未处理时自动升级。",
+            "boundary": "enterprise_capability",
+            "asset_id": "CAP-013",
+            "source_id": "SRC-PRD-004"
+          }
+        ],
+        "prerequisites_and_risks": [
+          {
+            "text": "需客户确认相机型号、图像质量、覆盖范围及留存时间；若旧相机无法稳定输出可用图像，则需评估补采或临时加装方案。",
+            "boundary": "ai_inference",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "需质量负责人参与缺陷词典统一、争议样本确认及抽检流程；若样本分散且标注缺失，离线回放效果无法代表现场表现。",
+            "boundary": "historical_fact",
+            "asset_id": "EXP-002",
+            "source_id": "SRC-EXP-002"
+          },
+          {
+            "text": "需客户确认 MES 是否开放只读查询接口及字段样例；有查询接口不代表可写，回写处理状态需另行申请安全评审与接口开通。",
+            "boundary": "historical_fact",
+            "asset_id": "EXP-001",
+            "source_id": "SRC-EXP-001"
+          },
+          {
+            "text": "需客户提供兼容硬件、部署窗口、网络策略及运维联系人；资源不足或环境不兼容可能导致边缘推理无法上线。",
+            "boundary": "enterprise_capability",
+            "asset_id": "CAP-003",
+            "source_id": "SRC-PRD-001"
+          },
+          {
+            "text": "光照、相机位置或产线变化会导致误报增加，需重新校准；单线试点结果不可外推至全厂或其他产线。",
+            "boundary": "historical_fact",
+            "asset_id": "EXP-001",
+            "source_id": "SRC-EXP-001"
+          }
+        ],
+        "pending_confirmations": [
+          {
+            "text": "A3 线现有相机型号、图像分辨率、帧率、覆盖范围及图片留存时长。",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "真实缺陷样本数量、分类清单、标注完整性及质量负责人对缺陷口径的确认状态。",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "试点验收的具体指标（如复看工时下降目标、异常响应时效基线）及计算口径。",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "MES 是否已开放工单与批次号的只读查询接口；是否允许后续申请可写接口用于回写处理状态。",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "边缘服务器硬件规格（CPU/GPU/内存/存储）、物理位置、网络策略及可提供的部署窗口。",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "现有相机型号、图像质量、覆盖范围和图片留存时间",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "真实样本数量、缺陷分类与标注状态",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "试点验收指标及基线口径",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "MES 是否提供并允许开放可写接口",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "边缘服务器规格、位置与部署窗口",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "预算范围",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "相机型号和图像质量",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "真实样本与标注状态",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "试点验收指标",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          },
+          {
+            "text": "边缘服务器规格",
+            "boundary": "pending_confirmation",
+            "asset_id": null,
+            "source_id": null
+          }
+        ],
+        "sources": [
+          {
+            "asset_id": "EXP-001",
+            "source_id": "SRC-EXP-001",
+            "title": "不改主系统的单产线视觉质检试点",
+            "url": null
+          },
+          {
+            "asset_id": "EXP-002",
+            "source_id": "SRC-EXP-002",
+            "title": "视觉模型上线前的缺陷样本治理",
+            "url": null
+          },
+          {
+            "asset_id": "CAP-016",
+            "source_id": "SRC-PRD-004",
+            "title": "核心系统旁路数据适配",
+            "url": null
+          },
+          {
+            "asset_id": "CAP-001",
+            "source_id": "SRC-PRD-001",
+            "title": "工业图像只读接入与标准化",
+            "url": null
+          },
+          {
+            "asset_id": "CAP-002",
+            "source_id": "SRC-PRD-001",
+            "title": "配置化视觉缺陷识别",
+            "url": null
+          },
+          {
+            "asset_id": "CAP-003",
+            "source_id": "SRC-PRD-001",
+            "title": "客户现场边缘推理运行",
+            "url": null
+          },
+          {
+            "asset_id": "CAP-013",
+            "source_id": "SRC-PRD-004",
+            "title": "规则驱动的事件路由与超时升级",
+            "url": null
+          }
+        ],
+        "suggested_questions": [
+          "A3 线现有相机是否支持 RTSP 或 HTTP 流输出？能否提供一段典型图像样本及元数据格式？",
+          "当前已有多少张标注完成的缺陷图？是否已按‘划伤’‘缺料’‘错位’等业务叫法归类并经质量负责人签字确认？",
+          "试点验收是否以‘人工复看工时下降 X%’或‘异常首次响应≤Y 分钟’为硬性指标？基线数据如何采集？",
+          "MES 的工单与批次号查询接口是否已开通？是否允许我们申请仅用于状态回写的可写接口（需安全评审）？",
+          "边缘服务器是否已就位？其 GPU 型号、显存容量及是否允许安装 Docker 容器？"
+        ]
+      },
+      "quality_report": {
+        "reviews": [
+          {
+            "claim_id": "requirement_understanding:1",
+            "verdict": "supported",
+            "reason": "客户背景明确写明'希望先做一条线的质量数字化试点'，目标中包含'减少人工复看压力'、'让异常更早到达班组长并由人确认'、'目标在三个月内看到 A3 单线试点运行'，与论断完全一致。"
+          },
+          {
+            "claim_id": "requirement_understanding:2",
+            "verdict": "supported",
+            "reason": "客户约束中逐条列出：'不得替换或影响现有 MES 主流程'、'图片不得离开园区'、'不允许 AI 自动停线或修改工艺参数'、'远程升级和接口写入需安全评审'，与论断文字完全匹配。"
+          },
+          {
+            "claim_id": "requirement_understanding:3",
+            "verdict": "supported",
+            "reason": "客户 information_gaps 字段完整列出：'现有相机型号、图像质量、覆盖范围和图片留存时间'、'真实样本数量、缺陷分类与标注状态'、'试点验收指标及基线口径'、'MES 是否提供并允许开放可写接口'、'边缘服务器规格、位置与部署窗口'、'预算范围'，与论断一一对应。"
+          },
+          {
+            "claim_id": "initial_recommendations:1",
+            "verdict": "supported",
+            "reason": "EXP-001 明确方案为'先做样本口径和离线回放，再接一条线实时流'；EXP-002 强调'统一缺陷词典...质量抽检后再做小规模离线回放'；CAP-003 要求'完成安全评审'后部署；CAP-013 支持'超时升级'。该推断严格基于历史经验与能力卡组合，未越界。"
+          },
+          {
+            "claim_id": "initial_recommendations:2",
+            "verdict": "supported",
+            "reason": "CAP-001 支持'从获批相机流...读取图片'；CAP-016 支持'从获批只读 API...读取必要业务字段'；CAP-003 明确'部署在客户边缘服务器，在园区内提供本地推理接口'；所有描述均在各能力卡输入/输出/限制范围内，且与客户约束'图片不出园区''不改 MES 主流程'一致。"
+          },
+          {
+            "claim_id": "initial_recommendations:3",
+            "verdict": "supported",
+            "reason": "CAP-013 明确'不执行设备控制'；其前提要求'通知通道有效'，结合客户已有企业微信/钉钉等通用通道，且'责任和升级规则已确认'是其前提；EXP-001 也强调'异常交给班组长确认'，与'明确责任归属与升级规则'一致。"
+          },
+          {
+            "claim_id": "historical_evidence:1",
+            "verdict": "supported",
+            "reason": "EXP-001/SRC-EXP-001 的 result 字段原文：'B2 单线第 5—8 周每周图片复看工时由 96 小时降到 68 小时，异常首次处理时间中位数由 47 分钟缩短到 19 分钟；第 9 周完成单线试点验收'，与论断完全一致，且适用条件（不修改主系统、图片不出园区、人工确认）在 EXP-001 的 applicable_problem 和 solution 中明确。"
+          },
+          {
+            "claim_id": "historical_evidence:2",
+            "verdict": "supported",
+            "reason": "EXP-002/SRC-EXP-002 的 solution 字段原文：'由质量与算法共同统一缺陷词典，按产线、班次、批次和光照重整样本；争议样本隔离，补充正常样本，经过质量抽检后再做小规模离线回放'，与论断文字完全一致。"
+          },
+          {
+            "claim_id": "capability_composition:1",
+            "verdict": "supported",
+            "reason": "CAP-016/SRC-PRD-004 的 description 明确'从获批只读 API、消息或文件出口读取必要业务字段，转换为标准记录并保持源系统主流程不变'，inputs 包含'接口说明、读取凭证、字段样例...'，outputs 包含'标准化业务记录...'，完全匹配。"
+          },
+          {
+            "claim_id": "capability_composition:2",
+            "verdict": "supported",
+            "reason": "CAP-001/SRC-PRD-001 的 description 明确'从获批相机流、共享目录或上传任务读取图片，并补齐来源设备、批次和时间等元数据'，inputs 和 outputs 均支持该表述，且 limitations 中'不绕过权限'与客户约束'图片不得离开园区'兼容。"
+          },
+          {
+            "claim_id": "capability_composition:3",
+            "verdict": "supported",
+            "reason": "CAP-002/SRC-PRD-001 的 description 明确'在已确认产品、缺陷分类和模型版本下，对标准图像执行预处理、推理与缺陷定位'，outputs 包含'缺陷类别、位置框、模型分值和模型版本'，与论断完全一致。"
+          },
+          {
+            "claim_id": "capability_composition:4",
+            "verdict": "supported",
+            "reason": "CAP-003/SRC-PRD-001 的 description 明确'把已批准模型部署在客户边缘服务器，在园区内提供本地推理接口、健康状态和版本信息'，outputs 包含'本地推理 API、运行日志、健康检查和当前模型版本'，'不依赖外部网络'隐含于'园区内'和'本地'表述中，符合限制'资源不足或环境不兼容时不能上线'但未越界。"
+          },
+          {
+            "claim_id": "capability_composition:5",
+            "verdict": "supported",
+            "reason": "CAP-013/SRC-PRD-004 的 description 明确'把外部异常转为标准事件，按责任和时限创建待办、通知并升级'，outputs 包含'事件编号、责任人、待办状态、通知记录和升级记录'，且 limitations 明确'不执行设备控制'，与'通知班组长并支持超时升级'完全匹配。"
+          },
+          {
+            "claim_id": "prerequisites_and_risks:1",
+            "verdict": "supported",
+            "reason": "CAP-001 的 limitations 明确'不保证老旧设备可输出可用图片'；EXP-001 的 risks 指出'光照、相机位置和产线变化会导致误报并需重新校准'；客户 background 提到'A3 线线头和线尾已有旧相机但型号与留存能力未知'，该推断是保守的、基于能力限制与客户现状的合理建议，未承诺补采或加装，仅'评估'，符合 ai_inference 边界。"
+          },
+          {
+            "claim_id": "prerequisites_and_risks:2",
+            "verdict": "supported",
+            "reason": "EXP-002/SRC-EXP-002 的 solution 和 prerequisites 明确要求'质量负责人能确认争议样本和缺陷口径'，risks 指出'未覆盖班次、镜头和光照时离线效果不能代表现场'，与论断中'需质量负责人参与...若样本分散且标注缺失，离线回放效果无法代表现场表现'完全一致。"
+          },
+          {
+            "claim_id": "prerequisites_and_risks:3",
+            "verdict": "supported",
+            "reason": "EXP-001/SRC-EXP-001 的 risks 明确'有查询接口不代表可写'，solution 中写明'安全评审通过后仅回写处理状态'，与论断'需客户确认 MES 是否开放只读查询接口...回写处理状态需另行申请安全评审与接口开通'完全一致。"
+          },
+          {
+            "claim_id": "prerequisites_and_risks:4",
+            "verdict": "supported",
+            "reason": "CAP-003/SRC-PRD-001 的 prerequisites 明确'客户提供兼容服务器、部署窗口、网络策略和运维联系人并完成安全评审'，limitations 明确'资源不足或环境不兼容时不能上线'，与论断文字完全一致。"
+          },
+          {
+            "claim_id": "prerequisites_and_risks:5",
+            "verdict": "supported",
+            "reason": "EXP-001/SRC-EXP-001 的 risks 明确'光照、相机位置和产线变化会导致误报并需重新校准；单线结果不可外推到全厂'，与论断完全一致。"
+          },
+          {
+            "claim_id": "pending_confirmations:1",
+            "verdict": "supported",
+            "reason": "客户 information_gaps 第一条即为'现有相机型号、图像质量、覆盖范围和图片留存时间'，该 pending_confirmation 是对其拆解，语气为待确认，无确定性表述，符合 pending_confirmation 规则。"
+          },
+          {
+            "claim_id": "pending_confirmations:2",
+            "verdict": "supported",
+            "reason": "客户 information_gaps 第二条为'真实样本数量、缺陷分类与标注状态'，该条是其细化，语气为待确认，无确定性表述。"
+          },
+          {
+            "claim_id": "pending_confirmations:3",
+            "verdict": "supported",
+            "reason": "客户 information_gaps 第三条为'试点验收指标及基线口径'，该条是其同义重述，语气为待确认。"
+          },
+          {
+            "claim_id": "pending_confirmations:4",
+            "verdict": "supported",
+            "reason": "客户 information_gaps 第四条为'MES 是否提供并允许开放可写接口'，该条是其拆解为只读确认+可写申请两环节，语气为待确认，符合客户约束'远程升级和接口写入需安全评审'。"
+          },
+          {
+            "claim_id": "pending_confirmations:5",
+            "verdict": "supported",
+            "reason": "客户 information_gaps 第五条为'边缘服务器规格、位置与部署窗口'，该条是其技术细节展开，语气为待确认。"
+          },
+          {
+            "claim_id": "pending_confirmations:6",
+            "verdict": "supported",
+            "reason": "与 pending_confirmations:1 完全重复，但属同一信息缺口的不同表述，客户 profile 中明确列出，且 pending_confirmation 允许多角度提问，不违反规则。"
+          },
+          {
+            "claim_id": "pending_confirmations:7",
+            "verdict": "supported",
+            "reason": "与 pending_confirmations:2 完全重复，同上，属同一缺口不同表述，客户 profile 明确，语气待确认。"
+          },
+          {
+            "claim_id": "pending_confirmations:8",
+            "verdict": "supported",
+            "reason": "与 pending_confirmations:3 完全重复，同上。"
+          },
+          {
+            "claim_id": "pending_confirmations:9",
+            "verdict": "supported",
+            "reason": "与 pending_confirmations:4 完全重复，同上。"
+          },
+          {
+            "claim_id": "pending_confirmations:10",
+            "verdict": "supported",
+            "reason": "与 pending_confirmations:5 完全重复，同上。"
+          },
+          {
+            "claim_id": "pending_confirmations:11",
+            "verdict": "supported",
+            "reason": "客户 information_gaps 第六条为'预算范围'，该条是其直接引用，语气待确认。"
+          },
+          {
+            "claim_id": "pending_confirmations:12",
+            "verdict": "supported",
+            "reason": "客户 retrieval_missing_information 第一条为'相机型号和图像质量'，该条是其直接引用，语气待确认。"
+          },
+          {
+            "claim_id": "pending_confirmations:13",
+            "verdict": "supported",
+            "reason": "客户 retrieval_missing_information 第二条为'真实样本与标注状态'，该条是其直接引用，语气待确认。"
+          },
+          {
+            "claim_id": "pending_confirmations:14",
+            "verdict": "supported",
+            "reason": "客户 retrieval_missing_information 第三条为'试点验收指标'，该条是其直接引用，语气待确认。"
+          },
+          {
+            "claim_id": "pending_confirmations:15",
+            "verdict": "supported",
+            "reason": "客户 retrieval_missing_information 第四条为'边缘服务器规格'，该条是其直接引用，语气待确认。"
+          }
+        ],
+        "passed": true,
+        "requires_regeneration": false,
+        "failed_claim_ids": [],
+        "summary": "全部报告论断均有相应证据或正确标明边界，可以进入人工审核。"
+      }
+    }
+  ],
+  "revision_count": 0,
+  "passed": true
+}

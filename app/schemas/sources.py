@@ -2,9 +2,16 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
-from app.db.models import JobType, ProcessStatus, SourcePurpose, SourceStatus, SourceType
+from app.db.models import (
+    JobType,
+    ProcessStatus,
+    SourceFreshness,
+    SourcePurpose,
+    SourceStatus,
+    SourceType,
+)
 
 
 class ImportLinkRequest(BaseModel):
@@ -21,11 +28,24 @@ class ImportTextRequest(BaseModel):
     customer_profile_id: uuid.UUID | None = None
 
 
+class UpdateSourceRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    purpose: SourcePurpose | None = None
+    tags: list[str] | None = Field(default=None, max_length=20)
+
+    @model_validator(mode="after")
+    def at_least_one_field(self) -> "UpdateSourceRequest":
+        if self.title is None and self.purpose is None and self.tags is None:
+            raise ValueError("at least one source field is required")
+        return self
+
+
 class SourceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     customer_profile_id: uuid.UUID | None
+    previous_version_id: uuid.UUID | None
     type: SourceType
     purpose: SourcePurpose
     title: str
@@ -37,6 +57,8 @@ class SourceRead(BaseModel):
     tags: list[str]
     status: SourceStatus
     is_demo: bool
+    freshness_status: SourceFreshness
+    content_version: int
     created_at: datetime
     updated_at: datetime
     is_deleted: bool

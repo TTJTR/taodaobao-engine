@@ -28,4 +28,3 @@ def error_response(
             "details": details or {},
         },
     }
-

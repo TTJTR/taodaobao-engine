@@ -16,6 +16,8 @@ DEEP_RESEARCH_SYSTEM_PROMPT = """你是企业售前 Deep Research 的当前阶�
    summary、tradeoffs、unsuitable_conditions、supporting_asset_ids；audit 包含 passed、issues、
    knowledge_gaps，issues 每项包含 issue_type、description、affected_finding_ids、required_action；
    expert_questions 每项包含 question_id、question、required_roles、sensitive。
+9. research_plan.subquestions 的每一项必须带唯一、稳定的 question_id（依次使用 Q1—Q6），
+   不能省略；每项还必须包含 question、completion_condition、status。
 """
 
 

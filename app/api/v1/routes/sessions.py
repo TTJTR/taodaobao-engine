@@ -3,7 +3,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 
-from app.api.deps import AIEngineDependency, CurrentUser, DatabaseSession, WorkspaceId
+from app.api.deps import (
+    AIEngineDependency,
+    CurrentUser,
+    DatabaseSession,
+    EmbeddingProviderDependency,
+    WorkspaceId,
+)
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.schemas.chat import CreateSessionRequest, CreateTurnRequest, MessageRead, SessionRead
@@ -42,9 +48,9 @@ async def list_sessions(
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     profile_id: uuid.UUID | None = None,
 ) -> dict[str, object]:
-    items, total = await SessionService(
-        session, workspace_id, current_user.id
-    ).list_sessions(page=page, page_size=page_size, profile_id=profile_id)
+    items, total = await SessionService(session, workspace_id, current_user.id).list_sessions(
+        page=page, page_size=page_size, profile_id=profile_id
+    )
     return success_response(
         request,
         {
@@ -65,9 +71,9 @@ async def get_session(
     current_user: CurrentUser,
     workspace_id: WorkspaceId,
 ) -> dict[str, object]:
-    chat, messages = await SessionService(
-        session, workspace_id, current_user.id
-    ).get_detail(session_id)
+    chat, messages = await SessionService(session, workspace_id, current_user.id).get_detail(
+        session_id
+    )
     data = serialize_session(chat)
     data["messages"] = [
         MessageRead.model_validate(message).model_dump(mode="json") for message in messages
@@ -85,12 +91,15 @@ async def create_turn(
     current_user: CurrentUser,
     workspace_id: WorkspaceId,
     ai_engine: AIEngineDependency,
+    embedding_provider: EmbeddingProviderDependency,
     _: str = Depends(require_idempotency_key),
 ) -> dict[str, object]:
-    message, run = await SessionService(
-        session, workspace_id, current_user.id
-    ).create_turn(session_id, payload.content)
-    background_tasks.add_task(run_solution_pipeline, run.id, workspace_id, ai_engine)
+    message, run = await SessionService(session, workspace_id, current_user.id).create_turn(
+        session_id, payload.content
+    )
+    background_tasks.add_task(
+        run_solution_pipeline, run.id, workspace_id, ai_engine, embedding_provider
+    )
     return success_response(
         request,
         {

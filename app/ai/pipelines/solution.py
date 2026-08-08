@@ -120,6 +120,7 @@ def normalize_model_boundaries(result: dict, snapshot: RetrievalSnapshot) -> Non
 
 def validate_model_citations(result: dict, snapshot: RetrievalSnapshot) -> None:
     allowed_citations = build_allowed_citations(snapshot)
+    known_asset_ids = {asset_id for asset_id, _ in allowed_citations}
     for field in SOLUTION_CONTENT_FIELDS:
         items = result[field]
         if not isinstance(items, list):
@@ -136,6 +137,16 @@ def validate_model_citations(result: dict, snapshot: RetrievalSnapshot) -> None:
 
             asset_id = item.get("asset_id")
             source_id = item.get("source_id")
+            text = item.get("text")
+            mentioned_asset_ids = (
+                {candidate for candidate in known_asset_ids if candidate in text}
+                if isinstance(text, str)
+                else set()
+            )
+            if asset_id and mentioned_asset_ids.difference({asset_id}):
+                raise ValueError("one cited item must not mention another asset id")
+            if not asset_id and mentioned_asset_ids:
+                raise ValueError("uncited items must not mention enterprise asset ids")
             if boundary in {
                 EvidenceBoundary.HISTORICAL_FACT,
                 EvidenceBoundary.ENTERPRISE_CAPABILITY,

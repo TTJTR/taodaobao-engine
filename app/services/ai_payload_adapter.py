@@ -4,9 +4,7 @@ from typing import Any
 def build_solution_context(requirement: str, profile_snapshot: dict[str, Any]) -> dict:
     profile_data = profile_snapshot.get("profile") or {}
     customer_name = str(
-        profile_snapshot.get("customer_name")
-        or profile_data.get("customer_name")
-        or "待确认客户"
+        profile_snapshot.get("customer_name") or profile_data.get("customer_name") or "待确认客户"
     )
     source_ids = profile_data.get("source_ids") or profile_snapshot.get("source_ids") or []
     if not source_ids:
@@ -22,7 +20,9 @@ def build_solution_context(requirement: str, profile_snapshot: dict[str, Any]) -
             "customer_name": customer_name,
             "industry": profile_data.get("industry"),
             "background": profile_data.get("background"),
-            "current_problems": _string_list(profile_data.get("current_problems")),
+            "current_problems": _string_list(
+                profile_data.get("current_problems") or profile_data.get("current_problem")
+            ),
             "goals": _string_list(profile_data.get("goals")),
             "constraints": _string_list(profile_data.get("constraints")),
             "existing_systems": _string_list(profile_data.get("existing_systems")),
@@ -57,12 +57,12 @@ def _normalize_experience(item: dict[str, Any], rank: int) -> dict[str, Any]:
     data = dict(item.get("data") or {})
     source_id = str(item["source_id"])
     name = str(data.get("name") or data.get("title") or "已审核经验")
+    applicable_problem = str(data.get("applicable_problem") or data.get("problem") or name)
+    data.pop("problem", None)
     data.update(
         {
             "name": name,
-            "applicable_problem": str(
-                data.get("applicable_problem") or data.get("problem") or name
-            ),
+            "applicable_problem": applicable_problem,
             "solution": str(data.get("solution") or data.get("description") or name),
             "source_id": source_id,
         }

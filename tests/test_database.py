@@ -42,4 +42,3 @@ async def test_get_db_rolls_back_when_route_raises(monkeypatch: pytest.MonkeyPat
         await dependency.athrow(RuntimeError("route failed"))
 
     session.rollback.assert_awaited_once_with()
-

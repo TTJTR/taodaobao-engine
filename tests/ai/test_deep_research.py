@@ -78,6 +78,41 @@ def test_deep_research_planning_returns_bounded_plan_and_shared_trace() -> None:
     assert result.status == "running"
 
 
+class MissingQuestionIdsClient:
+    async def generate_json(self, system_prompt: str, user_prompt: str) -> dict:
+        return {
+            "research_plan": {
+                "objective": "补齐试点信息",
+                "subquestions": [
+                    {
+                        "question": "相机是否可用？",
+                        "completion_condition": "获得相机清单",
+                        "status": "pending",
+                    },
+                    {
+                        "question": "验收口径是什么？",
+                        "completion_condition": "获得验收指标",
+                        "status": "pending",
+                    },
+                ],
+                "completion_conditions": ["关键信息齐全"],
+            },
+            "findings": [],
+            "routes": [],
+            "audit": None,
+            "expert_questions": [],
+        }
+
+
+def test_deep_research_assigns_stable_ids_when_model_omits_question_ids() -> None:
+    result = asyncio.run(
+        generate_deep_research_stage(
+            make_context("planning"), make_snapshot(), MissingQuestionIdsClient()
+        )
+    )
+    assert [item.question_id for item in result.research_plan.subquestions] == ["Q1", "Q2"]
+
+
 class InventedRouteClient:
     async def generate_json(self, system_prompt: str, user_prompt: str) -> dict:
         return {

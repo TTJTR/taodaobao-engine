@@ -199,6 +199,94 @@ def test_extract_profile_keeps_speaker_sources_and_turns_conflict_into_question(
     assert "试点周期到底是三个月还是六个月？" in profile.information_gaps
 
 
+def test_extract_profile_repairs_model_type_drift_and_drops_unknown_fact_fields() -> None:
+    result = {
+        "customer_name": "星瀚精工集团",
+        "industry": ["离散制造", "机械加工"],
+        "background": "客户希望做单线试点。",
+        "current_problems": "人工复看压力大",
+        "goals": [],
+        "constraints": [],
+        "existing_systems": [],
+        "information_gaps": [],
+        "profile_summary": "客户希望做单线试点。",
+        "fact_sources": [
+            {
+                "field": "customer_name",
+                "value": "星瀚精工集团",
+                "source_id": "SRC-CUST-001",
+                "quote": "星瀚精工集团",
+            },
+            {
+                "field": "current_problems",
+                "value": "人工复看压力大",
+                "source_id": "SRC-CUST-001",
+                "quote": "人工复看压力大",
+            },
+        ],
+    }
+    profile = asyncio.run(
+        extract_profile_from_text(
+            "一份客户会议纪要", ["SRC-CUST-001"], StaticJsonModelClient(result)
+        )
+    )
+    assert profile.industry == "离散制造、机械加工"
+    assert profile.current_problems == ["人工复看压力大"]
+    assert [fact.field for fact in profile.fact_sources] == ["current_problems"]
+
+
+def test_extract_experience_promotes_completed_pilot_to_historical_record() -> None:
+    result = {
+        "name": "单线试点",
+        "applicable_problem": "降低人工复看。",
+        "solution": "旁路接入。",
+        "result": "第九周完成试点验收。",
+        "evidence_status": "concept_only",
+    }
+    experience = asyncio.run(
+        extract_experience_from_text(
+            "项目第九周完成试点验收，并记录了实际结果。",
+            "SRC-EXP-001",
+            StaticJsonModelClient(result),
+        )
+    )
+    assert experience.evidence_status == "historical_record"
+
+
+def test_extract_experience_recognizes_signed_acceptance_record() -> None:
+    result = {
+        "name": "单线试点",
+        "applicable_problem": "降低人工复看。",
+        "solution": "旁路接入。",
+        "result": "第九周签署了单线试点验收记录。",
+        "evidence_status": "concept_only",
+    }
+    experience = asyncio.run(
+        extract_experience_from_text(
+            "客户在第九周签署了单线试点验收记录，但没有批准全厂推广。",
+            "SRC-EXP-001",
+            StaticJsonModelClient(result),
+        )
+    )
+    assert experience.evidence_status == "historical_record"
+
+
+def test_extract_experience_keeps_explicit_unimplemented_concept() -> None:
+    result = {
+        "name": "无人调参构想",
+        "applicable_problem": "希望降低能耗。",
+        "solution": "设想由 AI 自动调参。",
+        "result": "预计节能 20%。",
+        "evidence_status": "historical_record",
+    }
+    experience = asyncio.run(
+        extract_experience_from_text(
+            "该方案只是构想，未实施，预计节能 20%。", "SRC-EXP-006", StaticJsonModelClient(result)
+        )
+    )
+    assert experience.evidence_status == "concept_only"
+
+
 def test_extract_capabilities_normalizes_output_and_keeps_gray_capability() -> None:
     capabilities = asyncio.run(
         extract_capabilities_from_text(
@@ -367,3 +455,21 @@ def test_extract_capabilities_keeps_missing_fields_pending_review(
 
     assert len(capabilities) == 1
     assert any(warning_label in warning for warning in capabilities[0].review_warnings)
+
+
+def test_extract_capabilities_joins_list_limitations_from_model() -> None:
+    item = {
+        "name": "图像接入",
+        "description": "读取获批图像。",
+        "inputs": ["图片", "读取凭证"],
+        "outputs": ["标准图像"],
+        "limitations": ["不绕过权限", "不改善硬件成像"],
+        "dependencies": [],
+        "tags": ["只读接入"],
+    }
+    capabilities = asyncio.run(
+        extract_capabilities_from_text(
+            "一份 PRD", "SRC-PRD-001", StaticJsonModelClient({"capabilities": [item]})
+        )
+    )
+    assert capabilities[0].limitations == "不绕过权限；不改善硬件成像"

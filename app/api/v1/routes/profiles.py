@@ -1,9 +1,9 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response, status
 
-from app.api.deps import DatabaseSession, WorkspaceId
+from app.api.deps import AIEngineDependency, CurrentUser, DatabaseSession, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.schemas.assets import (
@@ -12,6 +12,7 @@ from app.schemas.assets import (
     GenerateProfileRequest,
     UpdateProfileRequest,
 )
+from app.services.job_runner import run_profile_job
 from app.services.profile_service import CustomerProfileService
 
 router = APIRouter(route_class=IdempotencyRoute)
@@ -95,8 +96,10 @@ async def generate_profile(
     profile_id: uuid.UUID,
     payload: GenerateProfileRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     session: DatabaseSession,
     workspace_id: WorkspaceId,
+    ai_engine: AIEngineDependency,
     _: str = Depends(require_idempotency_key),
 ) -> dict[str, object]:
     job = await CustomerProfileService(session, workspace_id).generate(
@@ -104,6 +107,7 @@ async def generate_profile(
         source_ids=payload.source_ids,
         supplemental_text=payload.supplemental_text,
     )
+    background_tasks.add_task(run_profile_job, job.id, profile_id, workspace_id, ai_engine)
     return success_response(
         request,
         {
@@ -120,8 +124,9 @@ async def confirm_profile(
     profile_id: uuid.UUID,
     request: Request,
     session: DatabaseSession,
+    current_user: CurrentUser,
     workspace_id: WorkspaceId,
     _: str = Depends(require_idempotency_key),
 ) -> dict[str, object]:
-    await CustomerProfileService(session, workspace_id).confirm(profile_id)
+    await CustomerProfileService(session, workspace_id, current_user.id).confirm(profile_id)
     return success_response(request, {"success": True})

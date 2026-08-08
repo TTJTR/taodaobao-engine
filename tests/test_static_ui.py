@@ -14,6 +14,11 @@ def test_static_index_is_served_at_root() -> None:
     assert 'apiFetch("/capabilities?page=1&page_size=100")' in response.text
     assert 'apiFetch("/sessions?page=1&page_size=100")' in response.text
     assert 'body:{content:query,mode:"quick"}' in response.text
+    assert 'apiFetch("/research-tasks?page=1&page_size=100")' in response.text
+    assert 'apiFetch("/expert-collaborations?page=1&page_size=100")' in response.text
+    assert "function renderDeep()" in response.text
+    assert "function renderExperts()" in response.text
+    assert "V1.0 规划能力，不进入当前MVP主流程" not in response.text
 
 
 def test_static_mount_does_not_shadow_api_routes() -> None:

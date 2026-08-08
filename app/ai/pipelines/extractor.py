@@ -15,6 +15,32 @@ from app.ai.schemas import CapabilityDraft, CustomerProfileDraft, ExperienceDraf
 MAX_CAPABILITIES_PER_DOCUMENT = 20
 MAX_RAW_TEXT_CHARACTERS = 80_000
 AUDIT_REJECTION_TAGS = {"审核反例", "能力越界"}
+PROFILE_FACT_FIELDS = {
+    "industry",
+    "background",
+    "current_problems",
+    "goals",
+    "constraints",
+    "existing_systems",
+    "information_gaps",
+}
+PROFILE_LIST_FIELDS = {
+    "current_problems",
+    "goals",
+    "constraints",
+    "existing_systems",
+    "information_gaps",
+}
+HISTORICAL_RECORD_MARKERS = (
+    "完成试点验收",
+    "完成验收",
+    "通过验收",
+    "验收记录",
+    "实际运行",
+    "上线运行",
+    "复盘结果",
+)
+CONCEPT_ONLY_MARKERS = ("未实施", "尚未实施", "只是构想", "仅为构想", "概念设想")
 
 
 class JsonModelClient(Protocol):
@@ -32,6 +58,47 @@ def validate_raw_text(raw_text: str) -> str:
     return normalized
 
 
+def normalize_profile_result(result: dict) -> dict:
+    normalized = dict(result)
+    industry = normalized.get("industry")
+    if isinstance(industry, list):
+        normalized["industry"] = "、".join(
+            item.strip() for item in industry if isinstance(item, str) and item.strip()
+        ) or None
+    for field in PROFILE_LIST_FIELDS:
+        value = normalized.get(field)
+        if isinstance(value, str):
+            normalized[field] = [value]
+        elif value is None:
+            normalized[field] = []
+    fact_sources = normalized.get("fact_sources")
+    if isinstance(fact_sources, list):
+        normalized["fact_sources"] = [
+            item
+            for item in fact_sources
+            if isinstance(item, dict) and item.get("field") in PROFILE_FACT_FIELDS
+        ]
+    conflicts = normalized.get("conflicts")
+    if isinstance(conflicts, list):
+        normalized["conflicts"] = [
+            item
+            for item in conflicts
+            if isinstance(item, dict) and item.get("field") in PROFILE_FACT_FIELDS
+        ]
+    return normalized
+
+
+def normalize_experience_evidence_status(
+    raw_text: str,
+    result: dict,
+) -> None:
+    if any(marker in raw_text for marker in CONCEPT_ONLY_MARKERS):
+        result["evidence_status"] = "concept_only"
+        return
+    if result.get("result") and any(marker in raw_text for marker in HISTORICAL_RECORD_MARKERS):
+        result["evidence_status"] = "historical_record"
+
+
 async def extract_profile_from_text(
     raw_text: str,
     source_ids: list[str],
@@ -46,6 +113,7 @@ async def extract_profile_from_text(
         PROFILE_SYSTEM_PROMPT,
         build_profile_user_prompt(raw_text, normalized_source_ids),
     )
+    result = normalize_profile_result(result)
     result["source_ids"] = normalized_source_ids
     result["profile_status"] = ProfileStatus.PENDING_CONFIRMATION
     result.setdefault("fact_sources", [])
@@ -92,6 +160,7 @@ async def extract_experience_from_text(
     )
     result["source_id"] = source_id
     result["embedding_text"] = None
+    normalize_experience_evidence_status(raw_text, result)
     experience = ExperienceDraft.model_validate(result)
     return experience.model_copy(
         update={"embedding_text": build_experience_embedding_text(experience)}
@@ -117,6 +186,16 @@ def normalize_capability_candidate(raw_capability: dict, source_id: str) -> dict
         normalized["inputs"] = normalized.pop("input")
     if "outputs" not in normalized and "output" in normalized:
         normalized["outputs"] = normalized.pop("output")
+    for field in ("limitations", "prerequisites"):
+        value = normalized.get(field)
+        if isinstance(value, list):
+            normalized[field] = "；".join(
+                item.strip() for item in value if isinstance(item, str) and item.strip()
+            ) or None
+    for field in ("dependencies", "tags", "review_warnings"):
+        value = normalized.get(field)
+        if isinstance(value, str):
+            normalized[field] = [value]
 
     warnings = list(normalized.get("review_warnings") or [])
     if normalized.get("inputs") is None:

@@ -5,14 +5,22 @@ from app.integrations.feishu import LiveFeishuAdapter, MockFeishuAdapter
 from app.integrations.llm import MockLLMAdapter
 from app.integrations.protocols import (
     FeishuAdapter,
+    FeishuCreatedDocument,
+    FeishuCreatedGroup,
     FeishuDocument,
+    FeishuResource,
+    FeishuTokenInfo,
     FeishuUserInfo,
     LLMAdapter,
 )
 
 __all__ = [
     "FeishuAdapter",
+    "FeishuCreatedDocument",
+    "FeishuCreatedGroup",
     "FeishuDocument",
+    "FeishuResource",
+    "FeishuTokenInfo",
     "FeishuUserInfo",
     "LLMAdapter",
     "LiveFeishuAdapter",
@@ -20,4 +28,3 @@ __all__ = [
     "MockAIEngine",
     "MockLLMAdapter",
 ]
-

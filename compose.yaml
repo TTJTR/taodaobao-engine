@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: taodaobao_v1
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "${POSTGRES_PORT:-55433}:5432"
+    volumes:
+      - taodaobao_v1_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d taodaobao_v1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  taodaobao_v1_postgres:

@@ -40,6 +40,8 @@ class CustomerProfileRead(BaseModel):
     profile: dict
     source_ids: list[uuid.UUID]
     status: ProfileStatus
+    confirmed_by_id: uuid.UUID | None
+    confirmed_at: datetime | None
     created_at: datetime
     updated_at: datetime
     is_deleted: bool
@@ -87,4 +89,3 @@ class ExperienceRead(BaseModel):
 
 class CapabilityRead(ExperienceRead):
     pass
-

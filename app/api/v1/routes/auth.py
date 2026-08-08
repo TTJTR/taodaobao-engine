@@ -1,8 +1,10 @@
+import hashlib
 import hmac
 import secrets
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel, Field
 
 from app.api.deps import (
     AuthServiceDependency,
@@ -18,18 +20,55 @@ from app.core.responses import success_response
 router = APIRouter(route_class=IdempotencyRoute)
 
 
-def get_redirect_uri() -> str:
-    return (
-        f"{settings.public_base_url.rstrip('/')}"
-        f"{settings.api_prefix}/auth/feishu/callback"
+class VerifyInvitationRequest(BaseModel):
+    invitation_code: str = Field(min_length=1, max_length=256)
+
+
+def invitation_proof() -> str:
+    code = settings.invitation_code or ""
+    return hmac.new(settings.session_secret.encode(), code.encode(), hashlib.sha256).hexdigest()
+
+
+@router.post("/auth/invitation/verify")
+async def verify_invitation(
+    payload: VerifyInvitationRequest,
+    request: Request,
+    response: Response,
+    _: str = Depends(require_idempotency_key),
+) -> dict[str, object]:
+    configured = settings.invitation_code or ""
+    if not configured or not hmac.compare_digest(configured, payload.invitation_code):
+        raise AppError(
+            ErrorCode.INVITE_CODE_INVALID,
+            "邀请码无效",
+            status_code=401,
+        )
+    response.set_cookie(
+        settings.invitation_cookie_name,
+        invitation_proof(),
+        max_age=600,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        path=f"{settings.api_prefix}/auth/feishu/start",
     )
+    return success_response(request, {"success": True})
+
+
+def get_redirect_uri() -> str:
+    return f"{settings.public_base_url.rstrip('/')}{settings.api_prefix}/auth/feishu/callback"
 
 
 @router.get("/auth/feishu/start", summary="获取飞书授权地址")
 async def start_feishu_authorization(
     request: Request,
     adapter: FeishuAdapterDependency,
+    invitation: str | None = Cookie(default=None, alias=settings.invitation_cookie_name),
 ) -> JSONResponse:
+    if settings.invitation_required and (
+        not invitation or not hmac.compare_digest(invitation, invitation_proof())
+    ):
+        raise AppError(ErrorCode.INVITE_CODE_INVALID, "请先验证邀请码", status_code=401)
     state = secrets.token_urlsafe(32)
     authorization_url = adapter.get_authorization_url(state, get_redirect_uri())
     response = JSONResponse(
@@ -56,9 +95,7 @@ async def handle_feishu_callback(
     state: str,
     service: AuthServiceDependency,
     codec: SessionCodecDependency,
-    oauth_state: str | None = Cookie(
-        default=None, alias=settings.oauth_state_cookie_name
-    ),
+    oauth_state: str | None = Cookie(default=None, alias=settings.oauth_state_cookie_name),
 ) -> RedirectResponse:
     if not oauth_state or not hmac.compare_digest(oauth_state, state):
         raise AppError(

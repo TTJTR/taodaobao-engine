@@ -21,14 +21,21 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 ENUM_CHECK_CONSTRAINTS = {
+    "ai_run_status",
     "capability_review_status",
+    "contribution_role",
+    "expert_collaboration_status",
+    "expert_reply_status",
     "experience_review_status",
     "job_status",
     "job_type",
     "message_role",
     "profile_status",
+    "research_step_status",
+    "research_task_status",
     "solution_run_status",
     "source_purpose",
+    "source_freshness_status",
     "source_status",
     "source_type",
 }

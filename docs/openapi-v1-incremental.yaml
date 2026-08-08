@@ -1,0 +1,218 @@
+openapi: 3.1.0
+info:
+  title: 淘到宝引擎 V1 增量契约
+  version: 1.0.0
+  description: >-
+    本文件只描述相对冻结 V0.5 openapi.yaml 新增的接口；冻结路径和字段语义保持不变。
+servers:
+  - url: /api/v1
+paths:
+  /auth/invitation/verify:
+    post:
+      operationId: verifyInvitation
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [invitation_code]
+              properties:
+                invitation_code: {type: string, minLength: 1, maxLength: 256}
+      responses:
+        '200': {description: 邀请码验证成功并建立短期验证 Cookie}
+  /feishu/resources:
+    get:
+      operationId: listFeishuResources
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema: {enum: [document, minute]}
+        - name: page_token
+          in: query
+          schema: {type: [string, 'null']}
+      responses:
+        '200': {description: 当前用户有权限访问的飞书文档或妙记列表}
+  /research-tasks:
+    post:
+      operationId: createResearchTask
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateResearchTaskRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/ResearchTaskResponse'}
+    get:
+      operationId: listResearchTasks
+      responses:
+        '200': {description: 当前工作区可访问的研究任务分页列表}
+  /research-tasks/{task_id}:
+    parameters: [{$ref: '#/components/parameters/TaskId'}]
+    get:
+      operationId: getResearchTask
+      responses:
+        '200': {$ref: '#/components/responses/ResearchTaskResponse'}
+  /research-tasks/{task_id}/context:
+    parameters: [{$ref: '#/components/parameters/TaskId'}]
+    get:
+      operationId: getResearchContext
+      responses:
+        '200': {description: 两个专家协作入口共用的完整研究上下文包}
+  /research-tasks/{task_id}/cancel:
+    parameters: [{$ref: '#/components/parameters/TaskId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: cancelResearchTask
+      responses:
+        '200': {$ref: '#/components/responses/ResearchTaskResponse'}
+  /research-tasks/{task_id}/retry:
+    parameters: [{$ref: '#/components/parameters/TaskId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: retryResearchTask
+      responses:
+        '202': {$ref: '#/components/responses/ResearchTaskResponse'}
+  /expert-collaborations:
+    post:
+      operationId: createExpertCollaboration
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [research_task_id]
+              properties:
+                research_task_id: {type: string, format: uuid}
+      responses:
+        '201': {$ref: '#/components/responses/ExpertCollaborationResponse'}
+    get:
+      operationId: listExpertCollaborations
+      responses:
+        '200': {description: 当前工作区专家协作分页列表}
+  /expert-collaborations/{collaboration_id}:
+    parameters: [{$ref: '#/components/parameters/CollaborationId'}]
+    get:
+      operationId: getExpertCollaboration
+      responses:
+        '200': {$ref: '#/components/responses/ExpertCollaborationResponse'}
+    patch:
+      operationId: updateExpertCollaboration
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateExpertCollaborationRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/ExpertCollaborationResponse'}
+  /expert-collaborations/{collaboration_id}/confirm:
+    parameters: [{$ref: '#/components/parameters/CollaborationId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: confirmExpertCollaboration
+      responses:
+        '200': {$ref: '#/components/responses/ExpertCollaborationResponse'}
+  /expert-collaborations/events/replies:
+    post:
+      operationId: receiveExpertReply
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ExpertReplyEvent'}
+      responses:
+        '202': {description: 去重保存回复并恢复原研究任务}
+  /expert-collaborations/replies/{reply_id}/adopt:
+    parameters:
+      - {name: reply_id, in: path, required: true, schema: {type: string, format: uuid}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+    post:
+      operationId: adoptExpertReply
+      responses:
+        '200': {description: 创建 pending_review 经验草稿，绝不自动校验}
+  /sources/{source_id}:
+    parameters:
+      - {name: source_id, in: path, required: true, schema: {type: string, format: uuid}}
+    delete:
+      operationId: deleteSource
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: 软删除来源并立即暂停关联资产召回}
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 8, maxLength: 128}
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    CollaborationId:
+      name: collaboration_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  schemas:
+    CreateResearchTaskRequest:
+      type: object
+      required: [customer_profile_id, question]
+      properties:
+        customer_profile_id: {type: string, format: uuid}
+        session_id: {type: [string, 'null'], format: uuid}
+        title: {type: [string, 'null'], maxLength: 200}
+        question: {type: string, minLength: 1, maxLength: 10000}
+        completion_conditions: {type: array, maxItems: 8, items: {type: string}}
+    ResearchTask:
+      type: object
+      required: [id, customer_profile_id, title, question, status, stage, progress, trace_id]
+      properties:
+        id: {type: string, format: uuid}
+        customer_profile_id: {type: string, format: uuid}
+        title: {type: string}
+        question: {type: string}
+        status:
+          enum: [queued, planning, researching, waiting_expert, synthesizing, completed, failed, cancelled]
+        stage: {type: string}
+        progress: {type: integer, minimum: 0, maximum: 100}
+        trace_id: {type: string}
+        evidence_snapshot: {type: [object, 'null']}
+        knowledge_gaps: {type: array, items: {type: string}}
+        expert_questions: {type: array, items: {type: object}}
+        report: {type: [object, 'null']}
+    UpdateExpertCollaborationRequest:
+      type: object
+      required: [group_name, selected_expert_ids, questions]
+      properties:
+        group_name: {type: string, minLength: 1, maxLength: 200}
+        selected_expert_ids: {type: array, minItems: 1, maxItems: 3, items: {type: string, format: uuid}}
+        questions: {type: array, minItems: 1, maxItems: 8, items: {type: object}}
+    ExpertReplyEvent:
+      type: object
+      required: [collaboration_id, question_id, author_id, author_name, answer_text, feishu_message_id, message_url]
+      properties:
+        collaboration_id: {type: string, format: uuid}
+        question_id: {type: string}
+        author_id: {type: string}
+        author_name: {type: string}
+        answer_text: {type: string}
+        feishu_message_id: {type: string}
+        message_url: {type: string}
+        verification_token: {type: [string, 'null']}
+  responses:
+    ResearchTaskResponse:
+      description: 研究任务响应信封
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              request_id: {type: string}
+              data: {$ref: '#/components/schemas/ResearchTask'}
+    ExpertCollaborationResponse:
+      description: 专家协作响应信封

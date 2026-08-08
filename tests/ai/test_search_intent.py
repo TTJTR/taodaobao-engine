@@ -3,7 +3,7 @@ import asyncio
 import pytest
 from pydantic import ValidationError
 
-from app.ai.pipelines.search_intent import extract_search_intent
+from app.ai.pipelines.search_intent import extract_search_intent, merge_unique
 from app.ai.schemas import (
     ConversationMessage,
     CustomerProfileDraft,
@@ -82,6 +82,39 @@ def test_extract_search_intent_preserves_context_and_builds_embedding_text() -> 
     assert intent.capability_query_text.startswith("当前要实现的能力：")
     assert intent.ranking_signals[0] == "hard_constraint_satisfaction"
     assert "相机型号和图像质量" in intent.expertise_gaps
+
+
+def test_extract_search_intent_deduplicates_near_equivalent_constraints_and_gaps() -> None:
+    context = make_context()
+    context.customer_profile.constraints = ["不得替换或影响现有 MES 主流程"]
+    context.customer_profile.information_gaps = ["现有相机型号、图像质量、覆盖范围和图片留存时间"]
+    client = StaticJsonModelClient(
+        {
+            "scenarios": [],
+            "problems": [],
+            "goals": [],
+            "hard_constraints": ["不替换现有 MES 主流程"],
+            "keywords": [],
+            "missing_information": ["现有相机型号/图像质量/覆盖范围/留存时间"],
+        }
+    )
+    intent = asyncio.run(extract_search_intent(context, client))
+    assert intent.hard_constraints == ["不得替换或影响现有 MES 主流程"]
+    assert intent.missing_information == ["现有相机型号、图像质量、覆盖范围和图片留存时间"]
+
+
+def test_merge_unique_deduplicates_semantically_equivalent_live_model_phrasing() -> None:
+    merged_constraints = merge_unique(
+        ["图片不得离开园区", "不允许 AI 自动停线或修改工艺参数"],
+        ["图片数据不得离开园区", "禁止 AI 自动停线或修改工艺参数"],
+    )
+    merged_gaps = merge_unique(
+        ["真实样本数量、缺陷分类与标注状态", "预算范围"],
+        ["已标注缺陷样本数量、类别分布与标注质量", "预算范围或采购模式倾向"],
+    )
+
+    assert merged_constraints == ["图片不得离开园区", "不允许 AI 自动停线或修改工艺参数"]
+    assert merged_gaps == ["真实样本数量、缺陷分类与标注状态", "预算范围"]
 
 
 def test_extract_search_intent_rejects_extra_model_fields() -> None:

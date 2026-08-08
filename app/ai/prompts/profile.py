@@ -18,6 +18,9 @@ PROFILE_SYSTEM_PROMPT = """你是企业售前客户资料整理员。
 10. fact_sources 和 conflicts 必须返回数组；没有内容时返回空数组。
 11. profile_status 只能是 pending_confirmation 或 confirmed。AI 首次提取时必须返回
    pending_confirmation，只有用户人工确认后才能改成 confirmed。
+12. industry 必须是字符串或 null，不能返回数组。
+13. fact_sources.field 和 conflicts.field 只能是 industry、background、current_problems、
+   goals、constraints、existing_systems、information_gaps；customer_name 不允许作为 field。
 """
 
 

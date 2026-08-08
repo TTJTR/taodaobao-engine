@@ -66,7 +66,6 @@ async def get_db() -> AsyncIterator[AsyncSession]:
             await session.rollback()
             raise
 
-
 async def close_database() -> None:
     global _engine, _session_factory
 
@@ -87,4 +86,3 @@ async def session_scope(
         except Exception:
             await session.rollback()
             raise
-

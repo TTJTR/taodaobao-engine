@@ -39,17 +39,26 @@ class AuthService:
             ) from exc
 
         user = await self.users.get_by_feishu_user_id(user_info.feishu_user_id)
+        token_values = {
+            "feishu_tenant_key": user_info.tenant_key,
+            "feishu_access_token": user_info.access_token,
+            "feishu_refresh_token": user_info.refresh_token,
+            "feishu_token_expires_at": user_info.expires_at,
+        }
+        token_values = {key: value for key, value in token_values.items() if value is not None}
         if user is None:
             user = await self.users.create(
                 feishu_user_id=user_info.feishu_user_id,
                 name=user_info.name,
                 avatar=user_info.avatar,
+                **token_values,
             )
-        elif user.name != user_info.name or user.avatar != user_info.avatar:
+        else:
             user = await self.users.update(
                 user,
                 name=user_info.name,
                 avatar=user_info.avatar,
+                **token_values,
             )
 
         await self.session.commit()

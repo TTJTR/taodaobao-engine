@@ -9,13 +9,20 @@ from sqlalchemy.schema import CreateTable
 
 from app.db.database import create_db_engine
 from app.db.models import (
+    AIRunRecord,
     Base,
     Capability,
     CustomerProfile,
     Experience,
+    ExpertCollaboration,
+    ExpertContribution,
+    ExpertReply,
     IdempotencyRecord,
     Job,
     Message,
+    ResearchStep,
+    ResearchTask,
+    ReviewRecord,
     Session,
     SolutionRun,
     Source,
@@ -32,6 +39,13 @@ MODELS = [
     Message,
     SolutionRun,
     Job,
+    ReviewRecord,
+    AIRunRecord,
+    ResearchTask,
+    ResearchStep,
+    ExpertContribution,
+    ExpertCollaboration,
+    ExpertReply,
 ]
 
 
@@ -56,10 +70,7 @@ def test_dynamic_fields_use_postgresql_jsonb() -> None:
 
 
 def test_idempotency_record_has_workspace_key_uniqueness() -> None:
-    constraints = {
-        constraint.name
-        for constraint in IdempotencyRecord.__table__.constraints
-    }
+    constraints = {constraint.name for constraint in IdempotencyRecord.__table__.constraints}
     assert "uq_idempotency_records_workspace_key" in constraints
     assert IdempotencyRecord.__table__.c.request_hash.type.length == 64
 
@@ -91,6 +102,13 @@ def test_metadata_contains_core_and_idempotency_tables() -> None:
         "solution_runs",
         "jobs",
         "idempotency_records",
+        "review_records",
+        "ai_run_records",
+        "research_tasks",
+        "research_steps",
+        "expert_contributions",
+        "expert_collaborations",
+        "expert_replies",
     }
 
 
@@ -100,7 +118,7 @@ def test_all_tables_compile_to_postgresql_ddl() -> None:
         for table in Base.metadata.sorted_tables
     ]
 
-    assert len(statements) == 10
+    assert len(statements) == 17
     assert all("UUID" in statement for statement in statements)
 
 

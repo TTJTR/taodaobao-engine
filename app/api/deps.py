@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
@@ -7,6 +8,12 @@ from fastapi import Cookie, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import BailianAIEngine, BailianChatClient, BailianSettings, MockAIEngine
+from app.ai.embedding import (
+    BailianEmbeddingProvider,
+    BailianEmbeddingSettings,
+    EmbeddingProvider,
+    MockEmbeddingProvider,
+)
 from app.contracts.ai import AIEngine
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
@@ -49,12 +56,21 @@ def get_ai_engine() -> AIEngine:
 AIEngineDependency = Annotated[AIEngine, Depends(get_ai_engine)]
 
 
+@lru_cache
+def get_embedding_provider() -> EmbeddingProvider:
+    if settings.ai_mode == "mock":
+        return MockEmbeddingProvider(dimension=1024)
+    return BailianEmbeddingProvider(BailianEmbeddingSettings.from_env(Path(".env")))
+
+
+EmbeddingProviderDependency = Annotated[EmbeddingProvider, Depends(get_embedding_provider)]
+
+
 async def get_current_user(
     session: DatabaseSession,
     codec: SessionCodecDependency,
-    session_token: Annotated[
-        str | None, Cookie(alias=settings.session_cookie_name)
-    ] = None,
+    adapter: FeishuAdapterDependency,
+    session_token: Annotated[str | None, Cookie(alias=settings.session_cookie_name)] = None,
 ) -> User:
     if not session_token:
         raise AppError(
@@ -78,6 +94,23 @@ async def get_current_user(
             "登录用户不存在或已停用",
             status_code=401,
         )
+    if (
+        user.feishu_refresh_token
+        and user.feishu_token_expires_at
+        and user.feishu_token_expires_at <= datetime.now(UTC) + timedelta(seconds=60)
+    ):
+        try:
+            token = await adapter.refresh_access_token(user.feishu_refresh_token)
+        except Exception as exc:
+            raise AppError(
+                ErrorCode.FEISHU_AUTH_EXPIRED,
+                "飞书授权已过期，请重新授权",
+                status_code=401,
+            ) from exc
+        user.feishu_access_token = token.access_token
+        user.feishu_refresh_token = token.refresh_token
+        user.feishu_token_expires_at = token.expires_at
+        await session.commit()
     return user
 
 

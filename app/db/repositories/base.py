@@ -84,4 +84,3 @@ class BaseRepository(Generic[ModelT]):
     async def soft_delete(self, entity: ModelT) -> None:
         entity.is_deleted = True
         await self.session.flush()
-
