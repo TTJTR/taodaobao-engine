@@ -20,6 +20,8 @@ from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from app.core.token_crypto import EncryptedTokenText
+
 
 class SourceType(StrEnum):
     FEISHU_DOC = "feishu_doc"
@@ -155,8 +157,8 @@ class User(EntityMixin, WorkspaceMixin, Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     avatar: Mapped[str | None] = mapped_column(String(1000))
     feishu_tenant_key: Mapped[str | None] = mapped_column(String(128))
-    feishu_access_token: Mapped[str | None] = mapped_column(Text)
-    feishu_refresh_token: Mapped[str | None] = mapped_column(Text)
+    feishu_access_token: Mapped[str | None] = mapped_column(EncryptedTokenText())
+    feishu_refresh_token: Mapped[str | None] = mapped_column(EncryptedTokenText())
     feishu_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     imported_sources: Mapped[list["Source"]] = relationship(

@@ -18,6 +18,7 @@ from app.contracts.ai import AIEngine
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.core.security import InvalidSessionError, SessionCodec
+from app.core.token_crypto import validate_live_token_encryption
 from app.db.database import get_db
 from app.db.models import User
 from app.db.repositories import UserRepository
@@ -38,6 +39,7 @@ def get_feishu_adapter() -> FeishuAdapter:
         return MockFeishuAdapter(settings.public_base_url)
     if not settings.feishu_app_id or not settings.feishu_app_secret:
         raise RuntimeError("Live Feishu mode requires APP_FEISHU_APP_ID and APP_FEISHU_APP_SECRET")
+    validate_live_token_encryption()
     return LiveFeishuAdapter(
         settings.feishu_app_id,
         settings.feishu_app_secret,

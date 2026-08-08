@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     feishu_app_secret: str | None = None
     feishu_verification_token: str | None = None
     feishu_encrypt_key: str | None = None
+    feishu_token_encryption_key: str | None = None
     feishu_scopes: str = (
         "offline_access docx:document space:document:retrieve "
         "minutes:minutes.search:read minutes:minutes.basic:read "
