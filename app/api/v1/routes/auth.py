@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import secrets
+import time
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -24,9 +25,35 @@ class VerifyInvitationRequest(BaseModel):
     invitation_code: str = Field(min_length=1, max_length=256)
 
 
-def invitation_proof() -> str:
-    code = settings.invitation_code or ""
-    return hmac.new(settings.session_secret.encode(), code.encode(), hashlib.sha256).hexdigest()
+def _invitation_signing_key() -> bytes:
+    code = (settings.invitation_code or "").encode()
+    return hmac.new(settings.session_secret.encode(), code, hashlib.sha256).digest()
+
+
+def create_invitation_proof() -> str:
+    expires_at = int(time.time()) + settings.invitation_ttl_seconds
+    payload = f"{expires_at}.{secrets.token_urlsafe(18)}"
+    signature = hmac.new(
+        _invitation_signing_key(), payload.encode(), hashlib.sha256
+    ).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def verify_invitation_proof(proof: str | None) -> bool:
+    if not proof:
+        return False
+    try:
+        expires_at_raw, nonce, signature = proof.split(".", maxsplit=2)
+        expires_at = int(expires_at_raw)
+    except (TypeError, ValueError):
+        return False
+    if not nonce or expires_at < int(time.time()):
+        return False
+    payload = f"{expires_at_raw}.{nonce}"
+    expected = hmac.new(
+        _invitation_signing_key(), payload.encode(), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(signature, expected)
 
 
 @router.post("/auth/invitation/verify")
@@ -45,11 +72,11 @@ async def verify_invitation(
         )
     response.set_cookie(
         settings.invitation_cookie_name,
-        invitation_proof(),
-        max_age=600,
+        create_invitation_proof(),
+        max_age=settings.invitation_ttl_seconds,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="lax",
+        samesite="strict",
         path=f"{settings.api_prefix}/auth/feishu/start",
     )
     return success_response(request, {"success": True})
@@ -65,9 +92,7 @@ async def start_feishu_authorization(
     adapter: FeishuAdapterDependency,
     invitation: str | None = Cookie(default=None, alias=settings.invitation_cookie_name),
 ) -> JSONResponse:
-    if settings.invitation_required and (
-        not invitation or not hmac.compare_digest(invitation, invitation_proof())
-    ):
+    if settings.invitation_required and not verify_invitation_proof(invitation):
         raise AppError(ErrorCode.INVITE_CODE_INVALID, "请先验证邀请码", status_code=401)
     state = secrets.token_urlsafe(32)
     authorization_url = adapter.get_authorization_url(state, get_redirect_uri())
@@ -86,6 +111,14 @@ async def start_feishu_authorization(
         samesite="lax",
         path=f"{settings.api_prefix}/auth/feishu/callback",
     )
+    if settings.invitation_required:
+        response.delete_cookie(
+            settings.invitation_cookie_name,
+            path=f"{settings.api_prefix}/auth/feishu/start",
+            secure=settings.cookie_secure,
+            httponly=True,
+            samesite="strict",
+        )
     return response
 
 

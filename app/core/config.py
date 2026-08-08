@@ -2,6 +2,7 @@ from functools import lru_cache
 from typing import Literal
 from uuid import UUID
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +32,7 @@ class Settings(BaseSettings):
     invitation_required: bool = False
     invitation_code: str | None = None
     invitation_cookie_name: str = "taodaobao_invitation"
+    invitation_ttl_seconds: int = 10 * 60
     public_base_url: str = "http://127.0.0.1:8000"
     frontend_redirect_url: str = "http://127.0.0.1:8000/"
     demo_workspace_id: UUID = UUID("00000000-0000-4000-8000-000000000001")
@@ -39,6 +41,16 @@ class Settings(BaseSettings):
     oauth_state_cookie_name: str = "taodaobao_oauth_state"
     session_ttl_seconds: int = 8 * 60 * 60
     cookie_secure: bool = True
+
+    @model_validator(mode="after")
+    def validate_security_configuration(self) -> "Settings":
+        if self.invitation_required and not (self.invitation_code or "").strip():
+            raise ValueError(
+                "APP_INVITATION_CODE is required when APP_INVITATION_REQUIRED=true"
+            )
+        if self.invitation_ttl_seconds <= 0:
+            raise ValueError("APP_INVITATION_TTL_SECONDS must be positive")
+        return self
 
 
 @lru_cache

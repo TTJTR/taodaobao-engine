@@ -4,9 +4,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.api.deps import get_auth_service, get_current_user, get_feishu_adapter
-from app.core.config import settings
+from app.api.v1.routes import auth as auth_routes
+from app.core.config import Settings, settings
 from app.core.security import InvalidSessionError, SessionCodec
 from app.db.models import User
 from app.integrations import MockFeishuAdapter
@@ -46,6 +48,25 @@ def test_session_codec_rejects_expired_token(monkeypatch: pytest.MonkeyPatch) ->
 
     with pytest.raises(InvalidSessionError, match="expired"):
         codec.decode(token)
+
+
+def test_invitation_configuration_rejects_required_blank_code() -> None:
+    with pytest.raises(ValidationError, match="APP_INVITATION_CODE"):
+        Settings(_env_file=None, invitation_required=True, invitation_code=None)
+
+
+def test_invitation_proof_is_signed_and_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "session_secret", "test-secret-at-least-16-characters")
+    monkeypatch.setattr(settings, "invitation_code", "private-invite")
+    monkeypatch.setattr(settings, "invitation_ttl_seconds", 60)
+    monkeypatch.setattr(auth_routes.time, "time", lambda: 1_000)
+
+    proof = auth_routes.create_invitation_proof()
+
+    assert auth_routes.verify_invitation_proof(proof)
+    assert not auth_routes.verify_invitation_proof(proof + "tampered")
+    monkeypatch.setattr(auth_routes.time, "time", lambda: 1_061)
+    assert not auth_routes.verify_invitation_proof(proof)
 
 
 @pytest.mark.asyncio
@@ -142,6 +163,47 @@ def test_auth_routes_and_secure_cookies(monkeypatch: pytest.MonkeyPatch) -> None
         assert logout.status_code == 200
         assert logout.json()["data"] == {"success": True}
         assert f"{settings.session_cookie_name}=\"\"" in logout.headers["set-cookie"]
+
+
+def test_invitation_must_be_verified_before_oauth_and_is_single_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "invitation_required", True)
+    monkeypatch.setattr(settings, "invitation_code", "private-invite")
+    monkeypatch.setattr(settings, "invitation_ttl_seconds", 60)
+    monkeypatch.setattr(settings, "cookie_secure", False)
+    app = create_app()
+    app.dependency_overrides[get_feishu_adapter] = lambda: MockFeishuAdapter(
+        settings.public_base_url
+    )
+
+    with TestClient(app) as client:
+        blocked = client.get("/api/v1/auth/feishu/start")
+        assert blocked.status_code == 401
+        assert blocked.json()["error"]["code"] == "INVITE_CODE_INVALID"
+
+        wrong = client.post(
+            "/api/v1/auth/invitation/verify",
+            json={"invitation_code": "wrong"},
+            headers={"Idempotency-Key": f"invite-{uuid.uuid4()}"},
+        )
+        assert wrong.status_code == 401
+
+        verified = client.post(
+            "/api/v1/auth/invitation/verify",
+            json={"invitation_code": "private-invite"},
+            headers={"Idempotency-Key": f"invite-{uuid.uuid4()}"},
+        )
+        assert verified.status_code == 200
+        assert "HttpOnly" in verified.headers["set-cookie"]
+        assert "SameSite=strict" in verified.headers["set-cookie"]
+
+        started = client.get("/api/v1/auth/feishu/start")
+        assert started.status_code == 200
+        assert f"{settings.invitation_cookie_name}=\"\"" in started.headers["set-cookie"]
+
+        blocked_again = client.get("/api/v1/auth/feishu/start")
+        assert blocked_again.status_code == 401
 
 
 def test_me_requires_session_cookie() -> None:

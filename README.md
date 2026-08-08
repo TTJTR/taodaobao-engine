@@ -51,3 +51,17 @@ V1 增量 HTTP 契约见 `docs/openapi-v1-incremental.yaml`；根目录
 
 Swagger UI is available at `http://127.0.0.1:8000/docs` and the health endpoint
 at `http://127.0.0.1:8000/api/v1/health`.
+
+## Deployment invitation gate
+
+The login page never contains or stores an invitation code. On a Linux deployment,
+enable and rotate the gate with:
+
+```bash
+python3 scripts/configure_invitation.py --enable
+```
+
+The generated code is written to `/root/taodaobao-invitation.txt` with mode `0600`.
+The administrator can share it out of band. Verification creates a signed, short-lived,
+HttpOnly cookie that is consumed when OAuth starts. Inspect or disable the gate with
+`--check` or `--disable`; recreate the application container after changing it.
