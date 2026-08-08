@@ -1,4 +1,5 @@
 #!/bin/sh
+# Keep this file LF-only; it is the Linux container entrypoint.
 set -eu
 
 echo "Applying database migrations..."
