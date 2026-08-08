@@ -40,7 +40,7 @@ uvicorn main:app --reload
 V1 使用 pgvector。可先启动独立数据库并执行迁移：
 
 ```powershell
-docker compose up -d postgres
+docker compose -f compose.dev.yaml up -d postgres
 $env:APP_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:55433/taodaobao_v1"
 python -m alembic upgrade head
 python -m app.cli.seed_demo --reset
