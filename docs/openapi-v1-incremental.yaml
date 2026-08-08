@@ -125,6 +125,20 @@ paths:
             schema: {$ref: '#/components/schemas/ExpertReplyEvent'}
       responses:
         '202': {description: 去重保存回复并恢复原研究任务}
+  /expert-collaborations/events/feishu:
+    post:
+      operationId: receiveNativeFeishuEvent
+      description: >-
+        飞书开放平台原生事件回调。支持 url_verification challenge、加密事件、
+        X-Lark-Signature 校验及 im.message.receive_v1 群文本消息；此入口无需业务登录态。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        '200': {description: challenge 响应、忽略非目标事件或接收成功}
+        '401': {description: verification token、签名或加密数据校验失败}
   /expert-collaborations/replies/{reply_id}/adopt:
     parameters:
       - {name: reply_id, in: path, required: true, schema: {type: string, format: uuid}}

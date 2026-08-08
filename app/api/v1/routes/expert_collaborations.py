@@ -11,11 +11,21 @@ from app.api.deps import (
     EmbeddingProviderDependency,
     FeishuAdapterDependency,
     WorkspaceId,
+    get_ai_engine,
+    get_embedding_provider,
+    get_feishu_adapter,
 )
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
+from app.db.database import get_session_factory
+from app.integrations.feishu_events import (
+    FeishuEventError,
+    decode_event_body,
+    parse_text_message_event,
+    verify_event_signature,
+)
 from app.schemas.v1 import (
     AdoptExpertReplyRequest,
     CreateExpertCollaborationRequest,
@@ -26,6 +36,7 @@ from app.schemas.v1 import (
 )
 from app.services.expert_collaboration_service import (
     ExpertCollaborationService,
+    resolve_collaboration_by_feishu_group,
     resolve_collaboration_workspace,
 )
 from app.services.research_pipeline import run_research_pipeline
@@ -36,6 +47,96 @@ events_router = APIRouter(route_class=IdempotencyRoute)
 
 def serialize_collaboration(item) -> dict:
     return ExpertCollaborationRead.model_validate(item).model_dump(mode="json")
+
+
+def _verify_feishu_token(payload: dict) -> None:
+    if settings.feishu_mode != "live":
+        return
+    configured = settings.feishu_verification_token or ""
+    supplied = str(payload.get("token") or (payload.get("header") or {}).get("token") or "")
+    if not configured or not hmac.compare_digest(configured, supplied):
+        raise AppError(ErrorCode.AUTH_REQUIRED, "飞书事件校验失败", status_code=401)
+
+
+def _question_id_for_message(collaboration, text: str) -> str:
+    questions = collaboration.questions or []
+    explicit = [
+        str(item["question_id"])
+        for item in questions
+        if str(item.get("question_id") or "") in text
+    ]
+    if explicit:
+        return explicit[0]
+    if len(questions) == 1:
+        return str(questions[0]["question_id"])
+    raise AppError(
+        ErrorCode.VALIDATION_FAILED,
+        "群内回复需包含问题编号，例如 EXP-Q1",
+        status_code=422,
+    )
+
+
+@events_router.post("/events/feishu", status_code=status.HTTP_200_OK)
+async def receive_native_feishu_event(
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> dict[str, object]:
+    raw_body = await request.body()
+    try:
+        verify_event_signature(
+            raw_body,
+            timestamp=request.headers.get("X-Lark-Request-Timestamp"),
+            nonce=request.headers.get("X-Lark-Request-Nonce"),
+            signature=request.headers.get("X-Lark-Signature"),
+            encrypt_key=settings.feishu_encrypt_key,
+        )
+        payload = decode_event_body(raw_body, settings.feishu_encrypt_key)
+    except FeishuEventError as exc:
+        raise AppError(ErrorCode.AUTH_REQUIRED, str(exc), status_code=401) from exc
+    _verify_feishu_token(payload)
+    if payload.get("type") == "url_verification":
+        return {"challenge": str(payload.get("challenge") or "")}
+    event = parse_text_message_event(payload)
+    if event is None:
+        return {"code": 0}
+    ai_engine = get_ai_engine()
+    embedding_provider = get_embedding_provider()
+    feishu = get_feishu_adapter()
+    async with get_session_factory()() as session:
+        collaboration, workspace_id, user_id = await resolve_collaboration_by_feishu_group(
+            session, event["chat_id"]
+        )
+        candidate = next(
+            (
+                item
+                for item in collaboration.candidate_records
+                if item.get("feishu_user_id") == event["author_id"]
+            ),
+            None,
+        )
+        author_name = str((candidate or {}).get("display_name") or event["author_id"])
+        reply, task = await ExpertCollaborationService(
+            session, workspace_id, user_id, ai_engine, feishu
+        ).record_reply(
+            collaboration_id=collaboration.id,
+            question_id=_question_id_for_message(collaboration, event["text"]),
+            author_id=event["author_id"],
+            author_name=author_name,
+            answer_text=event["text"],
+            feishu_message_id=event["message_id"],
+            message_url=f"feishu-message://{event['message_id']}",
+        )
+        reply_id = reply.id
+        task_id = task.id
+    background_tasks.add_task(
+        run_research_pipeline,
+        task_id,
+        workspace_id,
+        user_id,
+        ai_engine,
+        embedding_provider,
+    )
+    return {"code": 0, "data": {"reply_id": str(reply_id)}}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

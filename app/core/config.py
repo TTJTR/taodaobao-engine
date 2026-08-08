@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     feishu_app_id: str | None = None
     feishu_app_secret: str | None = None
     feishu_verification_token: str | None = None
+    feishu_encrypt_key: str | None = None
+    feishu_scopes: str = (
+        "offline_access docx:document space:document:retrieve "
+        "minutes:minutes.search:read minutes:minutes.basic:read "
+        "minutes:minutes.transcript:export"
+    )
     invitation_required: bool = False
     invitation_code: str | None = None
     invitation_cookie_name: str = "taodaobao_invitation"

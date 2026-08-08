@@ -121,17 +121,26 @@ class LiveFeishuAdapter:
     user_info_endpoint = "https://open.feishu.cn/open-apis/authen/v1/user_info"
     api_base = "https://open.feishu.cn/open-apis"
 
-    def __init__(self, app_id: str, app_secret: str) -> None:
+    tenant_token_endpoint = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+
+    def __init__(
+        self, app_id: str, app_secret: str, *, scopes: list[str] | None = None
+    ) -> None:
         if not app_id or not app_secret:
             raise ValueError("Feishu app_id and app_secret are required in live mode")
         self.app_id = app_id
         self.app_secret = app_secret
+        self.scopes = list(dict.fromkeys(scopes or ["offline_access"]))
+        self._tenant_access_token: str | None = None
+        self._tenant_token_expires_at: datetime | None = None
 
     def get_authorization_url(self, state: str, redirect_uri: str) -> str:
         query = urlencode(
             {
-                "app_id": self.app_id,
+                "client_id": self.app_id,
+                "response_type": "code",
                 "redirect_uri": redirect_uri,
+                "scope": " ".join(self.scopes),
                 "state": state,
             }
         )
@@ -151,6 +160,7 @@ class LiveFeishuAdapter:
             )
             token_response.raise_for_status()
             token_payload: dict[str, Any] = token_response.json()
+            self._raise_oauth_error(token_payload)
             access_token = token_payload.get("access_token") or token_payload.get("data", {}).get(
                 "access_token"
             )
@@ -163,6 +173,7 @@ class LiveFeishuAdapter:
             )
             user_response.raise_for_status()
             payload: dict[str, Any] = user_response.json()
+            self._raise_api_error(payload)
             user_data = payload.get("data", payload)
 
         feishu_user_id = user_data.get("open_id") or user_data.get("user_id")
@@ -199,6 +210,7 @@ class LiveFeishuAdapter:
             )
             response.raise_for_status()
             payload: dict[str, Any] = response.json()
+            self._raise_oauth_error(payload)
         data = payload.get("data", payload)
         access_token = data.get("access_token")
         if not access_token:
@@ -215,18 +227,24 @@ class LiveFeishuAdapter:
         if minute_id:
             return await self._fetch_minute(url, minute_id, token)
         document_id = self._document_id(url)
-        payload = await self._request(
+        metadata_payload = await self._request(
+            "GET",
+            f"/docx/v1/documents/{document_id}",
+            token,
+        )
+        content_payload = await self._request(
             "GET",
             f"/docx/v1/documents/{document_id}/raw_content",
             token,
         )
-        data = payload.get("data", {})
+        document = metadata_payload.get("data", {}).get("document", {})
+        data = content_payload.get("data", {})
         return FeishuDocument(
-            title=str(data.get("title") or f"Feishu document {document_id}"),
+            title=str(document.get("title") or f"Feishu document {document_id}"),
             content=str(data.get("content") or ""),
-            author=str(data.get("owner_name") or "Feishu"),
+            author="飞书文档",
             source_url=url,
-            source_updated_at=data.get("updated_at"),
+            source_updated_at=None,
         )
 
     async def list_resources(
@@ -237,11 +255,15 @@ class LiveFeishuAdapter:
     ) -> tuple[list[FeishuResource], str | None]:
         token = self._require_access_token(access_token)
         if resource_type == "minute":
+            request_params = {"page_size": "30"}
+            if page_token:
+                request_params["page_token"] = page_token
             payload = await self._request(
                 "POST",
                 "/minutes/v1/minutes/search",
                 token,
-                json_body={"page_size": 50, "page_token": page_token or ""},
+                json_body={"query": ""},
+                params=request_params,
             )
             data = payload.get("data", {})
             raw_items = data.get("minute_list") or data.get("items") or []
@@ -282,7 +304,8 @@ class LiveFeishuAdapter:
             ]
         else:
             raise ValueError("resource_type must be document or minute")
-        return items, data.get("next_page_token") or data.get("page_token")
+        next_page_token = data.get("page_token") if data.get("has_more") else None
+        return items, data.get("next_page_token") or next_page_token
 
     async def create_document(
         self, title: str, content: dict[str, Any], access_token: str | None
@@ -315,7 +338,8 @@ class LiveFeishuAdapter:
         access_token: str | None,
         idempotency_key: str | None = None,
     ) -> FeishuCreatedGroup:
-        token = self._require_access_token(access_token)
+        del access_token
+        token = await self._get_tenant_access_token()
         payload = await self._request(
             "POST",
             "/im/v1/chats",
@@ -341,7 +365,8 @@ class LiveFeishuAdapter:
         access_token: str | None,
         idempotency_key: str | None = None,
     ) -> str:
-        token = self._require_access_token(access_token)
+        del access_token
+        token = await self._get_tenant_access_token()
         is_text = set(content) == {"text"}
         payload = await self._request(
             "POST",
@@ -356,6 +381,29 @@ class LiveFeishuAdapter:
             params={"receive_id_type": "chat_id"},
         )
         return str(payload.get("data", {}).get("message_id") or "")
+
+    async def _get_tenant_access_token(self) -> str:
+        now = datetime.now(UTC)
+        if (
+            self._tenant_access_token
+            and self._tenant_token_expires_at
+            and self._tenant_token_expires_at > now + timedelta(seconds=60)
+        ):
+            return self._tenant_access_token
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                self.tenant_token_endpoint,
+                json={"app_id": self.app_id, "app_secret": self.app_secret},
+            )
+            response.raise_for_status()
+            payload: dict[str, Any] = response.json()
+        self._raise_api_error(payload)
+        token = payload.get("tenant_access_token")
+        if not token:
+            raise RuntimeError("Feishu tenant token response omitted tenant_access_token")
+        self._tenant_access_token = str(token)
+        self._tenant_token_expires_at = now + timedelta(seconds=int(payload.get("expire") or 7200))
+        return self._tenant_access_token
 
     async def _request(
         self,
@@ -408,16 +456,12 @@ class LiveFeishuAdapter:
 
     async def _fetch_minute(self, url: str, minute_id: str, access_token: str) -> FeishuDocument:
         info = await self._request("GET", f"/minutes/v1/minutes/{minute_id}", access_token)
-        transcript = await self._request(
-            "GET", f"/minutes/v1/minutes/{minute_id}/transcript", access_token
-        )
         data = info.get("data", {}).get("minute", info.get("data", {}))
-        transcript_data = transcript.get("data", {})
-        content = transcript_data.get("transcript") or transcript_data.get("content") or ""
-        if isinstance(content, list):
-            content = "\n".join(
-                str(item.get("text") if isinstance(item, dict) else item) for item in content
-            )
+        content = await self._request_text(
+            f"/minutes/v1/minutes/{minute_id}/transcript",
+            access_token,
+            params={"file_format": "txt", "need_speaker": "true"},
+        )
         return FeishuDocument(
             title=str(data.get("title") or "未命名妙记"),
             content=str(content),
@@ -425,6 +469,30 @@ class LiveFeishuAdapter:
             source_url=url,
             source_updated_at=data.get("update_time"),
         )
+
+    async def _request_text(
+        self, path: str, access_token: str, *, params: dict[str, str] | None = None
+    ) -> str:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.api_base}{path}",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params=params,
+            )
+        response.raise_for_status()
+        return response.content.decode("utf-8-sig")
+
+    @staticmethod
+    def _raise_oauth_error(payload: dict[str, Any]) -> None:
+        code = payload.get("code", 0)
+        if code not in {0, "0", None} or payload.get("error"):
+            detail = payload.get("error_description") or payload.get("msg") or payload.get("error")
+            raise RuntimeError(f"Feishu OAuth failed: {code} {detail or ''}".strip())
+
+    @staticmethod
+    def _raise_api_error(payload: dict[str, Any]) -> None:
+        if payload.get("code", 0) not in {0, "0", None}:
+            raise RuntimeError(f"Feishu API failed: {payload.get('code')} {payload.get('msg', '')}")
 
     @staticmethod
     def _optional_datetime(value: Any) -> datetime | None:

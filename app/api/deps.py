@@ -38,7 +38,11 @@ def get_feishu_adapter() -> FeishuAdapter:
         return MockFeishuAdapter(settings.public_base_url)
     if not settings.feishu_app_id or not settings.feishu_app_secret:
         raise RuntimeError("Live Feishu mode requires APP_FEISHU_APP_ID and APP_FEISHU_APP_SECRET")
-    return LiveFeishuAdapter(settings.feishu_app_id, settings.feishu_app_secret)
+    return LiveFeishuAdapter(
+        settings.feishu_app_id,
+        settings.feishu_app_secret,
+        scopes=settings.feishu_scopes.split(),
+    )
 
 
 SessionCodecDependency = Annotated[SessionCodec, Depends(get_session_codec)]

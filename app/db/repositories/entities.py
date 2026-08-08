@@ -378,6 +378,13 @@ class ExpertCollaborationRepository(BaseRepository[ExpertCollaboration]):
         )
         return await self.session.scalar(statement)
 
+    async def get_by_feishu_group_id(self, group_id: str) -> ExpertCollaboration | None:
+        statement = select(ExpertCollaboration).where(
+            ExpertCollaboration.feishu_group_id == group_id,
+            *self._active_filters(),
+        )
+        return await self.session.scalar(statement)
+
     async def list_filtered(self, *, offset: int, limit: int) -> list[ExpertCollaboration]:
         statement = (
             select(ExpertCollaboration)

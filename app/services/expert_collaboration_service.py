@@ -526,3 +526,22 @@ async def resolve_collaboration_workspace(
     if row is None:
         raise AppError(ErrorCode.VALIDATION_FAILED, "专家协作不存在", status_code=404)
     return row.workspace_id, row.created_by_id
+
+
+async def resolve_collaboration_by_feishu_group(
+    session: AsyncSession, group_id: str
+) -> tuple[ExpertCollaboration, uuid.UUID, uuid.UUID]:
+    statement = (
+        select(ExpertCollaboration, ResearchTask.created_by_id)
+        .join(ResearchTask, ResearchTask.id == ExpertCollaboration.research_task_id)
+        .where(
+            ExpertCollaboration.feishu_group_id == group_id,
+            ExpertCollaboration.is_deleted.is_(False),
+            ResearchTask.is_deleted.is_(False),
+        )
+    )
+    row = (await session.execute(statement)).one_or_none()
+    if row is None:
+        raise AppError(ErrorCode.VALIDATION_FAILED, "飞书群未关联专家协作", status_code=404)
+    collaboration, created_by_id = row
+    return collaboration, collaboration.workspace_id, created_by_id
