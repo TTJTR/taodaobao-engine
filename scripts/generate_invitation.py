@@ -14,8 +14,8 @@ def main() -> int:
     parser.add_argument("--hours", type=int, default=24, help="validity in hours (default: 24)")
     parser.add_argument("--count", type=int, default=1, help="number of single-use tokens")
     args = parser.parse_args()
-    if not 1 <= args.hours <= 168:
-        parser.error("--hours must be between 1 and 168")
+    if not 1 <= args.hours <= 720:
+        parser.error("--hours must be between 1 and 720")
     if not 1 <= args.count <= 100:
         parser.error("--count must be between 1 and 100")
     secret = args.secret_file.read_text(encoding="utf-8").strip()

@@ -58,7 +58,7 @@ def main() -> int:
         "APP_INVITATION_CODE": "",
         "APP_INVITATION_SIGNING_SECRET": signing_secret,
         "APP_INVITATION_TTL_SECONDS": "600",
-        "APP_INVITATION_MAX_TOKEN_TTL_SECONDS": "604800",
+        "APP_INVITATION_MAX_TOKEN_TTL_SECONDS": "2592000",
     }
     write_atomically(args.env_file, render_env(original, updates))
     write_secret(args.secret_output, signing_secret)

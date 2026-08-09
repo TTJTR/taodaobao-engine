@@ -40,6 +40,16 @@ def test_signed_invitation_rejects_tampering_expiry_and_excessive_ttl() -> None:
     assert not verify_invitation_token(token, secret, max_ttl_seconds=60, now=1_061)
 
 
+def test_signed_invitation_supports_thirty_day_operator_window() -> None:
+    secret = "test-signing-secret-that-is-long-enough"
+    thirty_days = 30 * 24 * 60 * 60
+    token = generate_invitation_token(secret, ttl_seconds=thirty_days, now=1_000)
+
+    assert verify_invitation_token(
+        token, secret, max_ttl_seconds=thirty_days, now=1_000
+    )
+
+
 def test_signed_invitation_is_single_use_across_verification_and_oauth(
     monkeypatch,
 ) -> None:
