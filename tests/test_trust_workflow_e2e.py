@@ -22,6 +22,7 @@ from app.db.models import (
     MessageRole,
     PresentationRun,
     PresentationStatus,
+    ProcessStatus,
     ProfileStatus,
     Session,
     SolutionRun,
@@ -191,6 +192,96 @@ async def test_twenty_solution_runs_keep_trace_isolation_and_recover_expired_lea
         assert recovered.status == WorkflowTaskStatus.RUNNING
         assert recovered.lease_owner == "replacement-worker"
         assert recovered.attempt_count == 2
+    await engine.dispose()
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
+@pytest.mark.asyncio
+async def test_exhausted_verifier_budget_finishes_as_safe_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    monkeypatch.setattr(durable_worker_module, "get_session_factory", lambda: factory)
+    workspace_id = uuid.uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(text("TRUNCATE TABLE workflow_tasks, users CASCADE"))
+    async with factory() as session:
+        user = User(workspace_id=workspace_id, feishu_user_id="budget-user", name="预算测试员")
+        session.add(user)
+        await session.flush()
+        profile = CustomerProfile(
+            workspace_id=workspace_id,
+            customer_name="预算测试客户",
+            profile={
+                "customer_name": "预算测试客户",
+                "profile_status": "confirmed",
+                "profile_summary": "用于验证核验超时后的安全送审。",
+                "source_ids": ["profile-source"],
+            },
+            status=ProfileStatus.CONFIRMED,
+        )
+        session.add(profile)
+        await session.flush()
+        chat = Session(
+            workspace_id=workspace_id,
+            customer_profile_id=profile.id,
+            created_by_id=user.id,
+            title="核验预算",
+        )
+        session.add(chat)
+        await session.commit()
+        _, run = await SessionService(session, workspace_id, user.id).create_turn(
+            chat.id, "生成需要核验的方案"
+        )
+        task = await session.scalar(select(WorkflowTask).where(WorkflowTask.target_id == run.id))
+        task.status = WorkflowTaskStatus.FAILED
+        task.stage = "verifying"
+        task.error_code = "VERIFIER_UNAVAILABLE"
+        task.attempt_count = task.max_attempts
+        task.deadline_at = datetime.now(UTC) - timedelta(seconds=1)
+        run.status = ProcessStatus.FAILED
+        run.stage = "failed"
+        run.error_code = "VERIFIER_UNAVAILABLE"
+        await session.commit()
+        task_id = task.id
+        run_id = run.id
+
+    await durable_worker_module._reschedule_retryable_failure(task_id, workspace_id)
+    await durable_worker_module._reschedule_retryable_failure(task_id, workspace_id)
+
+    async with factory() as session:
+        run = await session.get(SolutionRun, run_id)
+        task = await session.get(WorkflowTask, task_id)
+        decisions = list(
+            (
+                await session.scalars(
+                    select(TrustDecisionRecord).where(
+                        TrustDecisionRecord.solution_run_id == run_id
+                    )
+                )
+            ).all()
+        )
+        assistant_count = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(Message)
+                .where(
+                    Message.solution_run_id == run_id,
+                    Message.role == MessageRole.ASSISTANT,
+                )
+            )
+            or 0
+        )
+        assert run.status == ProcessStatus.COMPLETED
+        assert run.error_code == "TRUST_REVIEW_REQUIRED"
+        assert run.result["historical_evidence"] == []
+        assert task.status == WorkflowTaskStatus.COMPLETED
+        assert task.stage == "completed_review"
+        assert len(decisions) == 1
+        assert decisions[0].action == TrustAction.REVIEW
+        assert "BE05_RETRY_BUDGET_EXHAUSTED" in decisions[0].reason_codes
+        assert assistant_count == 1
     await engine.dispose()
 
 

@@ -5,12 +5,22 @@ import socket
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 
 from app.api.deps import get_ai_engine, get_embedding_provider
 from app.db.database import get_session_factory
-from app.db.models import WorkflowTask, WorkflowTaskStatus
+from app.db.models import (
+    MessageRole,
+    ProcessStatus,
+    SolutionRun,
+    TrustAction,
+    TrustDecisionRecord,
+    WorkflowTask,
+    WorkflowTaskStatus,
+)
+from app.db.repositories import MessageRepository
 from app.services.solution_pipeline import run_solution_pipeline
+from app.services.trust_gate import GATE_POLICY_VERSION, THRESHOLD_VERSION
 
 logger = logging.getLogger(__name__)
 # External provider calls are bounded at 120 seconds. Keep the lease valid for
@@ -91,21 +101,117 @@ async def _reschedule_retryable_failure(task_id: uuid.UUID, workspace_id: uuid.U
                 WorkflowTask.id == task_id,
                 WorkflowTask.workspace_id == workspace_id,
                 WorkflowTask.is_deleted.is_(False),
-            )
+            ).with_for_update()
         )
-        if (
-            task is None
-            or task.status != WorkflowTaskStatus.FAILED
-            or task.error_code not in RETRYABLE_CODES
-            or task.attempt_count >= task.max_attempts
-            or (task.deadline_at and task.deadline_at <= datetime.now(UTC))
-        ):
+        if task is None or task.status != WorkflowTaskStatus.FAILED:
+            return
+        if task.error_code not in RETRYABLE_CODES:
+            return
+        exhausted = task.attempt_count >= task.max_attempts or bool(
+            task.deadline_at and task.deadline_at <= datetime.now(UTC)
+        )
+        if exhausted:
+            if task.kind == "solution_run":
+                await _finalize_exhausted_solution(session, task)
             return
         task.status = WorkflowTaskStatus.QUEUED
         task.stage = "queued_retry"
         task.available_at = datetime.now(UTC) + timedelta(seconds=2**task.attempt_count)
         task.finished_at = None
         await session.commit()
+
+
+async def _finalize_exhausted_solution(session, task: WorkflowTask) -> None:
+    run = await session.scalar(
+        select(SolutionRun).where(
+            SolutionRun.id == task.target_id,
+            SolutionRun.workspace_id == task.workspace_id,
+            SolutionRun.is_deleted.is_(False),
+        )
+    )
+    if run is None:
+        return
+    latest = await session.scalar(
+        select(TrustDecisionRecord)
+        .where(
+            TrustDecisionRecord.solution_run_id == run.id,
+            TrustDecisionRecord.workspace_id == task.workspace_id,
+            TrustDecisionRecord.is_deleted.is_(False),
+        )
+        .order_by(TrustDecisionRecord.version.desc())
+        .limit(1)
+    )
+    if latest is None or "BE05_RETRY_BUDGET_EXHAUSTED" not in latest.reason_codes:
+        session.add(
+            TrustDecisionRecord(
+                workspace_id=task.workspace_id,
+                solution_run_id=run.id,
+                version=(latest.version + 1 if latest else 1),
+                action=TrustAction.REVIEW,
+                reason_codes=["BE05_RETRY_BUDGET_EXHAUSTED", task.error_code or "UNKNOWN"],
+                gate_policy_version=GATE_POLICY_VERSION,
+                threshold_version=THRESHOLD_VERSION,
+                decided_by="system",
+                decision_details={
+                    "attempt_count": task.attempt_count,
+                    "deadline_at": task.deadline_at.isoformat() if task.deadline_at else None,
+                    "failed_stage": task.stage,
+                },
+            )
+        )
+    run.status = ProcessStatus.COMPLETED
+    run.stage = "completed"
+    run.result = _review_placeholder()
+    run.display_text = "方案核验预算已耗尽，已安全转入人工审核，未发布任何企业结论。"
+    run.error_code = "TRUST_REVIEW_REQUIRED"
+    run.retryable = False
+    run.completed_at = datetime.now(UTC)
+    task.status = WorkflowTaskStatus.COMPLETED
+    task.stage = "completed_review"
+    task.finished_at = datetime.now(UTC)
+    task.lease_owner = None
+    task.lease_expires_at = None
+    messages = MessageRepository(session, task.workspace_id)
+    if await messages.get_for_solution_run(run.id) is None:
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"{task.workspace_id}:session-sequence:{run.session_id}"},
+        )
+        await messages.create(
+            session_id=run.session_id,
+            solution_run_id=run.id,
+            role=MessageRole.ASSISTANT,
+            content=run.display_text,
+            sequence=await messages.next_sequence(run.session_id),
+        )
+    await session.commit()
+
+
+def _review_placeholder() -> dict:
+    return {
+        "requirement_understanding": [
+            {
+                "text": "本次核验在统一预算内未完成，不能作为正式企业结论使用。",
+                "boundary": "pending_confirmation",
+                "asset_id": None,
+                "source_id": None,
+            }
+        ],
+        "initial_recommendations": [],
+        "historical_evidence": [],
+        "capability_composition": [],
+        "prerequisites_and_risks": [],
+        "pending_confirmations": [
+            {
+                "text": "请人工复核证据，或在新的运行中重新生成。",
+                "boundary": "pending_confirmation",
+                "asset_id": None,
+                "source_id": None,
+            }
+        ],
+        "sources": [],
+        "suggested_questions": ["是否需要重新运行核验或提交人工审核？"],
+    }
 
 
 async def run_worker(*, poll_seconds: float = 0.5, once: bool = False) -> None:

@@ -1,11 +1,14 @@
+import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
 from app.ai.engine import MockAIEngine
-from app.db.models import TrustAction
+from app.db.models import SourceFreshness, SourceStatus, TrustAction
 from app.schemas.trust import SolutionV2Payload
+from app.services.solution_trust_service import _evidence_still_visible
 from app.services.trust_gate import EvidenceState, evaluate_trust_gate
 
 
@@ -111,6 +114,28 @@ def test_gate_sends_stale_source_to_review() -> None:
     result = evaluate_trust_gate(_payload(), _state(reviewed_version_current=False))
     assert result.action == TrustAction.REVIEW
     assert not result.released_claim_ids
+
+
+def test_current_permission_and_version_are_rechecked_before_evidence_is_shown() -> None:
+    source_id = uuid.uuid4()
+    evidence = SimpleNamespace(
+        source_id=source_id,
+        permission_status="granted",
+        source_version=1,
+        reviewed_source_version=1,
+    )
+    source = SimpleNamespace(
+        id=source_id,
+        status=SourceStatus.COMPLETED,
+        freshness_status=SourceFreshness.CURRENT,
+        content_version=1,
+    )
+    assert _evidence_still_visible(evidence, {source_id: source})
+    source.freshness_status = SourceFreshness.PERMISSION_DENIED
+    assert not _evidence_still_visible(evidence, {source_id: source})
+    source.freshness_status = SourceFreshness.CURRENT
+    source.content_version = 2
+    assert not _evidence_still_visible(evidence, {source_id: source})
 
 
 def test_solution_v2_rejects_missing_claim_ledger() -> None:
