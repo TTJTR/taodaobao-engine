@@ -139,10 +139,18 @@
     };
 
     const API_BASE="/api/v1";
+    function createIdempotencyKey(){
+      if(typeof globalThis.crypto?.randomUUID==="function")return globalThis.crypto.randomUUID().replaceAll("-","");
+      if(typeof globalThis.crypto?.getRandomValues==="function"){
+        const bytes=new Uint8Array(16);globalThis.crypto.getRandomValues(bytes);
+        return Array.from(bytes,byte=>byte.toString(16).padStart(2,"0")).join("");
+      }
+      return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`.padEnd(16,"0");
+    }
     async function apiFetch(path,options={}){
       const method=(options.method||"GET").toUpperCase(),headers={Accept:"application/json",...(options.headers||{})};
       if(options.body!==undefined){headers["Content-Type"]="application/json";options.body=typeof options.body==="string"?options.body:JSON.stringify(options.body)}
-      if(method==="POST"||method==="PATCH")headers["Idempotency-Key"]=crypto.randomUUID().replaceAll("-","");
+      if(method==="POST"||method==="PATCH")headers["Idempotency-Key"]=createIdempotencyKey();
       const response=await fetch(`${API_BASE}${path}`,{...options,method,headers,credentials:"same-origin"});
       const json=await response.json().catch(()=>({error:{message:`请求失败（HTTP ${response.status}）`}}));
       if(json.error){const error=new Error(json.error.message||json.error.code||"请求失败");error.status=response.status;error.code=json.error.code;throw error}
