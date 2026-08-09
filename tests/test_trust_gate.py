@@ -147,4 +147,3 @@ async def test_mock_engine_supports_solution_v2_through_the_frozen_method() -> N
     assert parsed.schema_version == "solution-v2"
     assert parsed.claims
     assert parsed.quality_attempts[0].attempt == 1
-
