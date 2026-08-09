@@ -448,6 +448,20 @@ class IdempotencyRecord(Base):
     )
 
 
+class InvitationRedemption(Base):
+    __tablename__ = "invitation_redemptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    token_id_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ReviewRecord(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "review_records"
     __table_args__ = (Index("ix_review_records_asset", "asset_type", "asset_id"),)

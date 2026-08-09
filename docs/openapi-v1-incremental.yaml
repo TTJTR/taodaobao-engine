@@ -21,8 +21,8 @@ paths:
               properties:
                 invitation_code: {type: string, minLength: 1, maxLength: 256}
       responses:
-        '200': {description: 邀请码验证成功并建立服务端可验签、限时且单次使用的 HttpOnly Cookie}
-        '401': {description: 邀请码无效；响应不会泄露正确值}
+        '200': {description: 签名邀请码验证成功、令牌摘要完成服务端登记，并建立限时且单次使用的 HttpOnly Cookie}
+        '401': {description: 邀请码签名无效、已过期、超过最长有效期或已经使用；响应不会泄露具体原因或正确值}
   /feishu/resources:
     get:
       operationId: listFeishuResources

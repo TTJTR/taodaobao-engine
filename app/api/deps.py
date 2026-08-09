@@ -24,6 +24,10 @@ from app.db.models import User
 from app.db.repositories import UserRepository
 from app.integrations import FeishuAdapter, LiveFeishuAdapter, MockFeishuAdapter
 from app.services.auth import AuthService
+from app.services.invitations import (
+    InvitationRedemptionStore,
+    PostgresInvitationRedemptionStore,
+)
 
 DatabaseSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -49,6 +53,16 @@ def get_feishu_adapter() -> FeishuAdapter:
 
 SessionCodecDependency = Annotated[SessionCodec, Depends(get_session_codec)]
 FeishuAdapterDependency = Annotated[FeishuAdapter, Depends(get_feishu_adapter)]
+
+
+@lru_cache
+def get_invitation_redemption_store() -> InvitationRedemptionStore:
+    return PostgresInvitationRedemptionStore()
+
+
+InvitationRedemptionStoreDependency = Annotated[
+    InvitationRedemptionStore, Depends(get_invitation_redemption_store)
+]
 
 
 @lru_cache

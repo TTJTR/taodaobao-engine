@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import secrets
 import time
+from datetime import UTC, datetime
 from threading import Lock
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
@@ -12,11 +13,13 @@ from app.api.deps import (
     AuthServiceDependency,
     CurrentUser,
     FeishuAdapterDependency,
+    InvitationRedemptionStoreDependency,
     SessionCodecDependency,
 )
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
+from app.core.invitations import InvitationClaims, verify_invitation_token
 from app.core.responses import success_response
 
 router = APIRouter(route_class=IdempotencyRoute)
@@ -31,13 +34,16 @@ class VerifyInvitationRequest(BaseModel):
 
 
 def _invitation_signing_key() -> bytes:
-    code = (settings.invitation_code or "").encode()
+    code = (settings.invitation_signing_secret or settings.invitation_code or "").encode()
     return hmac.new(settings.session_secret.encode(), code, hashlib.sha256).digest()
 
 
-def create_invitation_proof() -> str:
+def create_invitation_proof(token_id_hash: str | None = None) -> str:
     expires_at = int(time.time()) + settings.invitation_ttl_seconds
-    payload = f"{expires_at}.{secrets.token_urlsafe(18)}"
+    parts = [str(expires_at), secrets.token_urlsafe(18)]
+    if token_id_hash:
+        parts.append(token_id_hash)
+    payload = ".".join(parts)
     signature = hmac.new(
         _invitation_signing_key(), payload.encode(), hashlib.sha256
     ).hexdigest()
@@ -48,17 +54,28 @@ def verify_invitation_proof(proof: str | None) -> bool:
     if not proof:
         return False
     try:
-        expires_at_raw, nonce, signature = proof.split(".", maxsplit=2)
+        parts = proof.split(".")
+        if len(parts) not in {3, 4}:
+            return False
+        expires_at_raw, nonce, *remainder = parts
+        signature = remainder[-1]
         expires_at = int(expires_at_raw)
     except (TypeError, ValueError):
         return False
     if not nonce or expires_at < int(time.time()):
         return False
-    payload = f"{expires_at_raw}.{nonce}"
+    payload = ".".join(parts[:-1])
     expected = hmac.new(
         _invitation_signing_key(), payload.encode(), hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(signature, expected)
+
+
+def invitation_proof_token_hash(proof: str | None) -> str | None:
+    if not verify_invitation_proof(proof) or proof is None:
+        return None
+    parts = proof.split(".")
+    return parts[2] if len(parts) == 4 else None
 
 
 def consume_invitation_proof(proof: str | None) -> bool:
@@ -90,10 +107,25 @@ async def verify_invitation(
     payload: VerifyInvitationRequest,
     request: Request,
     response: Response,
+    redemption_store: InvitationRedemptionStoreDependency,
     _: str = Depends(require_idempotency_key),
 ) -> dict[str, object]:
-    configured = settings.invitation_code or ""
-    if not configured or not hmac.compare_digest(configured, payload.invitation_code):
+    claims: InvitationClaims | None = None
+    if settings.invitation_signing_secret:
+        claims = verify_invitation_token(
+            payload.invitation_code,
+            settings.invitation_signing_secret,
+            max_ttl_seconds=settings.invitation_max_token_ttl_seconds,
+        )
+        if claims is not None:
+            expires_at = datetime.fromtimestamp(claims.expires_at, tz=UTC)
+            if not await redemption_store.redeem(claims.token_id_hash, expires_at):
+                claims = None
+    else:
+        configured = settings.invitation_code or ""
+        if configured and hmac.compare_digest(configured, payload.invitation_code):
+            claims = InvitationClaims("legacy", int(time.time()), int(time.time()) + 60)
+    if claims is None:
         raise AppError(
             ErrorCode.INVITE_CODE_INVALID,
             "邀请码无效",
@@ -101,7 +133,7 @@ async def verify_invitation(
         )
     response.set_cookie(
         settings.invitation_cookie_name,
-        create_invitation_proof(),
+        create_invitation_proof(None if claims.token_id == "legacy" else claims.token_id_hash),
         max_age=settings.invitation_ttl_seconds,
         httponly=True,
         secure=settings.cookie_secure,
@@ -119,10 +151,18 @@ def get_redirect_uri() -> str:
 async def start_feishu_authorization(
     request: Request,
     adapter: FeishuAdapterDependency,
+    redemption_store: InvitationRedemptionStoreDependency,
     invitation: str | None = Cookie(default=None, alias=settings.invitation_cookie_name),
 ) -> JSONResponse:
-    if settings.invitation_required and not consume_invitation_proof(invitation):
-        raise AppError(ErrorCode.INVITE_CODE_INVALID, "请先验证邀请码", status_code=401)
+    if settings.invitation_required:
+        token_hash = invitation_proof_token_hash(invitation)
+        accepted = (
+            await redemption_store.consume(token_hash)
+            if token_hash
+            else consume_invitation_proof(invitation)
+        )
+        if not accepted:
+            raise AppError(ErrorCode.INVITE_CODE_INVALID, "请先验证邀请码", status_code=401)
     state = secrets.token_urlsafe(32)
     authorization_url = adapter.get_authorization_url(state, get_redirect_uri())
     response = JSONResponse(

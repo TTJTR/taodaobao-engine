@@ -102,6 +102,7 @@ def test_metadata_contains_core_and_idempotency_tables() -> None:
         "solution_runs",
         "jobs",
         "idempotency_records",
+        "invitation_redemptions",
         "review_records",
         "ai_run_records",
         "research_tasks",
@@ -118,7 +119,7 @@ def test_all_tables_compile_to_postgresql_ddl() -> None:
         for table in Base.metadata.sorted_tables
     ]
 
-    assert len(statements) == 17
+    assert len(statements) == 18
     assert all("UUID" in statement for statement in statements)
 
 

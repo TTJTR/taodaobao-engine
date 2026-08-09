@@ -17,6 +17,9 @@ def test_static_index_is_served_at_root() -> None:
     assert 'apiFetch("/research-tasks?page=1&page_size=100")' in response.text
     assert 'apiFetch("/expert-collaborations?page=1&page_size=100")' in response.text
     assert 'apiFetch("/auth/invitation/verify"' in response.text
+    assert 'data-action="verify-invitation"' in response.text
+    assert "function verifyInvitationAndContinue()" in response.text
+    assert "邀请码无效、已使用或已过期" in response.text
     assert "function createIdempotencyKey()" in response.text
     assert 'headers["Idempotency-Key"]=createIdempotencyKey()' in response.text
     assert 'apiFetch(`/feishu/resources?${query}`)' in response.text
