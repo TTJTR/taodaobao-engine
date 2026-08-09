@@ -1,20 +1,17 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from app.api.deps import (
-    AIEngineDependency,
     CurrentUser,
     DatabaseSession,
-    EmbeddingProviderDependency,
     WorkspaceId,
 )
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.schemas.chat import CreateSessionRequest, CreateTurnRequest, MessageRead, SessionRead
 from app.services.session_service import SessionService
-from app.services.solution_pipeline import run_solution_pipeline
 
 router = APIRouter(route_class=IdempotencyRoute)
 
@@ -86,19 +83,13 @@ async def create_turn(
     session_id: uuid.UUID,
     payload: CreateTurnRequest,
     request: Request,
-    background_tasks: BackgroundTasks,
     session: DatabaseSession,
     current_user: CurrentUser,
     workspace_id: WorkspaceId,
-    ai_engine: AIEngineDependency,
-    embedding_provider: EmbeddingProviderDependency,
     _: str = Depends(require_idempotency_key),
 ) -> dict[str, object]:
     message, run = await SessionService(session, workspace_id, current_user.id).create_turn(
         session_id, payload.content
-    )
-    background_tasks.add_task(
-        run_solution_pipeline, run.id, workspace_id, ai_engine, embedding_provider
     )
     return success_response(
         request,

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     ai_mode: Literal["mock", "live"] = "mock"
     feishu_mode: Literal["mock", "live"] = "mock"
+    presentation_mode: Literal["mock", "live"] = "mock"
+    presentation_service_url: str | None = None
+    presentation_service_api_key: str | None = None
     database_url: str | None = None
     feishu_app_id: str | None = None
     feishu_app_secret: str | None = None

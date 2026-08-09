@@ -52,6 +52,30 @@ services:
       retries: 5
       start_period: 30s
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    entrypoint: ["python", "-m", "app.cli.worker"]
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_DATABASE_URL: >-
+        postgresql+asyncpg://${POSTGRES_USER:-taodaobao}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-taodaobao}
+      APP_PUBLIC_BASE_URL: https://${DOMAIN:-localhost}
+      APP_FRONTEND_REDIRECT_URL: https://${DOMAIN:-localhost}/
+      APP_COOKIE_SECURE: "true"
+      APP_SESSION_SECRET: ${APP_SESSION_SECRET:?APP_SESSION_SECRET is required}
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

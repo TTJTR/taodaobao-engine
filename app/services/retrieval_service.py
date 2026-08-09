@@ -1,8 +1,10 @@
+import json
 import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import String, cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.ai.embedding import AssetType, EmbeddingProvider, cosine_similarity
 from app.contracts.ai import AIEngine
@@ -79,6 +81,7 @@ class RetrievalService:
             order_by.insert(1 if terms else 0, model.embedding.cosine_distance(query_vector))
         return (
             select(model)
+            .options(selectinload(model.source))
             .join(Source, Source.id == model.source_id)
             .where(*filters)
             .order_by(*order_by)
@@ -96,6 +99,8 @@ class RetrievalService:
             similarity = cosine_similarity(list(asset_vector), query_vector)
             reasons.append(f"semantic_similarity={similarity:.4f}")
         reasons.append(f"source_freshness={SourceFreshness.CURRENT.value}")
+        source = asset.source
+        evidence_text = json.dumps(asset.data, ensure_ascii=False, sort_keys=True)
         return {
             "id": str(asset.id),
             "source_id": str(asset.source_id),
@@ -104,4 +109,22 @@ class RetrievalService:
             "embedding_version": getattr(asset, "embedding_version", None),
             "match_reasons": reasons,
             "updated_at": asset.updated_at.isoformat(),
+            "source_version": source.content_version,
+            "reviewed_source_version": asset.source_version_at_review,
+            "permission_status": "granted",
+            "permission_checked_at": (
+                source.permission_checked_at.isoformat()
+                if source.permission_checked_at is not None
+                else None
+            ),
+            "source_freshness": source.freshness_status.value,
+            "source_title": source.title,
+            "source_url": source.source_url,
+            "evidence_quote": evidence_text[:8000],
+            "evidence_location": {
+                "kind": "reviewed_asset_json",
+                "path": "data",
+                "asset_updated_at": asset.updated_at.isoformat(),
+                "source_fingerprint": source.content_fingerprint,
+            },
         }

@@ -19,12 +19,17 @@ def error_response(
     retryable: bool,
     details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    normalized_details = dict(details or {})
+    # Preserve the frozen V0.5 envelope while making V1 failures traceable.
+    normalized_details.setdefault("trace_id", None)
+    normalized_details.setdefault("stage", None)
+    normalized_details.setdefault("reason_code", code)
     return {
         "request_id": get_request_id(request),
         "error": {
             "code": code,
             "message": message,
             "retryable": retryable,
-            "details": details or {},
+            "details": normalized_details,
         },
     }

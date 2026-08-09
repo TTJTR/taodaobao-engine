@@ -14,17 +14,24 @@ from app.ai.pipelines.extractor import (
     extract_profile_from_text,
     validate_raw_text,
 )
+from app.ai.pipelines.quality import build_claim_packets
 from app.ai.pipelines.search_intent import extract_search_intent
 from app.ai.pipelines.solution import finalize_solution_result, generate_solution
+from app.ai.pipelines.trust_payload import build_solution_v2_payload
+from app.ai.pipelines.workflow import generate_verified_solution
 from app.ai.runtime import AIRunMetadata, AIRunStatus, InMemoryRunRecorder, RunTimer
 from app.ai.schemas import (
     CandidateRecommendation,
     CapabilityDraft,
+    ClaimReview,
+    ClaimVerdict,
     CustomerProfileDraft,
     DeepResearchStageResult,
     ExperienceDraft,
     ExpertQuestion,
     ProfileStatus,
+    QualityAttempt,
+    QualityReport,
     ResearchAudit,
     ResearchContextPackage,
     ResearchPlan,
@@ -35,6 +42,7 @@ from app.ai.schemas import (
     SearchIntent,
     Solution,
     SolutionContext,
+    VerifiedSolutionResult,
 )
 
 PROMPT_VERSIONS = {
@@ -264,6 +272,27 @@ class BailianAIEngine:
                 trace_id=validated_context.trace_id,
             )
             return result.model_dump(mode="json")
+        if validated_context.schema_version == "solution-v2":
+            verified = await self._run(
+                "generate_solution",
+                lambda client: generate_verified_solution(
+                    validated_context,
+                    validated_snapshot,
+                    client,
+                    client,
+                    client,
+                    max_revisions=min(validated_context.retry_budget, 2),
+                ),
+                stage="generate_verify_revise",
+                prompt_version="solution-v2",
+                trace_id=validated_context.trace_id,
+            )
+            return build_solution_v2_payload(
+                validated_context,
+                validated_snapshot,
+                verified,
+                verifier_version="quality-zh-v1",
+            )
         result = await self._run(
             "generate_solution",
             lambda client: generate_solution(validated_context, validated_snapshot, client),
@@ -357,8 +386,8 @@ class MockAIEngine:
         return [capability.model_dump(mode="json")]
 
     async def extract_search_intent(self, context: dict[str, Any]) -> dict[str, Any]:
-        timer = RunTimer()
         validated = SolutionContext.model_validate(compact_context_payload(context))
+        timer = RunTimer(validated.trace_id)
         if validated.task_type == "expert_routing":
             package = validated.research_context
             if package is None:
@@ -417,8 +446,8 @@ class MockAIEngine:
         context: dict[str, Any],
         retrieval_snapshot: dict[str, Any],
     ) -> dict[str, Any]:
-        timer = RunTimer()
         validated_context = SolutionContext.model_validate(compact_context_payload(context))
+        timer = RunTimer(validated_context.trace_id)
         validated_snapshot = RetrievalSnapshot.model_validate(retrieval_snapshot)
         model_result = {
             "requirement_understanding": [
@@ -505,4 +534,33 @@ class MockAIEngine:
             self._record("generate_solution", timer)
             return deep_result.model_dump(mode="json")
         self._record("generate_solution", timer)
+        if validated_context.schema_version == "solution-v2":
+            reviews = [
+                ClaimReview(
+                    claim_id=packet["claim_id"],
+                    verdict=ClaimVerdict.SUPPORTED,
+                    reason="离线 Mock 按结构规则确认边界与引用；不代表真实模型核验。",
+                )
+                for packet in build_claim_packets(validated_context, validated_snapshot, solution)
+            ]
+            report = QualityReport(
+                reviews=reviews,
+                passed=True,
+                requires_regeneration=False,
+                failed_claim_ids=[],
+                summary="离线 Mock 结构核验通过；部署状态必须明确显示 mock。",
+            )
+            verified = VerifiedSolutionResult(
+                solution=solution,
+                quality_report=report,
+                attempts=[QualityAttempt(attempt=1, solution=solution, quality_report=report)],
+                revision_count=0,
+                passed=True,
+            )
+            return build_solution_v2_payload(
+                validated_context,
+                validated_snapshot,
+                verified,
+                verifier_version="mock-structural-v1",
+            )
         return solution.model_dump(mode="json")

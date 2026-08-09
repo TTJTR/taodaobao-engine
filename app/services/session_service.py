@@ -1,11 +1,20 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, ErrorCode
-from app.db.models import Message, MessageRole, ProcessStatus, ProfileStatus, Session, SolutionRun
+from app.db.models import (
+    Message,
+    MessageRole,
+    ProcessStatus,
+    ProfileStatus,
+    Session,
+    SolutionRun,
+    WorkflowTask,
+    WorkflowTaskStatus,
+)
 from app.db.repositories import (
     CustomerProfileRepository,
     MessageRepository,
@@ -98,6 +107,23 @@ class SessionService:
             },
             status=ProcessStatus.PENDING,
             retryable=False,
+            stage="queued",
+            deadline_at=datetime.now(UTC) + timedelta(seconds=60),
+        )
+        self.session.add(
+            WorkflowTask(
+                workspace_id=self.workspace_id,
+                kind="solution_run",
+                target_id=run.id,
+                status=WorkflowTaskStatus.QUEUED,
+                stage="queued",
+                trace_id=run.trace_id,
+                payload={},
+                attempt_count=0,
+                max_attempts=3,
+                available_at=datetime.now(UTC),
+                deadline_at=run.deadline_at,
+            )
         )
         chat.updated_at = datetime.now(UTC)
         await self.session.commit()

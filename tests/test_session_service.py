@@ -1,6 +1,6 @@
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -55,7 +55,7 @@ async def test_create_turn_persists_user_message_and_pending_run(
         "CustomerProfileRepository",
         lambda *_: SimpleNamespace(get=AsyncMock(return_value=profile)),
     )
-    db = AsyncMock()
+    db = SimpleNamespace(add=Mock(), commit=AsyncMock(), refresh=AsyncMock(), execute=AsyncMock())
 
     message, run = await module.SessionService(db, workspace_id, uuid.uuid4()).create_turn(
         chat.id, "需要一个旁路质检试点"
@@ -65,5 +65,7 @@ async def test_create_turn_persists_user_message_and_pending_run(
     assert message.sequence == 1
     assert run.request_message_id == message.id
     assert run.status == ProcessStatus.PENDING
+    assert run.stage == "queued"
+    db.add.assert_called_once()
     assert run.profile_snapshot["customer_name"] == "制造客户"
     db.commit.assert_awaited_once()

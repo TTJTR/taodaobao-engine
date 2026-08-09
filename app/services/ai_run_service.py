@@ -15,8 +15,14 @@ def persist_last_ai_run(
     target_id: uuid.UUID,
     input_summary: dict[str, Any],
     request_id: str | None = None,
+    trace_id: str | None = None,
 ) -> AIRunRecord | None:
-    metadata = getattr(engine, "last_run", None)
+    recorder = getattr(engine, "recorder", None)
+    metadata = (
+        recorder.get_by_trace_id(trace_id)
+        if trace_id and recorder is not None and hasattr(recorder, "get_by_trace_id")
+        else getattr(engine, "last_run", None)
+    )
     if metadata is None:
         return None
     status_value = getattr(metadata.status, "value", str(metadata.status))

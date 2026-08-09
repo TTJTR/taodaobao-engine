@@ -4,20 +4,34 @@ from sqlalchemy.orm import selectinload
 from app.db.models import (
     AIRunRecord,
     Capability,
+    ClaimEvidenceLink,
+    ClaimRecord,
     CustomerProfile,
+    EvidenceRecord,
     Experience,
     ExpertCollaboration,
     ExpertContribution,
     ExpertReply,
+    ExportArtifact,
+    HtmlArtifact,
+    HumanReviewRecord,
     Job,
     Message,
+    PresentationInputSnapshot,
+    PresentationRun,
+    QualityAttemptRecord,
+    ReferenceDeck,
     ResearchStep,
     ResearchTask,
+    RetrievalSnapshotRecord,
     ReviewRecord,
     Session,
     SolutionRun,
     Source,
+    StyleProfile,
+    TrustDecisionRecord,
     User,
+    WorkflowTask,
 )
 from app.db.repositories.base import BaseRepository
 
@@ -274,9 +288,141 @@ class MessageRepository(BaseRepository[Message]):
         )
         return int(await self.session.scalar(statement) or 0) + 1
 
+    async def get_for_solution_run(self, run_id) -> Message | None:
+        statement = select(Message).where(
+            Message.solution_run_id == run_id, *self._active_filters()
+        )
+        return await self.session.scalar(statement)
+
 
 class SolutionRunRepository(BaseRepository[SolutionRun]):
     model = SolutionRun
+
+
+class RetrievalSnapshotRecordRepository(BaseRepository[RetrievalSnapshotRecord]):
+    model = RetrievalSnapshotRecord
+
+
+class ClaimRecordRepository(BaseRepository[ClaimRecord]):
+    model = ClaimRecord
+
+    async def list_for_run(self, run_id) -> list[ClaimRecord]:
+        statement = (
+            select(ClaimRecord)
+            .where(ClaimRecord.solution_run_id == run_id, *self._active_filters())
+            .order_by(ClaimRecord.created_at.asc())
+        )
+        return list((await self.session.scalars(statement)).all())
+
+
+class EvidenceRecordRepository(BaseRepository[EvidenceRecord]):
+    model = EvidenceRecord
+
+    async def list_for_run(self, run_id) -> list[EvidenceRecord]:
+        statement = (
+            select(EvidenceRecord)
+            .where(EvidenceRecord.solution_run_id == run_id, *self._active_filters())
+            .order_by(EvidenceRecord.created_at.asc())
+        )
+        return list((await self.session.scalars(statement)).all())
+
+
+class ClaimEvidenceLinkRepository(BaseRepository[ClaimEvidenceLink]):
+    model = ClaimEvidenceLink
+
+    async def list_for_run(self, run_id) -> list[ClaimEvidenceLink]:
+        statement = select(ClaimEvidenceLink).where(
+            ClaimEvidenceLink.solution_run_id == run_id, *self._active_filters()
+        )
+        return list((await self.session.scalars(statement)).all())
+
+
+class QualityAttemptRecordRepository(BaseRepository[QualityAttemptRecord]):
+    model = QualityAttemptRecord
+
+    async def list_for_run(self, run_id) -> list[QualityAttemptRecord]:
+        statement = (
+            select(QualityAttemptRecord)
+            .where(QualityAttemptRecord.solution_run_id == run_id, *self._active_filters())
+            .order_by(QualityAttemptRecord.attempt.asc())
+        )
+        return list((await self.session.scalars(statement)).all())
+
+
+class TrustDecisionRecordRepository(BaseRepository[TrustDecisionRecord]):
+    model = TrustDecisionRecord
+
+    async def latest_for_run(self, run_id) -> TrustDecisionRecord | None:
+        statement = (
+            select(TrustDecisionRecord)
+            .where(TrustDecisionRecord.solution_run_id == run_id, *self._active_filters())
+            .order_by(TrustDecisionRecord.version.desc())
+            .limit(1)
+        )
+        return await self.session.scalar(statement)
+
+
+class HumanReviewRecordRepository(BaseRepository[HumanReviewRecord]):
+    model = HumanReviewRecord
+
+    async def list_for_run(self, run_id) -> list[HumanReviewRecord]:
+        statement = (
+            select(HumanReviewRecord)
+            .where(HumanReviewRecord.solution_run_id == run_id, *self._active_filters())
+            .order_by(HumanReviewRecord.reviewed_at.asc())
+        )
+        return list((await self.session.scalars(statement)).all())
+
+
+class WorkflowTaskRepository(BaseRepository[WorkflowTask]):
+    model = WorkflowTask
+
+    async def get_for_target(self, kind: str, target_id) -> WorkflowTask | None:
+        statement = select(WorkflowTask).where(
+            WorkflowTask.kind == kind,
+            WorkflowTask.target_id == target_id,
+            *self._active_filters(),
+        )
+        return await self.session.scalar(statement)
+
+
+class ReferenceDeckRepository(BaseRepository[ReferenceDeck]):
+    model = ReferenceDeck
+
+
+class StyleProfileRepository(BaseRepository[StyleProfile]):
+    model = StyleProfile
+
+
+class PresentationRunRepository(BaseRepository[PresentationRun]):
+    model = PresentationRun
+
+    async def list_for_solution(self, run_id) -> list[PresentationRun]:
+        statement = select(PresentationRun).where(
+            PresentationRun.solution_run_id == run_id, *self._active_filters()
+        )
+        return list((await self.session.scalars(statement)).all())
+
+
+class PresentationInputSnapshotRepository(BaseRepository[PresentationInputSnapshot]):
+    model = PresentationInputSnapshot
+
+
+class HtmlArtifactRepository(BaseRepository[HtmlArtifact]):
+    model = HtmlArtifact
+
+    async def latest_for_presentation(self, presentation_id) -> HtmlArtifact | None:
+        statement = (
+            select(HtmlArtifact)
+            .where(HtmlArtifact.presentation_id == presentation_id, *self._active_filters())
+            .order_by(HtmlArtifact.version.desc())
+            .limit(1)
+        )
+        return await self.session.scalar(statement)
+
+
+class ExportArtifactRepository(BaseRepository[ExportArtifact]):
+    model = ExportArtifact
 
 
 class JobRepository(BaseRepository[Job]):

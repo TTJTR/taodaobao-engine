@@ -56,3 +56,8 @@ class SolutionRunRead(BaseModel):
     updated_at: datetime
     is_deleted: bool
     completed_at: datetime | None
+    stage: str
+    trace_id: str
+    deadline_at: datetime | None
+    attempt_count: int
+    result_version: int

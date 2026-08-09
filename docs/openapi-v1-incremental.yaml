@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 淘到宝引擎 V1 增量契约
-  version: 1.0.0
+  version: 1.1.0
   description: >-
     本文件只描述相对冻结 V0.5 openapi.yaml 新增的接口；冻结路径和字段语义保持不变。
 servers:
@@ -156,6 +156,114 @@ paths:
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       responses:
         '200': {description: 软删除来源并立即暂停关联资产召回}
+  /solution-runs/{run_id}/trust-report:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      operationId: getSolutionTrustReport
+      responses:
+        '200': {description: 返回版本化 Claim、Evidence、核验标签和后端最终 TrustDecision}
+  /solution-runs/{run_id}/trust-review:
+    parameters: [{$ref: '#/components/parameters/RunId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: reviewSolutionTrust
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TrustReviewRequest'}
+      responses:
+        '200': {description: 带乐观锁与完整审计记录的人工可信决策}
+        '409': {description: 决策版本冲突或仍存在不可批准的高风险主张}
+  /solution-runs/{run_id}/retry:
+    parameters: [{$ref: '#/components/parameters/RunId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: retrySolutionRun
+      responses:
+        '202': {description: 复用原运行并创建新 candidate version，不重复写用户消息}
+  /presentation-references:
+    post:
+      operationId: createPresentationReference
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateReferenceDeckRequest'}
+      responses:
+        '202': {description: 创建持久化安全解析任务；返回 ReferenceDeck}
+  /presentation-references/{deck_id}:
+    parameters: [{$ref: '#/components/parameters/DeckId'}]
+    get:
+      operationId: getPresentationReference
+      responses:
+        '200': {description: ReferenceDeck 版本、解析状态与安全报告}
+  /style-profiles/generate:
+    post:
+      operationId: generateStyleProfile
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GenerateStyleProfileRequest'}
+      responses:
+        '202': {description: 创建 draft 风格画像任务}
+  /style-profiles/{profile_id}:
+    parameters: [{$ref: '#/components/parameters/StyleProfileId'}]
+    patch:
+      operationId: updateStyleProfile
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: 按 expected_version 更新视觉、叙事与冲突处理结果}
+  /style-profiles/{profile_id}/confirm:
+    parameters: [{$ref: '#/components/parameters/StyleProfileId'}]
+    post:
+      operationId: confirmStyleProfile
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: 人工确认后允许跨任务复用}
+  /solution-runs/{run_id}/presentations:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    post:
+      operationId: createPresentation
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreatePresentationRequest'}
+      responses:
+        '202': {description: 仅为 RELEASE/DOWNGRADE 方案创建持久化演示任务}
+        '409': {description: 上游未发布或风格画像未确认}
+  /presentations/{presentation_id}:
+    parameters: [{$ref: '#/components/parameters/PresentationId'}]
+    get:
+      operationId: getPresentation
+      responses:
+        '200': {description: 演示状态、Spec、最新 HTML Artifact 与上游可信版本}
+  /presentations/{presentation_id}/blocks/{block_id}:
+    parameters:
+      - {$ref: '#/components/parameters/PresentationId'}
+      - {name: block_id, in: path, required: true, schema: {type: string}}
+    patch:
+      operationId: updatePresentationBlock
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: 局部编辑形成新版本；无 released claim 的事实转 needs_claim_review}
+  /presentations/{presentation_id}/regenerate:
+    parameters: [{$ref: '#/components/parameters/PresentationId'}]
+    post:
+      operationId: regeneratePresentation
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '202': {description: 仅重生成未锁定区块}
+  /presentations/{presentation_id}/export:
+    parameters: [{$ref: '#/components/parameters/PresentationId'}]
+    post:
+      operationId: exportPresentation
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '202': {description: 复用 ready HtmlArtifact，只执行导出步骤}
 components:
   parameters:
     IdempotencyKey:
@@ -173,7 +281,66 @@ components:
       in: path
       required: true
       schema: {type: string, format: uuid}
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    DeckId:
+      name: deck_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    StyleProfileId:
+      name: profile_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    PresentationId:
+      name: presentation_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
   schemas:
+    TrustReviewRequest:
+      type: object
+      required: [expected_decision_version, decision, reason]
+      properties:
+        expected_decision_version: {type: integer, minimum: 1}
+        decision: {enum: [approve, downgrade, reject, revise]}
+        reason: {type: string, minLength: 3, maxLength: 4000}
+        edits: {type: object}
+        evidence_changes: {type: array, items: {type: object}, maxItems: 100}
+    CreateReferenceDeckRequest:
+      type: object
+      required: [file_id, title, storage_key, file_hash, mime_type, size_bytes]
+      properties:
+        file_id: {type: string, maxLength: 256}
+        title: {type: string, maxLength: 300}
+        storage_key: {type: string, maxLength: 1000}
+        file_hash: {type: string, pattern: '^[a-fA-F0-9]{64}$'}
+        mime_type: {const: application/vnd.openxmlformats-officedocument.presentationml.presentation}
+        size_bytes: {type: integer, minimum: 1, maximum: 104857600}
+        source_url: {type: [string, 'null'], maxLength: 2000}
+    GenerateStyleProfileRequest:
+      type: object
+      required: [name, reference_deck_ids]
+      properties:
+        name: {type: string, maxLength: 300}
+        reference_deck_ids:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: {type: string, format: uuid}
+    CreatePresentationRequest:
+      type: object
+      required: [style_profile_id, audience]
+      properties:
+        style_profile_id: {type: string, format: uuid}
+        mode: {enum: [strict, balanced, brand_only], default: balanced}
+        audience: {type: string, maxLength: 64}
+        output: {type: array, items: {enum: [html, pdf]}, default: [html]}
+        language: {enum: [zh-CN, en-US], default: zh-CN}
     CreateResearchTaskRequest:
       type: object
       required: [customer_profile_id, question]

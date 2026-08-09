@@ -1,7 +1,8 @@
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -11,7 +12,7 @@ from app.services import solution_pipeline as module
 
 
 @pytest.mark.asyncio
-async def test_solution_pipeline_completes_and_appends_assistant_message(
+async def test_solution_pipeline_rejects_legacy_solution_without_claim_ledger(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace_id = uuid.uuid4()
@@ -27,6 +28,11 @@ async def test_solution_pipeline_completes_and_appends_assistant_message(
         error_code=None,
         retryable=False,
         profile_snapshot={"customer_name": "制造客户"},
+        deadline_at=datetime.now(UTC) + timedelta(seconds=60),
+        attempt_count=0,
+        result_version=1,
+        trace_id=str(uuid.uuid4()),
+        stage="queued",
     )
     request_message = SimpleNamespace(id=run.request_message_id, content="视觉质检")
     run_repository = SimpleNamespace(get=AsyncMock(return_value=run))
@@ -34,8 +40,14 @@ async def test_solution_pipeline_completes_and_appends_assistant_message(
         get=AsyncMock(return_value=request_message),
         next_sequence=AsyncMock(return_value=2),
         create=AsyncMock(),
+        list_for_session=AsyncMock(return_value=[]),
+        get_for_solution_run=AsyncMock(return_value=None),
     )
-    db = AsyncMock()
+    db = SimpleNamespace(
+        add=Mock(),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
 
     @asynccontextmanager
     async def session_context():
@@ -54,7 +66,8 @@ async def test_solution_pipeline_completes_and_appends_assistant_message(
 
     await module.run_solution_pipeline(run.id, workspace_id, MockAIEngine())
 
-    assert run.status == ProcessStatus.COMPLETED
+    assert run.status == ProcessStatus.FAILED
+    assert run.error_code == "AI_OUTPUT_INVALID"
     assert run.retrieval_snapshot == {
         "experiences": [],
         "capabilities": [],
@@ -64,15 +77,5 @@ async def test_solution_pipeline_completes_and_appends_assistant_message(
         "can_generate_solution": True,
         "created_at": "now",
     }
-    assert set(run.result) == {
-        "requirement_understanding",
-        "initial_recommendations",
-        "historical_evidence",
-        "capability_composition",
-        "prerequisites_and_risks",
-        "pending_confirmations",
-        "sources",
-        "suggested_questions",
-    }
-    message_repository.create.assert_awaited_once()
-    assert message_repository.create.await_args.kwargs["role"].value == "assistant"
+    assert run.result is None
+    message_repository.create.assert_not_awaited()

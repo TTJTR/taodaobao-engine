@@ -52,6 +52,17 @@ V1 增量 HTTP 契约见 `docs/openapi-v1-incremental.yaml`；根目录
 Swagger UI is available at `http://127.0.0.1:8000/docs` and the health endpoint
 at `http://127.0.0.1:8000/api/v1/health`.
 
+V1.1 trustworthy orchestration uses a separate recoverable worker. When not using
+Docker Compose, run it alongside the API:
+
+```bash
+python -m app.cli.worker
+```
+
+The trust/presentation incremental contract is documented in
+`docs/openapi-v1-incremental.yaml`; implementation and provider modes are described in
+`docs/V1.1后端可信编排与演示承接实现说明.md`.
+
 ## Deployment invitation gate
 
 The login page never contains or stores an invitation code. On a Linux deployment,

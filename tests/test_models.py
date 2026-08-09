@@ -12,21 +12,35 @@ from app.db.models import (
     AIRunRecord,
     Base,
     Capability,
+    ClaimEvidenceLink,
+    ClaimRecord,
     CustomerProfile,
+    EvidenceRecord,
     Experience,
     ExpertCollaboration,
     ExpertContribution,
     ExpertReply,
+    ExportArtifact,
+    HtmlArtifact,
+    HumanReviewRecord,
     IdempotencyRecord,
     Job,
     Message,
+    PresentationInputSnapshot,
+    PresentationRun,
+    QualityAttemptRecord,
+    ReferenceDeck,
     ResearchStep,
     ResearchTask,
+    RetrievalSnapshotRecord,
     ReviewRecord,
     Session,
     SolutionRun,
     Source,
+    StyleProfile,
+    TrustDecisionRecord,
     User,
+    WorkflowTask,
 )
 
 MODELS = [
@@ -46,6 +60,20 @@ MODELS = [
     ExpertContribution,
     ExpertCollaboration,
     ExpertReply,
+    RetrievalSnapshotRecord,
+    ClaimRecord,
+    EvidenceRecord,
+    ClaimEvidenceLink,
+    QualityAttemptRecord,
+    TrustDecisionRecord,
+    HumanReviewRecord,
+    WorkflowTask,
+    ReferenceDeck,
+    StyleProfile,
+    PresentationRun,
+    PresentationInputSnapshot,
+    HtmlArtifact,
+    ExportArtifact,
 ]
 
 
@@ -110,6 +138,20 @@ def test_metadata_contains_core_and_idempotency_tables() -> None:
         "expert_contributions",
         "expert_collaborations",
         "expert_replies",
+        "retrieval_snapshot_records",
+        "claim_records",
+        "evidence_records",
+        "claim_evidence_links",
+        "quality_attempt_records",
+        "trust_decision_records",
+        "human_review_records",
+        "workflow_tasks",
+        "reference_decks",
+        "style_profiles",
+        "presentation_runs",
+        "presentation_input_snapshots",
+        "html_artifacts",
+        "export_artifacts",
     }
 
 
@@ -119,7 +161,7 @@ def test_all_tables_compile_to_postgresql_ddl() -> None:
         for table in Base.metadata.sorted_tables
     ]
 
-    assert len(statements) == 18
+    assert len(statements) == 32
     assert all("UUID" in statement for statement in statements)
 
 

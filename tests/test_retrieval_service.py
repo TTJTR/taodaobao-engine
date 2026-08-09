@@ -22,12 +22,23 @@ async def test_retrieval_enforces_verified_active_workspace_and_top_k() -> None:
     session = AsyncMock()
     experience_result = Mock()
     capability_result = Mock()
+    source = SimpleNamespace(
+        content_version=1,
+        permission_checked_at=datetime.now(UTC),
+        freshness_status=SimpleNamespace(value="current"),
+        title="旁路试点来源",
+        source_url="https://example.test/source",
+        content_fingerprint="f" * 64,
+    )
     asset = SimpleNamespace(
         id=uuid.uuid4(),
         source_id=uuid.uuid4(),
         data={"name": "旁路试点"},
         review_status=SimpleNamespace(value="verified"),
         updated_at=datetime.now(UTC),
+        source_version_at_review=1,
+        embedding_version="test-v1",
+        source=source,
     )
     experience_result.all.return_value = [asset]
     capability_result.all.return_value = [asset]
@@ -47,3 +58,6 @@ async def test_retrieval_enforces_verified_active_workspace_and_top_k() -> None:
     assert "LIMIT 5" in capability_sql
     assert len(snapshot["experiences"]) == 1
     assert len(snapshot["capabilities"]) == 1
+    assert snapshot["experiences"][0]["source_version"] == 1
+    assert snapshot["experiences"][0]["permission_status"] == "granted"
+    assert snapshot["experiences"][0]["evidence_location"]["kind"] == "reviewed_asset_json"

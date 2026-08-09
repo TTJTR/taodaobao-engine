@@ -23,6 +23,7 @@ class ConversationMessage(AISchema):
 
 
 class SolutionContext(AISchema):
+    schema_version: Literal["solution-v1", "solution-v2"] = "solution-v1"
     customer_profile: CustomerProfileDraft
     current_requirement: NonEmptyStr
     opening_line: NonEmptyStr | None = None
@@ -40,6 +41,8 @@ class SolutionContext(AISchema):
         default_factory=list,
         max_length=20,
     )
+    deadline_at: str | None = None
+    retry_budget: int = Field(default=0, ge=0, le=3)
 
     @model_validator(mode="after")
     def v1_context_requires_research_identity(self) -> "SolutionContext":

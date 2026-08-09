@@ -8,6 +8,7 @@ from app.api.v1.routes import (
     feishu_resources,
     health,
     jobs,
+    presentations,
     profiles,
     research,
     sessions,
@@ -26,6 +27,17 @@ api_router.include_router(experiences.router, prefix="/experiences", tags=["Expe
 api_router.include_router(capabilities.router, prefix="/capabilities", tags=["Capabilities"])
 api_router.include_router(sessions.router, prefix="/sessions", tags=["Sessions"])
 api_router.include_router(solutions.router, prefix="/solution-runs", tags=["Solutions"])
+api_router.include_router(
+    presentations.references_router,
+    prefix="/presentation-references",
+    tags=["Presentation References"],
+)
+api_router.include_router(
+    presentations.styles_router, prefix="/style-profiles", tags=["Style Profiles"]
+)
+api_router.include_router(
+    presentations.presentations_router, prefix="/presentations", tags=["Presentations"]
+)
 api_router.include_router(research.router, prefix="/research-tasks", tags=["Deep Research"])
 api_router.include_router(
     expert_collaborations.events_router,

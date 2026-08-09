@@ -14,6 +14,7 @@ router = APIRouter()
 @router.get("/health", summary="服务健康检查")
 async def health_check(request: Request) -> dict[str, Any]:
     database_status = "not_configured"
+    workflow_queue: dict[str, int] | None = None
     if settings.database_url:
         connection = None
         try:
@@ -27,6 +28,20 @@ async def health_check(request: Request) -> dict[str, Any]:
                 timeout=2,
             )
             await connection.fetchval("SELECT 1")
+            workflow_queue = {
+                row["status"]: int(row["count"])
+                for row in await connection.fetch(
+                    "SELECT status, count(*) AS count FROM workflow_tasks "
+                    "WHERE is_deleted = false GROUP BY status"
+                )
+            }
+            workflow_queue["stale_leases"] = int(
+                await connection.fetchval(
+                    "SELECT count(*) FROM workflow_tasks WHERE is_deleted = false "
+                    "AND status = 'running' AND lease_expires_at < now()"
+                )
+                or 0
+            )
             database_status = "ok"
         except Exception:
             database_status = "unavailable"
@@ -49,11 +64,19 @@ async def health_check(request: Request) -> dict[str, Any]:
             settings.feishu_token_encryption_key,
         )
         feishu_status = "configured" if all(required_feishu_settings) else "not_configured"
+    presentation_status = (
+        "mock"
+        if settings.presentation_mode == "mock"
+        else "configured"
+        if settings.presentation_service_url
+        else "not_configured"
+    )
     status = (
         "ok"
         if database_status in {"ok", "not_configured"}
         and ai_status in {"ok", "mock"}
         and feishu_status in {"configured", "mock"}
+        and presentation_status in {"configured", "mock"}
         else "degraded"
     )
     return success_response(
@@ -66,5 +89,8 @@ async def health_check(request: Request) -> dict[str, Any]:
             "ai_mode": settings.ai_mode,
             "feishu": feishu_status,
             "feishu_mode": settings.feishu_mode,
+            "presentation": presentation_status,
+            "presentation_mode": settings.presentation_mode,
+            "workflow_queue": workflow_queue,
         },
     )

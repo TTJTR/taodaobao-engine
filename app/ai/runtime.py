@@ -48,6 +48,12 @@ class InMemoryRunRecorder:
     def last_run(self) -> AIRunMetadata | None:
         return self._records[-1] if self._records else None
 
+    def get_by_trace_id(self, trace_id: str) -> AIRunMetadata | None:
+        return next(
+            (record for record in reversed(self._records) if record.trace_id == trace_id),
+            None,
+        )
+
 
 class RunTimer:
     def __init__(self, trace_id: str | None = None) -> None:

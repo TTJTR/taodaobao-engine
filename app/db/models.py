@@ -115,6 +115,63 @@ class ContributionRole(StrEnum):
     REVIEWER = "reviewer"
 
 
+class TrustAction(StrEnum):
+    PENDING = "pending"
+    RELEASE = "release"
+    DOWNGRADE = "downgrade"
+    REVIEW = "review"
+    BLOCK = "block"
+
+
+class VerificationLabel(StrEnum):
+    ENTAILED = "entailed"
+    CONTRADICTED = "contradicted"
+    INSUFFICIENT = "insufficient"
+    INVALID = "invalid"
+
+
+class WorkflowTaskStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ReferenceDeckStatus(StrEnum):
+    UPLOADED = "uploaded"
+    PARSING = "parsing"
+    PARSED = "parsed"
+    PROFILE_DRAFT = "profile_draft"
+    PROFILE_CONFIRMED = "profile_confirmed"
+    FAILED = "failed"
+
+
+class StyleProfileStatus(StrEnum):
+    DRAFT = "draft"
+    CONFIRMED = "confirmed"
+
+
+class PresentationStatus(StrEnum):
+    DRAFT = "draft"
+    QUEUED = "queued"
+    PLANNING = "planning"
+    RENDERING = "rendering"
+    VALIDATING = "validating"
+    READY = "ready"
+    NEEDS_REVIEW = "needs_review"
+    FAILED = "failed"
+    STALE = "stale"
+    BLOCKED = "blocked"
+
+
+class ExportStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    READY = "ready"
+    FAILED = "failed"
+
+
 def enum_column(enum_type: type[StrEnum], name: str) -> SAEnum:
     return SAEnum(
         enum_type,
@@ -392,6 +449,19 @@ class SolutionRun(EntityMixin, WorkspaceMixin, Base):
         Boolean, nullable=False, default=False, server_default=text("false")
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stage: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="queued", server_default="queued"
+    )
+    trace_id: Mapped[str] = mapped_column(
+        String(128), nullable=False, default=lambda: str(uuid.uuid4())
+    )
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    result_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
 
     session: Mapped[Session] = relationship(
         back_populates="solution_runs", foreign_keys=[session_id]
@@ -400,6 +470,331 @@ class SolutionRun(EntityMixin, WorkspaceMixin, Base):
     response_messages: Mapped[list[Message]] = relationship(
         back_populates="solution_run", foreign_keys="Message.solution_run_id"
     )
+
+
+class RetrievalSnapshotRecord(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "retrieval_snapshot_records"
+    __table_args__ = (
+        UniqueConstraint("solution_run_id", "version", name="uq_retrieval_snapshots_run_version"),
+        Index("ix_retrieval_snapshots_run", "solution_run_id", "created_at"),
+    )
+
+    solution_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("solution_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False, default="retrieval-v2")
+    snapshot_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    source_versions: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    permission_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    embedding_version: Mapped[str | None] = mapped_column(String(128))
+
+
+class ClaimRecord(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "claim_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "solution_run_id", "candidate_version", "claim_key", name="uq_claim_records_run_key"
+        ),
+        Index("ix_claim_records_run_status", "solution_run_id", "verification_status"),
+    )
+
+    solution_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("solution_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    claim_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    section: Mapped[str] = mapped_column(String(64), nullable=False)
+    claim_text: Mapped[str] = mapped_column("text", Text, nullable=False)
+    claim_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    boundary: Mapped[str] = mapped_column(String(64), nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(16), nullable=False)
+    verification_status: Mapped[VerificationLabel] = mapped_column(
+        enum_column(VerificationLabel, "claim_verification_status"), nullable=False
+    )
+    released: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    candidate_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class EvidenceRecord(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "evidence_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "solution_run_id",
+            "candidate_version",
+            "evidence_key",
+            name="uq_evidence_records_run_key",
+        ),
+        Index("ix_evidence_records_source_version", "source_id", "source_version"),
+    )
+
+    solution_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("solution_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    evidence_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    candidate_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sources.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    reviewed_source_version: Mapped[int | None] = mapped_column(Integer)
+    quote: Mapped[str] = mapped_column(Text, nullable=False)
+    location: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    permission_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    permission_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ClaimEvidenceLink(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "claim_evidence_links"
+    __table_args__ = (UniqueConstraint("claim_id", "evidence_id", name="uq_claim_evidence_link"),)
+
+    solution_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("solution_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    claim_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("claim_records.id", ondelete="CASCADE"), nullable=False
+    )
+    evidence_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("evidence_records.id", ondelete="CASCADE"), nullable=False
+    )
+    label: Mapped[VerificationLabel] = mapped_column(
+        enum_column(VerificationLabel, "claim_evidence_label"), nullable=False
+    )
+    score: Mapped[float | None]
+    verifier_version: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class QualityAttemptRecord(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "quality_attempt_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "solution_run_id", "candidate_version", "attempt", name="uq_quality_attempt_run_attempt"
+        ),
+    )
+
+    solution_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("solution_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    candidate_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    failed_claim_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    report: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    verifier_version: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class TrustDecisionRecord(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "trust_decision_records"
+    __table_args__ = (
+        UniqueConstraint("solution_run_id", "version", name="uq_trust_decision_run_version"),
+        Index("ix_trust_decision_run_created", "solution_run_id", "created_at"),
+    )
+
+    solution_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("solution_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    action: Mapped[TrustAction] = mapped_column(
+        enum_column(TrustAction, "trust_decision_action"), nullable=False
+    )
+    reason_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    gate_policy_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    threshold_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    decided_by: Mapped[str] = mapped_column(String(32), nullable=False, default="system")
+    decision_details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class HumanReviewRecord(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "human_review_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "solution_run_id", "expected_decision_version", name="uq_human_review_run_version"
+        ),
+    )
+
+    solution_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("solution_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    reviewer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    expected_decision_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    edits: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_changes: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WorkflowTask(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "workflow_tasks"
+    __table_args__ = (
+        UniqueConstraint("kind", "target_id", name="uq_workflow_task_kind_target"),
+        Index("ix_workflow_tasks_claim", "status", "available_at", "lease_expires_at"),
+    )
+
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    status: Mapped[WorkflowTaskStatus] = mapped_column(
+        enum_column(WorkflowTaskStatus, "workflow_task_status"), nullable=False
+    )
+    stage: Mapped[str] = mapped_column(String(64), nullable=False, default="queued")
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_owner: Mapped[str | None] = mapped_column(String(128))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_summary: Mapped[str | None] = mapped_column(String(1000))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ReferenceDeck(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "reference_decks"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "file_hash", "version", name="uq_reference_deck_hash_version"
+        ),
+    )
+
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    file_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(String(2000))
+    storage_key: Mapped[str] = mapped_column(String(1000), nullable=False)
+    file_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    mime_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    page_count: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[ReferenceDeckStatus] = mapped_column(
+        enum_column(ReferenceDeckStatus, "reference_deck_status"), nullable=False
+    )
+    parse_result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    security_report: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+
+
+class StyleProfile(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "style_profiles"
+    __table_args__ = (Index("ix_style_profiles_workspace_status", "workspace_id", "status"),)
+
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    reference_versions: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    status: Mapped[StyleProfileStatus] = mapped_column(
+        enum_column(StyleProfileStatus, "style_profile_status"), nullable=False
+    )
+    visual_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    narrative_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    conflict_notes: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    confirmed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PresentationRun(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "presentation_runs"
+    __table_args__ = (Index("ix_presentation_solution_status", "solution_run_id", "status"),)
+
+    solution_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("solution_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    solution_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    style_profile_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("style_profiles.id", ondelete="RESTRICT"), nullable=False
+    )
+    style_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[PresentationStatus] = mapped_column(
+        enum_column(PresentationStatus, "presentation_status"), nullable=False
+    )
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False, default="balanced")
+    audience: Mapped[str] = mapped_column(String(64), nullable=False)
+    language: Mapped[str] = mapped_column(String(16), nullable=False, default="zh-CN")
+    requested_outputs: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    spec: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    locked_block_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    upstream_trust_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PresentationInputSnapshot(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "presentation_input_snapshots"
+    __table_args__ = (
+        UniqueConstraint("presentation_id", "version", name="uq_presentation_snapshot_version"),
+    )
+
+    presentation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("presentation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="presentation-input-v1"
+    )
+    snapshot_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+class HtmlArtifact(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "html_artifacts"
+    __table_args__ = (
+        UniqueConstraint("presentation_id", "version", name="uq_html_artifact_version"),
+    )
+
+    presentation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("presentation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    html: Mapped[str] = mapped_column(Text, nullable=False)
+    css: Mapped[str] = mapped_column(Text, nullable=False)
+    assets: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    render_report: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    provider_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class ExportArtifact(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "export_artifacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "presentation_id", "html_artifact_id", "export_type", name="uq_export_artifact"
+        ),
+    )
+
+    presentation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("presentation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    html_artifact_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("html_artifacts.id", ondelete="RESTRICT"), nullable=False
+    )
+    export_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    object_key: Mapped[str | None] = mapped_column(String(1000))
+    status: Mapped[ExportStatus] = mapped_column(
+        enum_column(ExportStatus, "export_artifact_status"), nullable=False
+    )
+    provider_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Job(EntityMixin, WorkspaceMixin, Base):
