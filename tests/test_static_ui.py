@@ -16,6 +16,10 @@ def test_static_index_is_served_at_root() -> None:
     assert 'body:{content:query,mode:"quick"}' in response.text
     assert 'apiFetch("/research-tasks?page=1&page_size=100")' in response.text
     assert 'apiFetch("/expert-collaborations?page=1&page_size=100")' in response.text
+    assert "confirm-collaboration-button" in response.text
+    assert "syncCollaborationConfirmButton" in response.text
+    assert "Services.listExperiences(),Services.listCapabilities()" in response.text
+    assert "retry-source" in response.text
     assert 'apiFetch("/auth/invitation/verify"' in response.text
     assert 'data-action="verify-invitation"' in response.text
     assert "function verifyInvitationAndContinue()" in response.text

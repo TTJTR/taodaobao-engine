@@ -57,6 +57,41 @@ def make_snapshot() -> dict[str, Any]:
     }
 
 
+def make_populated_snapshot() -> dict[str, Any]:
+    return {
+        "experiences": [
+            {
+                "asset_id": "EXP-001",
+                "source_id": "SRC-EXP-001",
+                "rank": 1,
+                "match_reasons": ["问题相似"],
+                "data": {
+                    "name": "旁路试点经验",
+                    "applicable_problem": "在不中断生产的前提下验证方案",
+                    "solution": "先旁路接入并由人工复核结果。",
+                    "source_id": "SRC-EXP-001",
+                },
+            }
+        ],
+        "capabilities": [
+            {
+                "asset_id": "CAP-001",
+                "source_id": "SRC-CAP-001",
+                "rank": 1,
+                "match_reasons": ["能力匹配"],
+                "data": {
+                    "name": "旁路接入",
+                    "description": "在不替换核心系统的情况下接入分析能力。",
+                    "source_id": "SRC-CAP-001",
+                },
+            }
+        ],
+        "missing_information": [],
+        "can_generate_solution": True,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+
+
 def test_bailian_engine_repairs_invalid_profile_structure_once() -> None:
     invalid = {"customer_name": "测试客户"}
     valid = {
@@ -118,6 +153,19 @@ def test_mock_solution_refuses_to_invent_evidence_for_empty_snapshot() -> None:
     assert not solution.historical_evidence
     assert not solution.capability_composition
     assert "无足够依据" in solution.requirement_understanding[0].text
+
+
+def test_mock_solution_renders_every_retrieved_asset_in_matching_section() -> None:
+    result = asyncio.run(
+        MockAIEngine().generate_solution(make_context(), make_populated_snapshot())
+    )
+    solution = Solution.model_validate(result)
+
+    assert [item.asset_id for item in solution.historical_evidence] == ["EXP-001"]
+    assert [item.asset_id for item in solution.capability_composition] == ["CAP-001"]
+    assert {source.asset_id for source in solution.sources} == {"EXP-001", "CAP-001"}
+    assert solution.initial_recommendations
+    assert solution.prerequisites_and_risks
 
 
 def test_bailian_engine_deep_stage_uses_shared_trace_and_stage_metadata() -> None:

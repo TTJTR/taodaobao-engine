@@ -116,11 +116,18 @@ class ExpertCollaborationService:
         ]
         questions = routing.get("expert_questions") or task.expert_questions
         context["pending_questions"] = questions
+        context.update(
+            {
+                "research_title": task.title,
+                "research_question": task.question,
+                "research_stage": task.stage,
+            }
+        )
         collaboration = await self.collaborations.create(
             research_task_id=task.id,
             created_by_id=self.user_id,
             status=CollaborationStatus.AWAITING_CONFIRMATION,
-            group_name=f"淘到宝专家协作-{task.title[:60]}",
+            group_name=self._default_group_name(context, task.title),
             candidate_records=candidates,
             selected_expert_ids=[],
             questions=questions,
@@ -440,15 +447,34 @@ class ExpertCollaborationService:
     def _content_bundle(self, item: ExpertCollaboration) -> dict[str, Any]:
         context = item.context_snapshot
         document_url = item.feishu_document_url or "pending://feishu-document"
+        customer_name = self._customer_name(context)
+        research_question = str(
+            context.get("research_question")
+            or context.get("research_document")
+            or "研究问题待补充"
+        )
+        report_summary = self._document_summary(context.get("research_document"))
+        evidence_snapshot = context.get("evidence_snapshot") or {}
+        evidence_items = [
+            *evidence_snapshot.get("experiences", []),
+            *evidence_snapshot.get("capabilities", []),
+        ]
+        evidence_summary = (
+            "；".join(self._asset_summary(value) for value in evidence_items[:5])
+            or "暂未找到可直接引用的已校验企业依据"
+        )
+        gaps = context.get("knowledge_gaps") or []
+        gap_summary = "；".join(str(value) for value in gaps) or "暂无新增知识缺口"
         sections = [
             {
                 "title": "研究问题",
-                "items": [{"text": context["research_document"] or "研究进行中"}],
+                "items": [{"text": research_question}],
             },
             {
                 "title": "客户画像",
-                "items": [{"text": self._summary(context["customer_profile"], "已确认")}],
+                "items": [{"text": f"客户：{customer_name}；{self._profile_summary(context)}"}],
             },
+            {"title": "当前阶段结论", "items": [{"text": report_summary}]},
             {
                 "title": "历史经验",
                 "items": [
@@ -479,10 +505,23 @@ class ExpertCollaborationService:
         ]
         opening = "\n".join(
             [
-                f"研究任务：{item.research_task_id}",
-                "请围绕以下待确认问题回复：",
+                (
+                    f"【协作说明】针对客户“{customer_name}”的 Deep Research "
+                    "仍有事实缺口，因此发起本群协作。"
+                ),
+                f"研究问题：{research_question}",
+                f"当前阶段：{context.get('research_stage') or '等待专家补充'}",
+                f"阶段结论：{report_summary}",
+                f"已确认企业依据：{evidence_summary}",
+                f"知识缺口与主要风险：{gap_summary}",
+                "待确认问题：",
                 *[f"{q['question_id']}：{q['question']}" for q in item.questions],
                 f"研究文档：{document_url}",
+                f"研究任务 ID：{item.research_task_id}",
+                (
+                    "可信边界：专家回复属于 pending_confirmation，不会自动成为已校验经验；"
+                    "只有员工选择沉淀并完成人工审核后才可进入经验库。"
+                ),
             ]
         )
         return {
@@ -502,6 +541,42 @@ class ExpertCollaborationService:
             return fallback
         text_value = str(value)
         return text_value[:2000] or fallback
+
+    @classmethod
+    def _default_group_name(cls, context: dict[str, Any], title: str) -> str:
+        customer_name = cls._customer_name(context)
+        topic = title.strip() or "研究问题"
+        return f"【淘到宝】与{customer_name}的{topic}协作"[:200]
+
+    @staticmethod
+    def _customer_name(context: dict[str, Any]) -> str:
+        snapshot = context.get("customer_profile") or {}
+        profile = snapshot.get("profile") or {}
+        return str(snapshot.get("customer_name") or profile.get("customer_name") or "待确认客户")
+
+    @classmethod
+    def _profile_summary(cls, context: dict[str, Any]) -> str:
+        snapshot = context.get("customer_profile") or {}
+        profile = snapshot.get("profile") or snapshot
+        return cls._summary(
+            profile.get("profile_summary") or profile.get("background"),
+            "客户画像已随研究任务固定保存",
+        )
+
+    @staticmethod
+    def _asset_summary(value: Any) -> str:
+        if not isinstance(value, dict):
+            return str(value)
+        data = value.get("data") or {}
+        return str(data.get("name") or value.get("title") or value.get("asset_id") or "已校验资产")
+
+    @classmethod
+    def _document_summary(cls, value: Any) -> str:
+        if isinstance(value, dict):
+            for field in ("summary", "executive_summary", "conclusion", "content"):
+                if value.get(field):
+                    return cls._summary(value[field], "当前研究仍在推进，尚无最终结论")
+        return cls._summary(value, "当前研究仍在推进，尚无最终结论")
 
     async def _lock_task(self, task_id: uuid.UUID) -> None:
         await self.session.execute(

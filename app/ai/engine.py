@@ -449,6 +449,24 @@ class MockAIEngine:
         validated_context = SolutionContext.model_validate(compact_context_payload(context))
         timer = RunTimer(validated_context.trace_id)
         validated_snapshot = RetrievalSnapshot.model_validate(retrieval_snapshot)
+        historical_evidence = [
+            {
+                "text": item.data.solution,
+                "boundary": "historical_fact",
+                "asset_id": item.asset_id,
+                "source_id": item.source_id,
+            }
+            for item in validated_snapshot.experiences
+        ]
+        capability_composition = [
+            {
+                "text": item.data.description,
+                "boundary": "enterprise_capability",
+                "asset_id": item.asset_id,
+                "source_id": item.source_id,
+            }
+            for item in validated_snapshot.capabilities
+        ]
         model_result = {
             "requirement_understanding": [
                 {
@@ -458,11 +476,32 @@ class MockAIEngine:
                     "source_id": None,
                 }
             ],
-            "initial_recommendations": [],
-            "historical_evidence": [],
-            "capability_composition": [],
-            "prerequisites_and_risks": [],
-            "pending_confirmations": [],
+            "initial_recommendations": [
+                {
+                    "text": "建议先基于已校验经验和原子能力开展小范围验证。",
+                    "boundary": "ai_inference",
+                    "asset_id": None,
+                    "source_id": None,
+                }
+            ],
+            "historical_evidence": historical_evidence,
+            "capability_composition": capability_composition,
+            "prerequisites_and_risks": [
+                {
+                    "text": "试点范围、数据权限、接口条件与验收口径仍需确认。",
+                    "boundary": "pending_confirmation",
+                    "asset_id": None,
+                    "source_id": None,
+                }
+            ],
+            "pending_confirmations": [
+                {
+                    "text": "请确认试点范围、周期、负责人和验收指标。",
+                    "boundary": "pending_confirmation",
+                    "asset_id": None,
+                    "source_id": None,
+                }
+            ],
             "suggested_questions": ["还需要确认哪些会改变方案范围的关键信息？"],
         }
         solution: Solution = finalize_solution_result(
