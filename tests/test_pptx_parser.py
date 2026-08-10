@@ -12,6 +12,11 @@ PRESENTATION_RELS = b"""<?xml version="1.0"?>
     Target="slideMasters/slideMaster1.xml"/>
 </Relationships>"""
 
+PRESENTATION = b"""<?xml version="1.0"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+ <p:sldSz cx="12192000" cy="6858000"/>
+</p:presentation>"""
+
 MASTER_RELS = b"""<?xml version="1.0"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1"
@@ -62,20 +67,46 @@ THEME = b"""<?xml version="1.0"?>
  </a:themeElements>
 </a:theme>"""
 
+SENSITIVE_SLIDE = """<?xml version="1.0"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+ <p:cSld><p:spTree>
+  <p:sp><p:nvSpPr><p:cNvPr id="1" name="safe-shape"/></p:nvSpPr><p:spPr>
+   <a:xfrm><a:off x="609600" y="342900"/><a:ext cx="10972800" cy="914400"/></a:xfrm>
+   <a:solidFill><a:srgbClr val="123456"/></a:solidFill>
+  </p:spPr><p:txBody><a:p><a:r><a:rPr sz="3200"/><a:t>绝密客户名称</a:t></a:r></a:p>
+  </p:txBody></p:sp>
+  <p:sp><p:spPr><a:xfrm><a:off x="1219200" y="2057400"/>
+   <a:ext cx="4267200" cy="2743200"/></a:xfrm><a:solidFill><a:srgbClr val="123456"/>
+   </a:solidFill></p:spPr><p:txBody><a:p><a:r><a:rPr sz="1800"/>
+   <a:t>机密财务数字 987654321</a:t></a:r></a:p></p:txBody></p:sp>
+  <p:sp><p:spPr><a:xfrm><a:off x="6705600" y="2057400"/>
+   <a:ext cx="4267200" cy="2743200"/></a:xfrm><a:solidFill><a:srgbClr val="123456"/>
+   </a:solidFill></p:spPr></p:sp>
+  <p:graphicFrame><p:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></p:xfrm>
+   <a:graphic><c:chartSpace><c:pt idx="0"><c:v>88888888</c:v></c:pt></c:chartSpace></a:graphic>
+  </p:graphicFrame>
+  <p:oleObj name="hidden-secret"><a:t>OLE_SECRET</a:t></p:oleObj>
+ </p:spTree></p:cSld>
+</p:sld>""".encode()
+
 
 def _pptx(*, theme_target: str = "../theme/theme1.xml") -> io.BytesIO:
     stream = io.BytesIO()
     master_rels = MASTER_RELS.replace(b"../theme/theme1.xml", theme_target.encode())
     with zipfile.ZipFile(stream, "w") as archive:
         archive.writestr("ppt/_rels/presentation.xml.rels", PRESENTATION_RELS)
+        archive.writestr("ppt/presentation.xml", PRESENTATION)
         archive.writestr("ppt/slideMasters/slideMaster1.xml", SLIDE_MASTER)
         archive.writestr("ppt/slideMasters/_rels/slideMaster1.xml.rels", master_rels)
         archive.writestr("ppt/slideLayouts/slideLayout1.xml", SLIDE_LAYOUT)
         archive.writestr("ppt/theme/theme1.xml", THEME)
         archive.writestr(
             "ppt/slides/slide1.xml",
-            b"<not-even-valid-xml>SECRET CUSTOMER 99999999 & leaked fact",
+            SENSITIVE_SLIDE,
         )
+        archive.writestr("ppt/slides/slide2.xml", SENSITIVE_SLIDE)
     stream.seek(0)
     return stream
 
@@ -100,3 +131,36 @@ def test_parser_follows_relationships_and_maps_theme_without_reading_slides() ->
 def test_parser_rejects_relationships_outside_the_theme_directory() -> None:
     with pytest.raises(PPTXParseError, match="outside ppt/theme"):
         SafePPTXParser().parse(_pptx(theme_target="../../ppt/slides/slide1.xml"))
+
+
+def test_sanitized_visual_extracts_patterns_without_leaking_business_data() -> None:
+    profile = SafePPTXParser().parse(_pptx(), mode="sanitized_visual")
+    serialized = profile.model_dump_json()
+
+    assert profile.palette.primary == "#123456"
+    assert profile.typography.base_size_px == 24
+    assert profile.typography.scale_ratio == pytest.approx(1.778)
+    assert profile.layout_grammar[0] == (
+        "visual-pattern:title-band+two-column+graphic-focus:count=2"
+    )
+    for secret in ("绝密客户名称", "机密财务数字", "987654321", "88888888", "OLE_SECRET"):
+        assert secret not in serialized
+
+
+def test_sanitized_visual_rejects_xml_entity_expansion() -> None:
+    stream = _pptx()
+    malicious = b'<!DOCTYPE x [<!ENTITY secret "LEAK">]><p:sld xmlns:p="p">&secret;</p:sld>'
+    rewritten = io.BytesIO()
+    with zipfile.ZipFile(stream) as source, zipfile.ZipFile(rewritten, "w") as target:
+        for item in source.infolist():
+            content = malicious if item.filename == "ppt/slides/slide1.xml" else source.read(item)
+            target.writestr(item, content)
+    rewritten.seek(0)
+
+    with pytest.raises(PPTXParseError, match="sanitized visual parsing"):
+        SafePPTXParser().parse(rewritten, mode="sanitized_visual")
+
+
+def test_parser_enforces_zip_bomb_entry_limit() -> None:
+    with pytest.raises(PPTXParseError, match="too many parts"):
+        SafePPTXParser(max_entries=3).parse(_pptx())

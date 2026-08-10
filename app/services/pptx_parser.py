@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import posixpath
+import re
 import zipfile
+from collections import Counter
 from colorsys import hls_to_rgb, rgb_to_hls
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO
+from typing import BinaryIO, Literal
 from xml.etree import ElementTree
 
 from app.schemas.presentation import (
@@ -13,6 +15,11 @@ from app.schemas.presentation import (
     SpacingGrid,
     Typography,
     VisualStyleProfileData,
+)
+from app.services.pptx_sanitized_visual import (
+    SanitizedSlide,
+    SanitizedVisualParseError,
+    parse_sanitized_slide,
 )
 
 # Relationship traversal and theme parsing are ported from Presentation AI.
@@ -66,6 +73,8 @@ OFFICE_FONT_MAP = {
     "Impact": "Sora",
     "Lucida Sans": "Nunito",
 }
+SLIDE_PART_PATTERN = re.compile(r"^ppt/slides/slide\d+\.xml$")
+NEUTRAL_COLORS = {"#000000", "#FFFFFF", "#F8FAFC", "#F9FAFB"}
 
 
 class PPTXParseError(ValueError):
@@ -131,6 +140,24 @@ def _read_part(archive: zipfile.ZipFile, part_name: str, max_bytes: int) -> byte
     if info.file_size > max_bytes:
         raise PPTXParseError(f"PPTX metadata part is too large: {part_name}")
     return archive.read(info)
+
+
+def _validate_archive(
+    archive: zipfile.ZipFile,
+    *,
+    max_entries: int,
+    max_uncompressed_bytes: int,
+    max_compression_ratio: int,
+) -> None:
+    entries = archive.infolist()
+    if len(entries) > max_entries:
+        raise PPTXParseError("PPTX archive contains too many parts")
+    if sum(entry.file_size for entry in entries) > max_uncompressed_bytes:
+        raise PPTXParseError("PPTX archive expands beyond the allowed size")
+    for entry in entries:
+        ratio = entry.file_size / max(1, entry.compress_size)
+        if entry.file_size > 1_000_000 and ratio > max_compression_ratio:
+            raise PPTXParseError("PPTX archive contains a suspiciously compressed part")
 
 
 def _relationship_target(xml: bytes, relationship_suffix: str) -> str | None:
@@ -418,16 +445,164 @@ def _layout_grammar(slide_master_xml: bytes, slide_layout_xml: tuple[bytes, ...]
     return [f"master|{';'.join(placeholders[:8]) or 'unspecified'}"]
 
 
+def _scheme_colors(
+    palette: dict[str, str | None], color_map: dict[str, str]
+) -> dict[str, str]:
+    colors = {slot: color for slot, color in palette.items() if color}
+    colors.update(
+        {
+            logical_name: color
+            for logical_name, slot in color_map.items()
+            if (color := palette.get(slot))
+        }
+    )
+    return colors
+
+
+def _visual_pattern(slide: SanitizedSlide, slide_width: float, slide_height: float) -> str:
+    if not slide.shapes:
+        return "visual-pattern:empty"
+    shapes = slide.shapes
+    title_band = any(
+        shape.y / slide_height < 0.2
+        and shape.height / slide_height < 0.3
+        and max(shape.font_sizes_pt, default=0) >= 24
+        for shape in shapes
+    )
+    content_boxes = [
+        shape
+        for shape in shapes
+        if 0.15 <= shape.y / slide_height <= 0.9
+        and 0.2 <= shape.width / slide_width <= 0.6
+    ]
+    two_column = any(
+        abs(first.y - second.y) / slide_height < 0.15
+        and abs(first.x - second.x) / slide_width > 0.25
+        for index, first in enumerate(content_boxes)
+        for second in content_boxes[index + 1 :]
+    )
+    full_bleed_image = any(
+        shape.kind == "pic"
+        and shape.width * shape.height / (slide_width * slide_height) >= 0.7
+        for shape in shapes
+    )
+    graphic_focus = any(shape.kind == "graphicFrame" for shape in shapes)
+    repeated_cards = sum(
+        1
+        for shape in shapes
+        if 0.15 <= shape.width / slide_width <= 0.4
+        and 0.1 <= shape.height / slide_height <= 0.45
+    ) >= 3
+    features = [
+        name
+        for enabled, name in (
+            (title_band, "title-band"),
+            (two_column, "two-column"),
+            (full_bleed_image, "full-bleed-image"),
+            (graphic_focus, "graphic-focus"),
+            (repeated_cards, "card-grid"),
+        )
+        if enabled
+    ]
+    return f"visual-pattern:{'+'.join(features) if features else 'freeform'}"
+
+
+def _summarize_visual_slides(
+    slides: list[SanitizedSlide],
+    slide_width: float,
+    slide_height: float,
+) -> tuple[list[str], str | None, int | None, float | None]:
+    patterns = Counter(_visual_pattern(slide, slide_width, slide_height) for slide in slides)
+    grammar = [f"{pattern}:count={count}" for pattern, count in patterns.most_common(5)]
+
+    fill_colors = Counter(
+        color
+        for slide in slides
+        for shape in slide.shapes
+        for color in shape.fill_colors
+        if color not in NEUTRAL_COLORS
+    )
+    threshold = max(2, round(len(slides) * 0.3))
+    primary = next(
+        (color for color, count in fill_colors.most_common() if count >= threshold), None
+    )
+
+    font_sizes = [
+        size
+        for slide in slides
+        for shape in slide.shapes
+        for size in shape.font_sizes_pt
+        if 6 <= size <= 72
+    ]
+    if not font_sizes:
+        return grammar, primary, None, None
+    size_counts = Counter(font_sizes)
+    top_frequency = max(size_counts.values())
+    body_pt = min(size for size, count in size_counts.items() if count == top_frequency)
+    heading_pt = max(font_sizes)
+    base_px = min(48, max(10, round(body_pt * 4 / 3)))
+    ratio = min(2, max(1.01, round(heading_pt / body_pt, 3)))
+    return grammar, primary, base_px, ratio
+
+
+def _presentation_size(archive: zipfile.ZipFile, max_part_bytes: int) -> tuple[float, float]:
+    root = _parse_xml(_read_part(archive, "ppt/presentation.xml", max_part_bytes))
+    size = _find_first(root, "sldSz")
+    width = _num_attr(size, "cx")
+    height = _num_attr(size, "cy")
+    return (width or 12_192_000, height or 6_858_000)
+
+
 class SafePPTXParser:
     """Extract style metadata without opening ordinary slide XML parts."""
 
-    def __init__(self, *, max_part_bytes: int = 2 * 1024 * 1024) -> None:
+    def __init__(
+        self,
+        *,
+        max_part_bytes: int = 2 * 1024 * 1024,
+        max_entries: int = 2_000,
+        max_uncompressed_bytes: int = 512 * 1024 * 1024,
+        max_compression_ratio: int = 200,
+        max_visual_slides: int = 50,
+    ) -> None:
         self.max_part_bytes = max_part_bytes
+        self.max_entries = max_entries
+        self.max_uncompressed_bytes = max_uncompressed_bytes
+        self.max_compression_ratio = max_compression_ratio
+        self.max_visual_slides = max_visual_slides
 
-    def parse(self, source: str | Path | BinaryIO) -> VisualStyleProfileData:
+    def parse(
+        self,
+        source: str | Path | BinaryIO,
+        *,
+        mode: Literal["theme_only", "sanitized_visual"] = "theme_only",
+    ) -> VisualStyleProfileData:
         try:
             with zipfile.ZipFile(source) as archive:
+                _validate_archive(
+                    archive,
+                    max_entries=self.max_entries,
+                    max_uncompressed_bytes=self.max_uncompressed_bytes,
+                    max_compression_ratio=self.max_compression_ratio,
+                )
                 resolved = resolve_theme_xml(archive, self.max_part_bytes)
+                visual_parts = (
+                    sorted(
+                        (
+                            info.filename
+                            for info in archive.infolist()
+                            if SLIDE_PART_PATTERN.fullmatch(info.filename)
+                        ),
+                        key=lambda name: int(re.search(r"\d+", name).group()),
+                    )[: self.max_visual_slides]
+                    if mode == "sanitized_visual"
+                    else []
+                )
+                slide_size = (
+                    _presentation_size(archive, self.max_part_bytes)
+                    if visual_parts
+                    else (12_192_000, 6_858_000)
+                )
         except (OSError, zipfile.BadZipFile) as exc:
             raise PPTXParseError("File is not a readable PPTX archive") from exc
 
@@ -439,6 +614,33 @@ class SafePPTXParser:
         background = _resolve_color("bg1", theme.palette, color_map, "#FFFFFF")
         foreground = _resolve_color("tx1", theme.palette, color_map, "#111827")
         base_size_px, scale_ratio = _typography_metrics(resolved.slide_master_xml)
+        layout_grammar = _layout_grammar(
+            resolved.slide_master_xml, resolved.slide_layout_xml
+        )
+
+        if visual_parts:
+            scheme_colors = _scheme_colors(theme.palette, color_map)
+            try:
+                with zipfile.ZipFile(source) as archive:
+                    visual_slides = [
+                        parse_sanitized_slide(
+                            _read_part(archive, part_name, self.max_part_bytes), scheme_colors
+                        )
+                        for part_name in visual_parts
+                    ]
+            except SanitizedVisualParseError as exc:
+                raise PPTXParseError("PPTX slide failed sanitized visual parsing") from exc
+            visual_grammar, visual_primary, visual_base_px, visual_ratio = (
+                _summarize_visual_slides(visual_slides, *slide_size)
+            )
+            layout_grammar = visual_grammar + layout_grammar
+            if visual_primary and visual_primary != primary:
+                previous_primary = primary
+                primary = visual_primary
+                if secondary == visual_primary:
+                    secondary = previous_primary
+            base_size_px = visual_base_px or base_size_px
+            scale_ratio = visual_ratio or scale_ratio
 
         return VisualStyleProfileData(
             palette=Palette(
@@ -459,7 +661,5 @@ class SafePPTXParser:
                 slide_padding_units=8,
                 component_gap_units=3,
             ),
-            layout_grammar=_layout_grammar(
-                resolved.slide_master_xml, resolved.slide_layout_xml
-            ),
+            layout_grammar=layout_grammar,
         )
