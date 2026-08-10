@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pydantic import ValidationError
 from sqlalchemy import select
 
+from app.contracts.presentation import SlidePlanner
 from app.db.database import get_session_factory
 from app.db.models import (
     HtmlArtifact,
@@ -12,19 +13,29 @@ from app.db.models import (
     StyleProfileStatus,
     VisualStyleProfile,
 )
+from app.integrations.presentation_planner import MockSlidePlanner
 from app.presentation.layouts.diagnostics import diagnose_layout
 from app.presentation.layouts.engine import LayoutEngine
 from app.presentation.layouts.paginator import SlidePaginator
-from app.schemas.presentation import PresentationSpecData, VisualStyleProfileData
+from app.presentation.layouts.registry import default_layout_registry
+from app.schemas.presentation import (
+    PlanningFact,
+    SlidePlanningContext,
+    SlidePlanningStyleConstraints,
+    VisualStyleProfileData,
+)
+from app.services.ai_harness import PresentationPlanningHarness, PresentationPlanningUnavailable
 from app.services.evidence_guard import EvidenceGuard
 from app.services.fact_ledger_service import FactLedgerService
 from app.services.html_renderer import HTMLRenderer
+from app.services.slide_plan_materializer import SlidePlanMaterializer
 
 
 async def run_presentation_generation(
     presentation_id: uuid.UUID,
     run_id: uuid.UUID,
     style_profile_id: uuid.UUID,
+    planner: SlidePlanner | None = None,
 ) -> None:
     session_factory = get_session_factory()
     async with session_factory() as session:
@@ -56,7 +67,35 @@ async def run_presentation_generation(
             ledger = await FactLedgerService(session, presentation.workspace_id).build_ledger(
                 run_id
             )
-            spec = SlidePaginator().paginate(_mock_plan(presentation_id, ledger))
+            planning_context = SlidePlanningContext(
+                presentation_id=presentation.id,
+                audience=presentation.audience,
+                language=presentation.language,
+                mode=presentation.mode,
+            )
+            fact_catalog = tuple(
+                PlanningFact(
+                    claim_id=fact.claim_id,
+                    claim_key=fact.claim_key,
+                    boundary=fact.boundary,
+                    verbatim_text=fact.verbatim_text,
+                    source_count=len({item.source_id for item in fact.evidence}),
+                )
+                for fact in ledger.facts
+            )
+            recognized_layouts = tuple(
+                token for token in style.layout_grammar if token in default_layout_registry.tokens
+            )
+            style_constraints = SlidePlanningStyleConstraints(
+                allowed_layout_tokens=default_layout_registry.tokens,
+                preferred_layout_tokens=recognized_layouts,
+                max_pages=12,
+                max_components_per_page=4,
+            )
+            plan = await PresentationPlanningHarness(
+                planner or MockSlidePlanner()
+            ).run_slide_planning(planning_context, fact_catalog, style_constraints)
+            spec = SlidePaginator().paginate(SlidePlanMaterializer().materialize(plan, ledger))
 
             presentation.status = PresentationStatus.VALIDATING
             await session.commit()
@@ -122,49 +161,11 @@ async def run_presentation_generation(
             await session.commit()
 
 
-def _mock_plan(presentation_id, ledger) -> PresentationSpecData:
-    if not ledger.facts:
-        raise ValueError("fact ledger contains no released facts")
-    fact = ledger.facts[0]
-    evidence_ids = [item.evidence_id for item in fact.evidence]
-    source_ids = list(dict.fromkeys(item.source_id for item in fact.evidence))
-    return PresentationSpecData.model_validate(
-        {
-            "schema_version": "slide-schema-v1",
-            "presentation_id": presentation_id,
-            "slides": [
-                {
-                    "slide_id": uuid.uuid4(),
-                    "layout_token": "title_body",
-                    "components": [
-                        {
-                            "component_id": uuid.uuid4(),
-                            "component_type": "title",
-                            "text": "企业数字化转型方案",
-                        },
-                        {
-                            "component_id": uuid.uuid4(),
-                            "component_type": "evidence_card",
-                            "heading": fact.claim_key,
-                            "body": fact.verbatim_text,
-                            "fact_binding": {
-                                "claim_id": fact.claim_id,
-                                "claim_key": fact.claim_key,
-                                "evidence_ids": evidence_ids,
-                                "source_ids": source_ids,
-                                "content_mode": "verbatim",
-                            },
-                        },
-                    ],
-                }
-            ],
-        }
-    )
-
-
 def _error_code(exc: Exception) -> str:
     if isinstance(exc, ValidationError):
         return "PRESENTATION_SCHEMA_INVALID"
     if isinstance(exc, ValueError) and "evidence guard" in str(exc):
         return "PRESENTATION_EVIDENCE_REJECTED"
+    if isinstance(exc, PresentationPlanningUnavailable):
+        return "PRESENTATION_PLANNER_UNAVAILABLE"
     return "PRESENTATION_GENERATION_FAILED"

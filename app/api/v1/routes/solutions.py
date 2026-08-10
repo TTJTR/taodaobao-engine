@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 
-from app.api.deps import CurrentUser, DatabaseSession, WorkspaceId
+from app.api.deps import CurrentUser, DatabaseSession, SlidePlannerDependency, WorkspaceId
 from app.core.errors import AppError, ErrorCode
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
@@ -90,13 +90,14 @@ async def create_presentation(
     workspace_id: WorkspaceId,
     current_user: CurrentUser,
     background_tasks: BackgroundTasks,
+    planner: SlidePlannerDependency,
     _: str = Depends(require_idempotency_key),
 ) -> dict[str, object]:
     item = await PresentationService(session, workspace_id, current_user.id).create_presentation(
         run_id, payload
     )
     background_tasks.add_task(
-        run_presentation_generation, item.id, run_id, payload.style_profile_id
+        run_presentation_generation, item.id, run_id, payload.style_profile_id, planner
     )
     return success_response(
         request,

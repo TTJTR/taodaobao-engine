@@ -28,6 +28,9 @@ async def test_pipeline_builds_validated_deterministic_html_artifact(
         spec=None,
         completed_at=None,
         error_code=None,
+        audience="集团管理层",
+        language="zh-CN",
+        mode="balanced",
     )
     style_profile = SimpleNamespace(
         id=style_profile_id,
@@ -108,6 +111,6 @@ async def test_pipeline_builds_validated_deterministic_html_artifact(
     assert artifact.status == "ready"
     assert "--primary-color: #123456" in artifact.html
     assert "2025年营业收入为1438亿元" in artifact.html
-    assert artifact.render_report["validated_slides"] == 1
-    assert artifact.render_report["prechecked_components"] == 1
-    assert artifact.render_report["final_checked_components"] == 1
+    assert artifact.render_report["validated_slides"] == 4
+    assert artifact.render_report["prechecked_components"] == 3
+    assert artifact.render_report["final_checked_components"] == 3

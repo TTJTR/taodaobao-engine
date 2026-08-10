@@ -100,3 +100,40 @@ Mock 的资产命中率为 0 是设计结果：它只保证格式和边界，不
 3. 经验/能力分库召回，并按硬约束、问题相关、场景、来源新鲜度、向量相似度排序。
 4. 实现任务重试、阶段恢复和真实飞书发送。
 5. 用 Mock 先联调，再切真实百炼；不要让接口层直接拼 Prompt。
+
+## 8. V1.1 SlidePlan 冻结对接契约
+
+后端已在 `app/contracts/presentation.py` 冻结 `SlidePlanner`，Molly 的 Live AIEngine 下一步只需实现：
+
+```python
+async def plan_slides(
+    context: dict,
+    fact_catalog: list[dict],
+    style_constraints: dict,
+) -> dict:
+    ...
+```
+
+输入边界：
+
+- `context`：presentation_id、audience、language、mode。
+- `fact_catalog`：claim_id、claim_key、boundary、verbatim_text、source_count；只用于选择和排序事实。
+- `style_constraints`：后端允许和历史风格偏好的 layout token、最大页数、单页最大组件数。
+
+输出必须满足 `app/schemas/presentation.py::SlidePlanData`：
+
+- 页面只返回 purpose、layout_token、character_budget、allow_pagination。
+- 组件只返回 component_type、claim_ids、priority 和 UUID。
+- 禁止返回业务文本、数字、HTML、CSS、坐标、字体、颜色、FactBinding 或任意额外字段。
+- comparison 必须恰好引用 2 个 Claim；timeline/process 引用 2-12 个；其他组件按 Schema 限制。
+- claim_id 只能来自 fact_catalog，layout_token 只能来自 allowed_layout_tokens。
+
+后端责任：
+
+- `PresentationPlanningHarness` 处理外部异常、结构错误和最多 2 次重试。
+- `SlidePlanMaterializer` 从 FactLedger 逐字符填入事实和完整 FactBinding。
+- SlidePaginator、EvidenceGuard、LayoutEngine 和 Renderer 均不由 Molly 实现。
+- Live 算子不存在或重试耗尽时 Presentation 标记失败，不允许静默切换 Mock。
+
+Molly 联调入口为 `AIEngineSlidePlanner`。完成算子后，应重点测试未知 Claim、非法 layout、夹带 HTML/CSS、
+重复 Claim、数字写入输出和超页数等失败样例。

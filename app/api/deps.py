@@ -15,6 +15,7 @@ from app.ai.embedding import (
     MockEmbeddingProvider,
 )
 from app.contracts.ai import AIEngine
+from app.contracts.presentation import SlidePlanner
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.core.security import InvalidSessionError, SessionCodec
@@ -23,6 +24,7 @@ from app.db.database import get_db
 from app.db.models import User
 from app.db.repositories import UserRepository
 from app.integrations import FeishuAdapter, LiveFeishuAdapter, MockFeishuAdapter
+from app.integrations.presentation_planner import AIEngineSlidePlanner, MockSlidePlanner
 from app.services.auth import AuthService
 from app.services.invitations import (
     InvitationRedemptionStore,
@@ -74,6 +76,16 @@ def get_ai_engine() -> AIEngine:
 
 
 AIEngineDependency = Annotated[AIEngine, Depends(get_ai_engine)]
+
+
+@lru_cache
+def get_slide_planner() -> SlidePlanner:
+    if settings.ai_mode == "mock":
+        return MockSlidePlanner()
+    return AIEngineSlidePlanner(get_ai_engine())
+
+
+SlidePlannerDependency = Annotated[SlidePlanner, Depends(get_slide_planner)]
 
 
 @lru_cache

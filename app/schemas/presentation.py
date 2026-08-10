@@ -179,6 +179,129 @@ class PresentationSpecData(StrictDomainModel):
     slides: list[SlideSchema] = Field(min_length=1)
 
 
+SlidePurpose = Literal[
+    "cover",
+    "executive_summary",
+    "key_metric",
+    "comparison",
+    "implementation_timeline",
+    "delivery_process",
+    "evidence",
+    "sources",
+]
+
+PlannedComponentType = Literal[
+    "key_message",
+    "evidence_card",
+    "metric",
+    "comparison",
+    "timeline",
+    "process",
+    "source_list",
+]
+
+
+class SlidePlanComponent(StrictDomainModel):
+    component_id: uuid.UUID
+    component_type: PlannedComponentType
+    claim_ids: list[uuid.UUID] = Field(min_length=1, max_length=12)
+    priority: int = Field(ge=1, le=5)
+
+    @model_validator(mode="after")
+    def validate_claim_count(self) -> "SlidePlanComponent":
+        count = len(self.claim_ids)
+        limits = {
+            "key_message": (1, 1),
+            "evidence_card": (1, 1),
+            "metric": (1, 1),
+            "comparison": (2, 2),
+            "timeline": (2, 12),
+            "process": (2, 12),
+            "source_list": (1, 12),
+        }
+        minimum, maximum = limits[self.component_type]
+        if not minimum <= count <= maximum:
+            raise ValueError(
+                f"{self.component_type} requires between {minimum} and {maximum} claim_ids"
+            )
+        if len(set(self.claim_ids)) != count:
+            raise ValueError("claim_ids must be unique within a planned component")
+        return self
+
+
+class SlidePlanPage(StrictDomainModel):
+    slide_id: uuid.UUID
+    purpose: SlidePurpose
+    layout_token: LayoutToken
+    components: list[SlidePlanComponent] = Field(default_factory=list, max_length=6)
+    character_budget: int = Field(ge=80, le=2_000)
+    allow_pagination: bool = True
+
+    @model_validator(mode="after")
+    def validate_layout_component_contract(self) -> "SlidePlanPage":
+        types = [component.component_type for component in self.components]
+        allowed = {
+            "cover": (set(), 0),
+            "title_body": ({"key_message", "evidence_card"}, 1),
+            "two_column": ({"key_message", "evidence_card"}, 2),
+            "three_cards": ({"key_message", "evidence_card"}, 3),
+            "evidence_grid": ({"evidence_card"}, 4),
+            "metric_highlight": ({"metric"}, 1),
+            "comparison": ({"comparison"}, 1),
+            "timeline": ({"timeline"}, 1),
+            "process": ({"process"}, 1),
+            "source_list": ({"source_list"}, 1),
+        }
+        allowed_types, maximum = allowed[self.layout_token]
+        if len(types) > maximum or any(item not in allowed_types for item in types):
+            raise ValueError("planned components are incompatible with layout_token")
+        if self.layout_token != "cover" and not types:
+            raise ValueError("non-cover slide plans require at least one component")
+        if self.layout_token == "cover" and self.purpose != "cover":
+            raise ValueError("cover layout requires cover purpose")
+        return self
+
+
+class SlidePlanData(StrictDomainModel):
+    schema_version: Literal["slide-plan-v1"] = "slide-plan-v1"
+    presentation_id: uuid.UUID
+    pages: list[SlidePlanPage] = Field(min_length=1, max_length=30)
+
+    @model_validator(mode="after")
+    def validate_unique_ids(self) -> "SlidePlanData":
+        slide_ids = [page.slide_id for page in self.pages]
+        component_ids = [
+            component.component_id for page in self.pages for component in page.components
+        ]
+        if len(slide_ids) != len(set(slide_ids)):
+            raise ValueError("slide plan slide_ids must be unique")
+        if len(component_ids) != len(set(component_ids)):
+            raise ValueError("slide plan component_ids must be unique")
+        return self
+
+
+class SlidePlanningContext(FrozenDomainModel):
+    presentation_id: uuid.UUID
+    audience: str = Field(min_length=1, max_length=64)
+    language: Literal["zh-CN", "en-US"] = "zh-CN"
+    mode: Literal["strict", "balanced", "brand_only"] = "balanced"
+
+
+class PlanningFact(FrozenDomainModel):
+    claim_id: uuid.UUID
+    claim_key: str = Field(min_length=1, max_length=160)
+    boundary: str = Field(min_length=1, max_length=64)
+    verbatim_text: str = Field(min_length=1)
+    source_count: int = Field(ge=1)
+
+
+class SlidePlanningStyleConstraints(FrozenDomainModel):
+    allowed_layout_tokens: tuple[LayoutToken, ...] = Field(min_length=1)
+    preferred_layout_tokens: tuple[LayoutToken, ...] = ()
+    max_pages: int = Field(ge=1, le=30)
+    max_components_per_page: int = Field(ge=1, le=6)
+
+
 class ComponentGeometry(FrozenDomainModel):
     x: int = Field(ge=0, le=10_000)
     y: int = Field(ge=0, le=10_000)
