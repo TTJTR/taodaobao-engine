@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 
 from app.api.deps import CurrentUser, DatabaseSession, WorkspaceId
 from app.core.errors import AppError, ErrorCode
@@ -10,6 +10,7 @@ from app.db.repositories import SolutionRunRepository
 from app.schemas.chat import SolutionRunRead
 from app.schemas.presentations import CreatePresentationRequest
 from app.schemas.trust import TrustReviewRequest
+from app.services.presentation_pipeline import run_presentation_generation
 from app.services.presentation_service import PresentationService
 from app.services.solution_trust_service import SolutionTrustService
 
@@ -88,10 +89,14 @@ async def create_presentation(
     session: DatabaseSession,
     workspace_id: WorkspaceId,
     current_user: CurrentUser,
+    background_tasks: BackgroundTasks,
     _: str = Depends(require_idempotency_key),
 ) -> dict[str, object]:
     item = await PresentationService(session, workspace_id, current_user.id).create_presentation(
         run_id, payload
+    )
+    background_tasks.add_task(
+        run_presentation_generation, item.id, run_id, payload.style_profile_id
     )
     return success_response(
         request,

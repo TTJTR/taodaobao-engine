@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'">
+  <title>企业方案演示稿</title>
+  <style>
+    :root {
+      --primary-color: {{ css.primary }};
+      --secondary-color: {{ css.secondary }};
+      --accent-color: {{ css.accent }};
+      --background-color: {{ css.background }};
+      --foreground-color: {{ css.foreground }};
+      --title-font: {{ css.title_font }};
+      --body-font: {{ css.body_font }};
+      --body-size: {{ css.body_size }}px;
+      --title-scale: {{ css.title_scale }};
+      --space-unit: {{ css.space_unit }}px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #111; color: var(--foreground-color); }
+    body { font-family: var(--body-font); font-size: var(--body-size); }
+    .presentation { display: grid; gap: calc(var(--space-unit) * 3); padding: 24px; }
+    .slide { width: min(100%, 1280px); aspect-ratio: 16 / 9; margin: 0 auto; overflow: hidden;
+      background: var(--background-color); padding: calc(var(--space-unit) * 8); }
+    .slide__components { display: grid; align-content: start; gap: calc(var(--space-unit) * 3); }
+    .component-title { margin: 0; color: var(--primary-color); font-family: var(--title-font);
+      font-size: calc(var(--body-size) * var(--title-scale)); }
+    .component-key-message { border-left: 6px solid var(--accent-color);
+      padding: calc(var(--space-unit) * 2); font-weight: 600; }
+    .component-evidence { border: 1px solid var(--secondary-color); padding: calc(var(--space-unit) * 3); }
+    .component-evidence h2 { margin: 0 0 calc(var(--space-unit) * 2); font-family: var(--title-font); }
+    .component-evidence p, .component-key-message p { margin: 0; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <main class="presentation">
+    {% for slide in spec.slides %}
+      {% include "slide.html" %}
+    {% endfor %}
+  </main>
+</body>
+</html>

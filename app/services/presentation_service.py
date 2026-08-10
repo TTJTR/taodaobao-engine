@@ -222,7 +222,6 @@ class PresentationService:
         await self.session.flush()
         snapshot = await self._build_input_snapshot(run, claims, profile)
         self.session.add(snapshot)
-        self.session.add(self._task("presentation_render", run.id, trace_id=run.trace_id))
         await self.session.commit()
         return run
 
