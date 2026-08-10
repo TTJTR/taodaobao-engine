@@ -16,6 +16,51 @@ class FactBinding(StrictDomainModel):
     content_mode: Literal["verbatim", "label_only"]
 
 
+class FrozenDomainModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class LedgerEvidence(FrozenDomainModel):
+    evidence_id: uuid.UUID
+    source_id: uuid.UUID
+    source_version: int = Field(ge=1)
+    quote: str = Field(min_length=1)
+
+
+class FactAtom(FrozenDomainModel):
+    claim_id: uuid.UUID
+    claim_key: str = Field(min_length=1, max_length=160)
+    verbatim_text: str = Field(min_length=1)
+    boundary: str = Field(min_length=1, max_length=64)
+    evidence: tuple[LedgerEvidence, ...] = Field(min_length=1)
+
+
+class FactLedger(FrozenDomainModel):
+    schema_version: Literal["fact-ledger-v1"] = "fact-ledger-v1"
+    run_id: uuid.UUID
+    facts: tuple[FactAtom, ...]
+
+
+class GuardFailure(FrozenDomainModel):
+    code: Literal[
+        "UNKNOWN_CLAIM",
+        "CLAIM_KEY_MISMATCH",
+        "UNKNOWN_EVIDENCE",
+        "SOURCE_OUT_OF_BOUNDS",
+        "VERBATIM_CONTENT_MISSING",
+        "VERBATIM_CONTENT_MISMATCH",
+    ]
+    component_id: uuid.UUID
+    claim_id: uuid.UUID
+    message: str
+
+
+class ValidationReport(FrozenDomainModel):
+    passed: bool
+    checked_components: int = Field(ge=0)
+    failures: tuple[GuardFailure, ...]
+
+
 class SlideComponent(StrictDomainModel):
     component_id: uuid.UUID
     component_type: str
