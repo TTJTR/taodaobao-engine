@@ -173,6 +173,19 @@ def build_source_references(snapshot: RetrievalSnapshot) -> list[SourceReference
     return sources
 
 
+def filter_source_references_to_used(
+    sources: list[SourceReference],
+    result: dict,
+) -> list[SourceReference]:
+    used_pairs = {
+        (item.get("asset_id"), item.get("source_id"))
+        for field in SOLUTION_CONTENT_FIELDS
+        for item in result[field]
+        if isinstance(item, dict) and item.get("asset_id") and item.get("source_id")
+    }
+    return [source for source in sources if (source.asset_id, source.source_id) in used_pairs]
+
+
 def append_missing_confirmations(
     result: dict,
     missing_information: Iterable[str],
@@ -274,6 +287,10 @@ def finalize_solution_result(
     )
     validate_model_citations(result, retrieval_snapshot)
     result["sources"] = [
-        source.model_dump(mode="json") for source in build_source_references(retrieval_snapshot)
+        source.model_dump(mode="json")
+        for source in filter_source_references_to_used(
+            build_source_references(retrieval_snapshot),
+            result,
+        )
     ]
     return Solution.model_validate(result)
