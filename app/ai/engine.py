@@ -16,6 +16,7 @@ from app.ai.pipelines.extractor import (
 )
 from app.ai.pipelines.search_intent import extract_search_intent
 from app.ai.pipelines.solution import finalize_solution_result, generate_solution
+from app.ai.pipelines.trust import generate_trusted_solution
 from app.ai.runtime import AIRunMetadata, AIRunStatus, InMemoryRunRecorder, RunTimer
 from app.ai.schemas import (
     CandidateRecommendation,
@@ -113,6 +114,7 @@ class BailianAIEngine:
         stage: str | None = None,
         prompt_version: str | None = None,
         trace_id: str | None = None,
+        allow_structure_repair: bool = True,
     ) -> T:
         timer = RunTimer(trace_id)
         repair_count = 0
@@ -121,6 +123,8 @@ class BailianAIEngine:
             try:
                 result = await operation(capture)
             except (ValidationError, ValueError) as exc:
+                if not allow_structure_repair:
+                    raise
                 if capture.last_result is None:
                     raise
                 repair_count = 1
@@ -247,6 +251,8 @@ class BailianAIEngine:
     ) -> dict[str, Any]:
         validated_context = SolutionContext.model_validate(compact_context_payload(context))
         validated_snapshot = RetrievalSnapshot.model_validate(retrieval_snapshot)
+        if validated_context.schema_version == "solution-v2" and validated_context.trace_id is None:
+            validated_context = validated_context.model_copy(update={"trace_id": str(uuid4())})
         if validated_context.mode.value == "deep":
             if validated_context.trace_id is None:
                 validated_context = validated_context.model_copy(update={"trace_id": str(uuid4())})
@@ -262,9 +268,28 @@ class BailianAIEngine:
                 trace_id=validated_context.trace_id,
             )
             return result.model_dump(mode="json")
+        if validated_context.schema_version == "solution-v2":
+            trusted = await self._run(
+                "generate_solution",
+                lambda client: generate_trusted_solution(
+                    validated_context,
+                    validated_snapshot,
+                    None,
+                    self._model_client,
+                    self._model_client,
+                    self._model_client,
+                    generation_client=client,
+                ),
+                stage="trusted_solution",
+                prompt_version="solution-v2",
+                trace_id=validated_context.trace_id,
+                allow_structure_repair=False,
+            )
+            return trusted.model_dump(mode="json")
         result = await self._run(
             "generate_solution",
             lambda client: generate_solution(validated_context, validated_snapshot, client),
+            trace_id=validated_context.trace_id,
         )
         return result.model_dump(mode="json")
 
@@ -479,5 +504,10 @@ class MockAIEngine:
             )
             self._record("generate_solution", timer)
             return deep_result.model_dump(mode="json")
+        if validated_context.schema_version == "solution-v2":
+            raise ValueError(
+                "MockAIEngine cannot perform semantic solution-v2 verification; "
+                "inject independent trusted workflow clients"
+            )
         self._record("generate_solution", timer)
         return solution.model_dump(mode="json")
