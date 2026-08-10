@@ -7,13 +7,17 @@ from app.api.v1.routes import (
     expert_collaborations,
     feishu_resources,
     health,
+    intelligence,
     jobs,
     presentations,
     profiles,
+    rehearsals,
     research,
+    runtime,
     sessions,
     solutions,
     sources,
+    tenders,
 )
 
 api_router = APIRouter()
@@ -49,5 +53,16 @@ api_router.include_router(
     prefix="/expert-collaborations",
     tags=["Expert Collaboration"],
 )
-
-# Feature routers will be mounted here as their application services land:
+api_router.include_router(runtime.runtime_router, prefix="/runtime", tags=["V2 Runtime"])
+api_router.include_router(
+    runtime.connections_router, prefix="/model-connections", tags=["V2 Connections"]
+)
+api_router.include_router(intelligence.router, prefix="/intelligence", tags=["V2 Intelligence"])
+api_router.include_router(
+    intelligence.profile_router, prefix="/customer-profiles", tags=["V2 Profile Intelligence"]
+)
+api_router.include_router(tenders.router, prefix="/tenders", tags=["V2 Tenders"])
+api_router.include_router(
+    tenders.matrix_router, prefix="/response-matrices", tags=["V2 Response Matrices"]
+)
+api_router.include_router(rehearsals.router, prefix="/rehearsals", tags=["V2 Rehearsals"])

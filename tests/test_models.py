@@ -174,6 +174,17 @@ def test_metadata_contains_core_and_idempotency_tables() -> None:
         "presentation_input_snapshots",
         "html_artifacts",
         "export_artifacts",
+        "search_runs",
+        "intelligence_items",
+        "intelligence_snapshots",
+        "profile_intelligence_proposals",
+        "tender_documents",
+        "tender_requirements",
+        "response_matrices",
+        "response_matrix_items",
+        "rehearsal_sessions",
+        "rehearsal_turns",
+        "rehearsal_reports",
     }
 
 
@@ -183,7 +194,7 @@ def test_all_tables_compile_to_postgresql_ddl() -> None:
         for table in Base.metadata.sorted_tables
     ]
 
-    assert len(statements) == 33
+    assert len(statements) == 44
     assert all("UUID" in statement for statement in statements)
 
 
