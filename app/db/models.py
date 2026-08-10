@@ -684,8 +684,31 @@ class ReferenceDeck(EntityMixin, WorkspaceMixin, Base):
     security_report: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     error_code: Mapped[str | None] = mapped_column(String(64))
 
+    created_by: Mapped["User"] = relationship(foreign_keys=[created_by_id])
 
-class StyleProfile(EntityMixin, WorkspaceMixin, Base):
+
+class NarrativeProfile(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "narrative_profiles"
+    __table_args__ = (
+        Index("ix_narrative_profiles_workspace_name", "workspace_id", "name"),
+    )
+
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    rules: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    created_by: Mapped["User"] = relationship(foreign_keys=[created_by_id])
+    visual_style_profiles: Mapped[list["VisualStyleProfile"]] = relationship(
+        back_populates="narrative_profile"
+    )
+
+
+class VisualStyleProfile(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "style_profiles"
     __table_args__ = (Index("ix_style_profiles_workspace_status", "workspace_id", "status"),)
 
@@ -702,14 +725,51 @@ class StyleProfile(EntityMixin, WorkspaceMixin, Base):
     )
     visual_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     narrative_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    narrative_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "narrative_profiles.id",
+            name="fk_style_profiles_narrative_profile_id_narrative_profiles",
+            ondelete="SET NULL",
+        ),
+        index=True,
+    )
+    palette: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    typography: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    layout_grammar: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    density: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="medium", server_default="medium"
+    )
+    shape_language: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    logo_rules: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    confidence_notes: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     conflict_notes: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     confirmed_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    created_by: Mapped["User"] = relationship(foreign_keys=[created_by_id])
+    confirmed_by: Mapped["User | None"] = relationship(foreign_keys=[confirmed_by_id])
+    narrative_profile: Mapped["NarrativeProfile | None"] = relationship(
+        back_populates="visual_style_profiles"
+    )
+    presentations: Mapped[list["Presentation"]] = relationship(back_populates="style_profile")
 
-class PresentationRun(EntityMixin, WorkspaceMixin, Base):
+
+class Presentation(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "presentation_runs"
     __table_args__ = (Index("ix_presentation_solution_status", "solution_run_id", "status"),)
 
@@ -739,6 +799,16 @@ class PresentationRun(EntityMixin, WorkspaceMixin, Base):
     error_code: Mapped[str | None] = mapped_column(String(64))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    solution_run: Mapped["SolutionRun"] = relationship()
+    style_profile: Mapped["VisualStyleProfile"] = relationship(back_populates="presentations")
+    created_by: Mapped["User"] = relationship(foreign_keys=[created_by_id])
+    input_snapshots: Mapped[list["PresentationInputSnapshot"]] = relationship(
+        back_populates="presentation", cascade="all, delete-orphan"
+    )
+    html_artifacts: Mapped[list["HtmlArtifact"]] = relationship(
+        back_populates="presentation", cascade="all, delete-orphan"
+    )
+
 
 class PresentationInputSnapshot(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "presentation_input_snapshots"
@@ -754,6 +824,8 @@ class PresentationInputSnapshot(EntityMixin, WorkspaceMixin, Base):
         String(64), nullable=False, default="presentation-input-v1"
     )
     snapshot_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+    presentation: Mapped["Presentation"] = relationship(back_populates="input_snapshots")
 
 
 class HtmlArtifact(EntityMixin, WorkspaceMixin, Base):
@@ -771,6 +843,28 @@ class HtmlArtifact(EntityMixin, WorkspaceMixin, Base):
     assets: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     render_report: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     provider_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="draft", server_default="draft"
+    )
+    upstream_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="released", server_default="released"
+    )
+    artifact_paths: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    preview_screenshot_keys: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    html_object_key: Mapped[str | None] = mapped_column(String(1000))
+    pdf_object_key: Mapped[str | None] = mapped_column(String(1000))
+
+    presentation: Mapped["Presentation"] = relationship(back_populates="html_artifacts")
+
+
+# Compatibility aliases for the V1 integration baseline. New code should use the
+# contract-aligned names while existing services can migrate independently.
+StyleProfile = VisualStyleProfile
+PresentationRun = Presentation
 
 
 class ExportArtifact(EntityMixin, WorkspaceMixin, Base):

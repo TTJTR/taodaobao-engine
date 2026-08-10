@@ -26,6 +26,8 @@ from app.db.models import (
     IdempotencyRecord,
     Job,
     Message,
+    NarrativeProfile,
+    Presentation,
     PresentationInputSnapshot,
     PresentationRun,
     QualityAttemptRecord,
@@ -40,6 +42,7 @@ from app.db.models import (
     StyleProfile,
     TrustDecisionRecord,
     User,
+    VisualStyleProfile,
     WorkflowTask,
 )
 
@@ -69,6 +72,7 @@ MODELS = [
     HumanReviewRecord,
     WorkflowTask,
     ReferenceDeck,
+    NarrativeProfile,
     StyleProfile,
     PresentationRun,
     PresentationInputSnapshot,
@@ -95,6 +99,12 @@ def test_dynamic_fields_use_postgresql_jsonb() -> None:
     assert isinstance(SolutionRun.__table__.c.retrieval_snapshot.type, JSONB)
     assert isinstance(SolutionRun.__table__.c.result.type, JSONB)
     assert isinstance(IdempotencyRecord.__table__.c.response_data.type, JSONB)
+    assert isinstance(NarrativeProfile.__table__.c.rules.type, JSONB)
+    assert isinstance(VisualStyleProfile.__table__.c.palette.type, JSONB)
+    assert isinstance(VisualStyleProfile.__table__.c.typography.type, JSONB)
+    assert isinstance(VisualStyleProfile.__table__.c.layout_grammar.type, JSONB)
+    assert isinstance(Presentation.__table__.c.spec.type, JSONB)
+    assert isinstance(HtmlArtifact.__table__.c.artifact_paths.type, JSONB)
 
 
 def test_idempotency_record_has_workspace_key_uniqueness() -> None:
@@ -116,6 +126,17 @@ def test_expected_relationships_configure_without_ambiguity() -> None:
     assert {"request_message", "response_messages"}.issubset(
         inspect(SolutionRun).relationships.keys()
     )
+    assert {"narrative_profile", "presentations"}.issubset(
+        inspect(VisualStyleProfile).relationships.keys()
+    )
+    assert {"solution_run", "style_profile", "html_artifacts"}.issubset(
+        inspect(Presentation).relationships.keys()
+    )
+
+
+def test_presentation_model_compatibility_aliases() -> None:
+    assert StyleProfile is VisualStyleProfile
+    assert PresentationRun is Presentation
 
 
 def test_metadata_contains_core_and_idempotency_tables() -> None:
@@ -147,6 +168,7 @@ def test_metadata_contains_core_and_idempotency_tables() -> None:
         "human_review_records",
         "workflow_tasks",
         "reference_decks",
+        "narrative_profiles",
         "style_profiles",
         "presentation_runs",
         "presentation_input_snapshots",
@@ -161,7 +183,7 @@ def test_all_tables_compile_to_postgresql_ddl() -> None:
         for table in Base.metadata.sorted_tables
     ]
 
-    assert len(statements) == 32
+    assert len(statements) == 33
     assert all("UUID" in statement for statement in statements)
 
 
