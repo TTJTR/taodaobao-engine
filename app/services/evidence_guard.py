@@ -1,12 +1,105 @@
+import hashlib
+import json
+
 from app.schemas.presentation import (
+    EvidenceGuardSnapshot,
     FactLedger,
     GuardFailure,
+    PositionedPresentationSpec,
+    PresentationSpecData,
     SlideSchema,
     ValidationReport,
 )
 
 
 class EvidenceGuard:
+    def validate_bindings(
+        self, spec: PresentationSpecData, ledger: FactLedger
+    ) -> tuple[ValidationReport, EvidenceGuardSnapshot]:
+        reports = [self.validate(slide, ledger) for slide in spec.slides]
+        report = self._merge_reports(reports)
+        fingerprints: dict = {}
+        claim_ids: dict = {}
+        if report.passed:
+            for slide in spec.slides:
+                for component in slide.components:
+                    binding = getattr(component, "fact_binding", None)
+                    if binding is None:
+                        continue
+                    fingerprints[component.component_id] = self._fingerprint(component)
+                    claim_ids[component.component_id] = binding.claim_id
+        return report, EvidenceGuardSnapshot(
+            component_fingerprints=fingerprints,
+            component_claim_ids=claim_ids,
+        )
+
+    def validate_positioned_spec(
+        self,
+        spec: PositionedPresentationSpec,
+        ledger: FactLedger,
+        snapshot: EvidenceGuardSnapshot,
+    ) -> ValidationReport:
+        slides = []
+        positioned_fingerprints = {}
+        for slide in spec.slides:
+            components = [item.component for item in slide.components]
+            slides.append(
+                SlideSchema(
+                    slide_id=slide.slide_id,
+                    layout_token=slide.layout_token,
+                    components=components,
+                )
+            )
+            for component in components:
+                if getattr(component, "fact_binding", None) is not None:
+                    positioned_fingerprints[component.component_id] = self._fingerprint(component)
+
+        reports = [self.validate(slide, ledger) for slide in slides]
+        failures = [failure for report in reports for failure in report.failures]
+        for component_id, expected in snapshot.component_fingerprints.items():
+            actual = positioned_fingerprints.get(component_id)
+            claim_id = snapshot.component_claim_ids[component_id]
+            if actual is None:
+                failures.append(
+                    GuardFailure(
+                        code="BOUND_COMPONENT_MISSING",
+                        component_id=component_id,
+                        claim_id=claim_id,
+                        message="布局结果丢失了已通过预检的事实组件",
+                    )
+                )
+            elif actual != expected:
+                failures.append(
+                    GuardFailure(
+                        code="CONTENT_FINGERPRINT_MISMATCH",
+                        component_id=component_id,
+                        claim_id=claim_id,
+                        message="布局前后组件事实内容或绑定发生变化",
+                    )
+                )
+        added_ids = set(positioned_fingerprints) - set(snapshot.component_fingerprints)
+        for component_id in added_ids:
+            component = next(
+                component
+                for slide in slides
+                for component in slide.components
+                if component.component_id == component_id
+            )
+            failures.append(
+                GuardFailure(
+                    code="BOUND_COMPONENT_ADDED",
+                    component_id=component_id,
+                    claim_id=component.fact_binding.claim_id,
+                    message="布局结果新增了未经过预检的事实组件",
+                )
+            )
+
+        return ValidationReport(
+            passed=not failures,
+            checked_components=sum(report.checked_components for report in reports),
+            failures=tuple(failures),
+        )
+
     def validate(self, schema: SlideSchema, ledger: FactLedger) -> ValidationReport:
         facts = {fact.claim_id: fact for fact in ledger.facts}
         failures: list[GuardFailure] = []
@@ -97,3 +190,18 @@ class EvidenceGuard:
             return body
         text = getattr(component, "text", None)
         return text if isinstance(text, str) else None
+
+    @staticmethod
+    def _fingerprint(component: object) -> str:
+        payload = component.model_dump(mode="json")
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _merge_reports(reports: list[ValidationReport]) -> ValidationReport:
+        failures = tuple(failure for report in reports for failure in report.failures)
+        return ValidationReport(
+            passed=not failures,
+            checked_components=sum(report.checked_components for report in reports),
+            failures=failures,
+        )

@@ -12,6 +12,8 @@ from app.db.models import (
     StyleProfileStatus,
     VisualStyleProfile,
 )
+from app.presentation.layouts.diagnostics import diagnose_layout
+from app.presentation.layouts.engine import LayoutEngine
 from app.schemas.presentation import PresentationSpecData, VisualStyleProfileData
 from app.services.evidence_guard import EvidenceGuard
 from app.services.fact_ledger_service import FactLedgerService
@@ -57,18 +59,28 @@ async def run_presentation_generation(
 
             presentation.status = PresentationStatus.VALIDATING
             await session.commit()
-            reports = [EvidenceGuard().validate(slide, ledger) for slide in spec.slides]
-            failures = [failure for report in reports for failure in report.failures]
-            if failures:
+            guard = EvidenceGuard()
+            binding_report, guard_snapshot = guard.validate_bindings(spec, ledger)
+            if not binding_report.passed:
                 raise ValueError(
-                    "evidence guard rejected presentation: "
-                    + ",".join(failure.code for failure in failures)
+                    "evidence guard rejected presentation bindings: "
+                    + ",".join(failure.code for failure in binding_report.failures)
+                )
+            positioned_spec = LayoutEngine().position(spec)
+            layout_report = diagnose_layout(positioned_spec)
+            if not layout_report.passed:
+                raise ValueError("layout validation failed: " + ",".join(layout_report.errors))
+            final_report = guard.validate_positioned_spec(positioned_spec, ledger, guard_snapshot)
+            if not final_report.passed:
+                raise ValueError(
+                    "evidence guard rejected positioned presentation: "
+                    + ",".join(failure.code for failure in final_report.failures)
                 )
 
             presentation.status = PresentationStatus.RENDERING
             await session.commit()
-            html = HTMLRenderer().render(spec, style)
-            presentation.spec = spec.model_dump(mode="json")
+            html = HTMLRenderer().render(positioned_spec, style)
+            presentation.spec = positioned_spec.model_dump(mode="json")
             presentation.status = PresentationStatus.READY
             presentation.completed_at = datetime.now(UTC)
             presentation.error_code = None
@@ -82,8 +94,11 @@ async def run_presentation_generation(
                     assets=[],
                     render_report={
                         "renderer": "jinja2-deterministic-v1",
-                        "schema_version": spec.schema_version,
-                        "validated_slides": len(reports),
+                        "schema_version": positioned_spec.schema_version,
+                        "validated_slides": len(positioned_spec.slides),
+                        "prechecked_components": binding_report.checked_components,
+                        "final_checked_components": final_report.checked_components,
+                        "layout_diagnostics": list(layout_report.errors),
                     },
                     provider_mode="deterministic",
                     status="ready",
@@ -119,7 +134,7 @@ def _mock_plan(presentation_id, ledger) -> PresentationSpecData:
             "slides": [
                 {
                     "slide_id": uuid.uuid4(),
-                    "layout_token": "title-and-evidence",
+                    "layout_token": "title_body",
                     "components": [
                         {
                             "component_id": uuid.uuid4(),

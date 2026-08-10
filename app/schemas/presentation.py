@@ -49,6 +49,9 @@ class GuardFailure(FrozenDomainModel):
         "SOURCE_OUT_OF_BOUNDS",
         "VERBATIM_CONTENT_MISSING",
         "VERBATIM_CONTENT_MISMATCH",
+        "CONTENT_FINGERPRINT_MISMATCH",
+        "BOUND_COMPONENT_MISSING",
+        "BOUND_COMPONENT_ADDED",
     ]
     component_id: uuid.UUID
     claim_id: uuid.UUID
@@ -89,10 +92,12 @@ SemanticComponent = Annotated[
     Field(discriminator="component_type"),
 ]
 
+LayoutToken = Literal["cover", "title_body", "two_column", "three_cards", "evidence_grid"]
+
 
 class SlideSchema(StrictDomainModel):
     slide_id: uuid.UUID
-    layout_token: str = Field(min_length=1, max_length=100)
+    layout_token: LayoutToken
     components: list[SemanticComponent] = Field(min_length=1)
 
 
@@ -100,6 +105,39 @@ class PresentationSpecData(StrictDomainModel):
     schema_version: str = Field(min_length=1, max_length=32)
     presentation_id: uuid.UUID
     slides: list[SlideSchema] = Field(min_length=1)
+
+
+class ComponentGeometry(FrozenDomainModel):
+    x: int = Field(ge=0, le=10_000)
+    y: int = Field(ge=0, le=10_000)
+    width: int = Field(gt=0, le=10_000)
+    height: int = Field(gt=0, le=10_000)
+
+
+class PositionedComponent(FrozenDomainModel):
+    slot_name: str = Field(min_length=1, max_length=64)
+    geometry: ComponentGeometry
+    z_index: int = Field(ge=0, le=100)
+    text_style_token: Literal["display", "heading", "body", "evidence"]
+    overflow_policy: Literal["fit", "clip"] = "fit"
+    component: SemanticComponent
+
+
+class PositionedSlide(FrozenDomainModel):
+    slide_id: uuid.UUID
+    layout_token: LayoutToken
+    components: tuple[PositionedComponent, ...] = Field(min_length=1)
+
+
+class PositionedPresentationSpec(FrozenDomainModel):
+    schema_version: Literal["positioned-spec-v1"] = "positioned-spec-v1"
+    presentation_id: uuid.UUID
+    slides: tuple[PositionedSlide, ...] = Field(min_length=1)
+
+
+class EvidenceGuardSnapshot(FrozenDomainModel):
+    component_fingerprints: dict[uuid.UUID, str]
+    component_claim_ids: dict[uuid.UUID, uuid.UUID]
 
 
 class Palette(StrictDomainModel):

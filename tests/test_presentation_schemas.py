@@ -20,7 +20,7 @@ def test_slide_schema_accepts_discriminated_semantic_components() -> None:
     slide = SlideSchema.model_validate(
         {
             "slide_id": uuid.uuid4(),
-            "layout_token": "title-and-evidence",
+            "layout_token": "title_body",
             "components": [
                 {
                     "component_id": uuid.uuid4(),
@@ -67,7 +67,7 @@ def test_business_component_rejects_missing_binding_or_extra_fields(component: d
         SlideSchema.model_validate(
             {
                 "slide_id": uuid.uuid4(),
-                "layout_token": "evidence-only",
+                "layout_token": "title_body",
                 "components": [component],
             }
         )

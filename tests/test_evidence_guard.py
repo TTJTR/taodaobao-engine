@@ -5,7 +5,15 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from sqlalchemy.dialects import postgresql
 
-from app.schemas.presentation import FactAtom, FactLedger, LedgerEvidence, SlideSchema
+from app.presentation.layouts.engine import LayoutEngine
+from app.schemas.presentation import (
+    FactAtom,
+    FactLedger,
+    LedgerEvidence,
+    PositionedPresentationSpec,
+    PresentationSpecData,
+    SlideSchema,
+)
 from app.services.evidence_guard import EvidenceGuard
 from app.services.fact_ledger_service import FactLedgerService
 
@@ -38,7 +46,7 @@ def _slide(ledger: FactLedger, text: str, *, claim_id: uuid.UUID | None = None) 
     return SlideSchema.model_validate(
         {
             "slide_id": uuid.uuid4(),
-            "layout_token": "verified-key-message",
+            "layout_token": "title_body",
             "components": [
                 {
                     "component_id": uuid.uuid4(),
@@ -85,6 +93,37 @@ def test_evidence_guard_rejects_fabricated_claim_id() -> None:
 
     assert report.passed is False
     assert [failure.code for failure in report.failures] == ["UNKNOWN_CLAIM"]
+
+
+def test_final_evidence_guard_rejects_layout_stage_content_mutation() -> None:
+    ledger = _ledger()
+    semantic_spec = PresentationSpecData(
+        schema_version="slide-schema-v1",
+        presentation_id=uuid.uuid4(),
+        slides=[_slide(ledger, ledger.facts[0].verbatim_text)],
+    )
+    guard = EvidenceGuard()
+    preflight, snapshot = guard.validate_bindings(semantic_spec, ledger)
+    positioned = LayoutEngine().position(semantic_spec)
+    original_item = positioned.slides[0].components[0]
+    mutated_component = original_item.component.model_copy(
+        update={"text": "2025年营业收入为1538亿元"}
+    )
+    mutated_item = original_item.model_copy(update={"component": mutated_component})
+    mutated_slide = positioned.slides[0].model_copy(update={"components": (mutated_item,)})
+    mutated_spec = PositionedPresentationSpec(
+        presentation_id=positioned.presentation_id,
+        slides=(mutated_slide,),
+    )
+
+    report = guard.validate_positioned_spec(mutated_spec, ledger, snapshot)
+
+    assert preflight.passed is True
+    assert report.passed is False
+    assert {failure.code for failure in report.failures} == {
+        "VERBATIM_CONTENT_MISMATCH",
+        "CONTENT_FINGERPRINT_MISMATCH",
+    }
 
 
 @pytest.mark.asyncio

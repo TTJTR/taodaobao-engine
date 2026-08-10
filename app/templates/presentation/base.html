@@ -20,25 +20,41 @@
       --space-unit: {{ css.space_unit }}px;
     }
     * { box-sizing: border-box; }
-    html, body { margin: 0; background: #111; color: var(--foreground-color); }
-    body { font-family: var(--body-font); font-size: var(--body-size); }
-    .presentation { display: grid; gap: calc(var(--space-unit) * 3); padding: 24px; }
-    .slide { width: min(100%, 1280px); aspect-ratio: 16 / 9; margin: 0 auto; overflow: hidden;
-      background: var(--background-color); padding: calc(var(--space-unit) * 8); }
-    .slide__components { display: grid; align-content: start; gap: calc(var(--space-unit) * 3); }
+    html, body { margin: 0; background: #151719; color: var(--foreground-color); }
+    body { font-family: var(--body-font); font-size: clamp(12px, 1.25vw, var(--body-size)); }
+    .presentation { margin: 0; }
+    .slide-frame { height: 100vh; height: 100dvh; display: grid; place-items: center; overflow: hidden; }
+    .slide { position: relative; width: min(100vw, calc(100vh * 16 / 9));
+      width: min(100vw, calc(100dvh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16));
+      height: min(100dvh, calc(100vw * 9 / 16)); overflow: hidden; background: var(--background-color);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, .32); container-type: size; }
+    .slide::before { content: ""; position: absolute; inset: 0 auto 0 0; width: clamp(6px, .7vw, 12px);
+      background: var(--accent-color); }
+    .positioned-component { position: absolute; left: var(--x); top: var(--y); width: var(--w);
+      height: var(--h); z-index: var(--z); overflow: hidden; }
     .component-title { margin: 0; color: var(--primary-color); font-family: var(--title-font);
-      font-size: calc(var(--body-size) * var(--title-scale)); }
-    .component-key-message { border-left: 6px solid var(--accent-color);
-      padding: calc(var(--space-unit) * 2); font-weight: 600; }
-    .component-evidence { border: 1px solid var(--secondary-color); padding: calc(var(--space-unit) * 3); }
-    .component-evidence h2 { margin: 0 0 calc(var(--space-unit) * 2); font-family: var(--title-font); }
-    .component-evidence p, .component-key-message p { margin: 0; white-space: pre-wrap; }
+      font-size: clamp(14px, 5cqh, 56px); line-height: 1.14; letter-spacing: 0; }
+    .layout-cover .component-title { font-size: clamp(20px, 8cqh, 78px); max-width: 15ch; }
+    .component-key-message { border-left: clamp(4px, .5vw, 8px) solid var(--accent-color);
+      padding: clamp(6px, 2.5cqh, 28px); font-size: clamp(11px, 3.2cqh, 30px); font-weight: 650;
+      background: color-mix(in srgb, var(--secondary-color) 10%, var(--background-color)); }
+    .component-evidence { height: 100%; border: 1px solid color-mix(in srgb, var(--secondary-color) 45%, transparent);
+      border-top: clamp(3px, .8cqh, 7px) solid var(--secondary-color); padding: clamp(6px, 2.5cqh, 28px);
+      background: color-mix(in srgb, var(--secondary-color) 7%, var(--background-color)); }
+    .component-evidence h2 { margin: 0 0 clamp(8px, 1vw, 18px); color: var(--primary-color);
+      font-family: var(--title-font); font-size: clamp(11px, 3cqh, 28px); line-height: 1.2; }
+    .component-evidence p, .component-key-message p { margin: 0; white-space: pre-wrap;
+      font-size: clamp(9px, 2.15cqh, 20px); line-height: 1.55; }
+    @media (max-height: 700px) { .component-evidence { padding: clamp(10px, 1.3vw, 20px); } }
+    @media (max-height: 600px) { .component-title { line-height: 1.08; } }
+    @media (max-height: 500px) { .component-evidence p { line-height: 1.35; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }
   </style>
 </head>
 <body>
-  <main class="presentation">
-    {% for slide in spec.slides %}
-      {% include "slide.html" %}
+  <main class="presentation" data-presentation-id="{{ presentation_id }}">
+    {% for rendered_slide in rendered_slides %}
+      {{ rendered_slide }}
     {% endfor %}
   </main>
 </body>

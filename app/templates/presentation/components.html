@@ -1,16 +1,16 @@
-{% macro title(component) -%}
-<h1 class="component-title" data-component-id="{{ component.component_id }}">{{ component.text }}</h1>
+{% macro title(item) -%}
+<h1 class="component-title" data-component-id="{{ item.component.component_id }}">{{ item.component.text }}</h1>
 {%- endmacro %}
 
-{% macro key_message(component) -%}
-<article class="component-key-message" data-component-id="{{ component.component_id }}"
-         data-claim-id="{{ component.fact_binding.claim_id }}"><p>{{ component.text }}</p></article>
+{% macro key_message(item) -%}
+<article class="component-key-message" data-component-id="{{ item.component.component_id }}"
+         data-claim-id="{{ item.component.fact_binding.claim_id }}"><p>{{ item.component.text }}</p></article>
 {%- endmacro %}
 
-{% macro evidence_card(component) -%}
-<article class="component-evidence" data-component-id="{{ component.component_id }}"
-         data-claim-id="{{ component.fact_binding.claim_id }}">
-  <h2>{{ component.heading }}</h2>
-  <p>{{ component.body }}</p>
+{% macro evidence_card(item) -%}
+<article class="component-evidence" data-component-id="{{ item.component.component_id }}"
+         data-claim-id="{{ item.component.fact_binding.claim_id }}">
+  <h2>{{ item.component.heading }}</h2>
+  <p>{{ item.component.body }}</p>
 </article>
 {%- endmacro %}

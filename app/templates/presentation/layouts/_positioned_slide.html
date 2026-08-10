@@ -1,0 +1,21 @@
+{% import "components.html" as components %}
+<section class="slide-frame">
+  <article class="slide {{ layout_class }}" data-slide-id="{{ slide.slide_id }}"
+           data-layout="{{ slide.layout_token }}">
+    {% for item in slide.components %}
+      <div class="positioned-component slot-{{ item.slot_name }}"
+           data-slot="{{ item.slot_name }}"
+           style="--x: {{ item.geometry.x / 100 }}%; --y: {{ item.geometry.y / 100 }}%;
+                  --w: {{ item.geometry.width / 100 }}%; --h: {{ item.geometry.height / 100 }}%;
+                  --z: {{ item.z_index }};">
+        {% if item.component.component_type == "title" %}
+          {{ components.title(item) }}
+        {% elif item.component.component_type == "key_message" %}
+          {{ components.key_message(item) }}
+        {% elif item.component.component_type == "evidence_card" %}
+          {{ components.evidence_card(item) }}
+        {% endif %}
+      </div>
+    {% endfor %}
+  </article>
+</section>

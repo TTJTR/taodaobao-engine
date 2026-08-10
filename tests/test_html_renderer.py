@@ -2,7 +2,12 @@ import uuid
 
 import pytest
 
-from app.schemas.presentation import PresentationSpecData, VisualStyleProfileData
+from app.presentation.layouts.engine import LayoutEngine
+from app.schemas.presentation import (
+    PositionedPresentationSpec,
+    PresentationSpecData,
+    VisualStyleProfileData,
+)
 from app.services.html_renderer import HTMLRenderer
 
 
@@ -32,16 +37,16 @@ def _style(*, heading_font: str = "Microsoft YaHei") -> VisualStyleProfileData:
     )
 
 
-def _spec(text: str) -> PresentationSpecData:
+def _spec(text: str) -> PositionedPresentationSpec:
     claim_id = uuid.uuid4()
-    return PresentationSpecData.model_validate(
+    semantic_spec = PresentationSpecData.model_validate(
         {
             "schema_version": "slide-schema-v1",
             "presentation_id": uuid.uuid4(),
             "slides": [
                 {
                     "slide_id": uuid.uuid4(),
-                    "layout_token": 'layout"><img src=x onerror=alert(1)>',
+                    "layout_token": "title_body",
                     "components": [
                         {
                             "component_id": uuid.uuid4(),
@@ -65,6 +70,7 @@ def _spec(text: str) -> PresentationSpecData:
             ],
         }
     )
+    return LayoutEngine().position(semantic_spec)
 
 
 def test_renderer_maps_css_variables_and_escapes_all_business_text() -> None:
@@ -74,7 +80,6 @@ def test_renderer_maps_css_variables_and_escapes_all_business_text() -> None:
     assert '--title-font: "Microsoft YaHei"' in html
     assert "<script>" not in html
     assert "&lt;script&gt;alert" in html
-    assert "onerror=alert(1)&gt;" in html
     assert "<img src=x" not in html
     assert "script-src 'none'" in html
 

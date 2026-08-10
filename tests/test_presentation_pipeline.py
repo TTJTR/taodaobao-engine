@@ -102,10 +102,12 @@ async def test_pipeline_builds_validated_deterministic_html_artifact(
         PresentationStatus.RENDERING,
         PresentationStatus.READY,
     ]
-    assert presentation.spec["schema_version"] == "slide-schema-v1"
+    assert presentation.spec["schema_version"] == "positioned-spec-v1"
     artifact = session.add.call_args.args[0]
     assert isinstance(artifact, HtmlArtifact)
     assert artifact.status == "ready"
     assert "--primary-color: #123456" in artifact.html
     assert "2025年营业收入为1438亿元" in artifact.html
     assert artifact.render_report["validated_slides"] == 1
+    assert artifact.render_report["prechecked_components"] == 1
+    assert artifact.render_report["final_checked_components"] == 1

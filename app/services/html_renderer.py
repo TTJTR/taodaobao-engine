@@ -4,7 +4,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 from markupsafe import Markup
 
-from app.schemas.presentation import PresentationSpecData, VisualStyleProfileData
+from app.schemas.presentation import PositionedPresentationSpec, VisualStyleProfileData
 
 SAFE_FONT_PATTERN = re.compile(r"^[\w\s,.'\-]+$", re.UNICODE)
 
@@ -20,9 +20,29 @@ class HTMLRenderer:
             undefined=StrictUndefined,
         )
 
-    def render(self, spec: PresentationSpecData, style: VisualStyleProfileData) -> str:
+    LAYOUT_TEMPLATES = {
+        "cover": "layouts/cover.html",
+        "title_body": "layouts/title_body.html",
+        "two_column": "layouts/two_column.html",
+        "three_cards": "layouts/three_cards.html",
+        "evidence_grid": "layouts/evidence_grid.html",
+    }
+
+    def render(self, spec: PositionedPresentationSpec, style: VisualStyleProfileData) -> str:
         template = self.environment.get_template("base.html")
-        return template.render(spec=spec, css=self._css_variables(style))
+        rendered_slides = []
+        for slide in spec.slides:
+            template_name = self.LAYOUT_TEMPLATES.get(slide.layout_token)
+            if template_name is None:
+                raise ValueError(f"unsupported layout template: {slide.layout_token}")
+            rendered_slides.append(
+                Markup(self.environment.get_template(template_name).render(slide=slide))
+            )
+        return template.render(
+            presentation_id=spec.presentation_id,
+            rendered_slides=rendered_slides,
+            css=self._css_variables(style),
+        )
 
     @staticmethod
     def _css_variables(style: VisualStyleProfileData) -> dict[str, str | int | float]:
