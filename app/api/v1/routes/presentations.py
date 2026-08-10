@@ -63,6 +63,20 @@ async def generate_style_profile(
     return success_response(request, _style_data(profile))
 
 
+@styles_router.get("/{profile_id}")
+async def get_style_profile(
+    profile_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    workspace_id: WorkspaceId,
+    current_user: CurrentUser,
+) -> dict[str, object]:
+    profile = await PresentationService(session, workspace_id, current_user.id).get_style(
+        profile_id
+    )
+    return success_response(request, _style_data(profile))
+
+
 @styles_router.patch("/{profile_id}")
 async def update_style_profile(
     profile_id: uuid.UUID,

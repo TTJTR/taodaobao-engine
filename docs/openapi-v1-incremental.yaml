@@ -210,6 +210,10 @@ paths:
         '202': {description: 创建 draft 风格画像任务}
   /style-profiles/{profile_id}:
     parameters: [{$ref: '#/components/parameters/StyleProfileId'}]
+    get:
+      operationId: getStyleProfile
+      responses:
+        '200': {description: 返回风格画像版本、生成状态、视觉与叙事规则及冲突说明}
     patch:
       operationId: updateStyleProfile
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]

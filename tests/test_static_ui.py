@@ -38,6 +38,10 @@ def test_static_index_is_served_at_root() -> None:
     assert "if(Store.state.loggedIn){try{await loadWorkspace()}" in response.text
     assert "function renderDeep()" in response.text
     assert "function renderExperts()" in response.text
+    assert "function renderPresentations()" in response.text
+    assert "function renderRuntime()" in response.text
+    assert "function renderModels()" in response.text
+    assert 'apiFetch(`/style-profiles/${id}`)' in response.text
     assert "V1.0 规划能力，不进入当前MVP主流程" not in response.text
 
 
@@ -46,3 +50,9 @@ def test_static_mount_does_not_shadow_api_routes() -> None:
 
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "ok"
+
+
+def test_style_profile_polling_route_is_registered() -> None:
+    schema = app.openapi()
+
+    assert "get" in schema["paths"]["/api/v1/style-profiles/{profile_id}"]
