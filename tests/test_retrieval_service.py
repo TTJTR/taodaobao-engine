@@ -28,6 +28,9 @@ async def test_retrieval_enforces_verified_active_workspace_and_top_k() -> None:
         freshness_status=SimpleNamespace(value="current"),
         title="旁路试点来源",
         source_url="https://example.test/source",
+        author="测试作者",
+        source_updated_at=datetime.now(UTC),
+        synced_at=datetime.now(UTC),
         content_fingerprint="f" * 64,
     )
     asset = SimpleNamespace(
@@ -60,4 +63,11 @@ async def test_retrieval_enforces_verified_active_workspace_and_top_k() -> None:
     assert len(snapshot["capabilities"]) == 1
     assert snapshot["experiences"][0]["source_version"] == 1
     assert snapshot["experiences"][0]["permission_status"] == "granted"
+    source_snapshot = snapshot["experiences"][0]["source_snapshot"]
+    assert source_snapshot["source_version"] == "1"
+    assert source_snapshot["reviewed_version"] == "1"
+    assert source_snapshot["permission_valid"] is True
+    assert source_snapshot["available"] is True
+    assert source_snapshot["title"] == "旁路试点来源"
+    assert source_snapshot["author"] == "测试作者"
     assert snapshot["experiences"][0]["evidence_location"]["kind"] == "reviewed_asset_json"

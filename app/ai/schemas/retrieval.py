@@ -6,12 +6,33 @@ from app.ai.schemas.assets import CapabilityDraft, ExperienceDraft
 from app.ai.schemas.base import AISchema, NonEmptyStr
 
 
+class SourceSnapshot(AISchema):
+    source_version: NonEmptyStr
+    reviewed_version: NonEmptyStr
+    permission_snapshot_id: NonEmptyStr
+    permission_valid: bool = True
+    available: bool = True
+    invalid_reason: NonEmptyStr | None = None
+    title: NonEmptyStr | None = None
+    url: NonEmptyStr | None = None
+    author: NonEmptyStr | None = None
+    source_updated_at: datetime | None = None
+    last_synced_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def invalid_source_needs_reason(self) -> "SourceSnapshot":
+        if (not self.permission_valid or not self.available) and not self.invalid_reason:
+            raise ValueError("invalid or unavailable source snapshot requires invalid_reason")
+        return self
+
+
 class RetrievedExperience(AISchema):
     asset_id: NonEmptyStr
     source_id: NonEmptyStr
     rank: int = Field(ge=1)
     match_reasons: list[NonEmptyStr] = Field(min_length=1)
     data: ExperienceDraft
+    source_snapshot: SourceSnapshot | None = None
 
     @model_validator(mode="after")
     def source_must_match_data(self) -> "RetrievedExperience":
@@ -26,6 +47,7 @@ class RetrievedCapability(AISchema):
     rank: int = Field(ge=1)
     match_reasons: list[NonEmptyStr] = Field(min_length=1)
     data: CapabilityDraft
+    source_snapshot: SourceSnapshot | None = None
 
     @model_validator(mode="after")
     def source_must_match_data(self) -> "RetrievedCapability":

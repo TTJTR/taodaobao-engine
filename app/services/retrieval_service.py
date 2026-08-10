@@ -100,6 +100,14 @@ class RetrievalService:
             reasons.append(f"semantic_similarity={similarity:.4f}")
         reasons.append(f"source_freshness={SourceFreshness.CURRENT.value}")
         source = asset.source
+        permission_checked_at = source.permission_checked_at
+        permission_snapshot_id = ":".join(
+            (
+                str(asset.source_id),
+                str(source.content_version),
+                permission_checked_at.isoformat() if permission_checked_at else "unchecked",
+            )
+        )
         evidence_text = json.dumps(asset.data, ensure_ascii=False, sort_keys=True)
         return {
             "id": str(asset.id),
@@ -113,13 +121,30 @@ class RetrievalService:
             "reviewed_source_version": asset.source_version_at_review,
             "permission_status": "granted",
             "permission_checked_at": (
-                source.permission_checked_at.isoformat()
-                if source.permission_checked_at is not None
-                else None
+                permission_checked_at.isoformat() if permission_checked_at is not None else None
             ),
             "source_freshness": source.freshness_status.value,
             "source_title": source.title,
             "source_url": source.source_url,
+            "source_snapshot": {
+                "source_version": str(source.content_version),
+                "reviewed_version": str(asset.source_version_at_review),
+                "permission_snapshot_id": permission_snapshot_id,
+                "permission_valid": True,
+                "available": True,
+                "invalid_reason": None,
+                "title": source.title,
+                "url": source.source_url,
+                "author": source.author,
+                "source_updated_at": (
+                    source.source_updated_at.isoformat()
+                    if source.source_updated_at is not None
+                    else None
+                ),
+                "last_synced_at": (
+                    source.synced_at.isoformat() if source.synced_at is not None else None
+                ),
+            },
             "evidence_quote": evidence_text[:8000],
             "evidence_location": {
                 "kind": "reviewed_asset_json",

@@ -76,6 +76,7 @@ def _normalize_experience(item: dict[str, Any], rank: int) -> dict[str, Any]:
         "rank": rank,
         "match_reasons": item.get("match_reasons") or ["关键词匹配与更新时间排序"],
         "data": data,
+        "source_snapshot": item.get("source_snapshot"),
     }
 
 
@@ -99,6 +100,7 @@ def _normalize_capability(item: dict[str, Any], rank: int) -> dict[str, Any]:
         "rank": rank,
         "match_reasons": item.get("match_reasons") or ["关键词匹配与更新时间排序"],
         "data": data,
+        "source_snapshot": item.get("source_snapshot"),
     }
 
 

@@ -48,6 +48,7 @@ from app.ai.schemas.retrieval import (
     RetrievalSnapshot,
     RetrievedCapability,
     RetrievedExperience,
+    SourceSnapshot,
 )
 from app.ai.schemas.solution import CitedItem, EvidenceBoundary, Solution, SourceReference
 from app.ai.schemas.workflow import QualityAttempt, VerifiedSolutionResult
@@ -103,5 +104,6 @@ __all__ = [
     "SolutionContext",
     "SpeakerRole",
     "SourceReference",
+    "SourceSnapshot",
     "VerifiedSolutionResult",
 ]

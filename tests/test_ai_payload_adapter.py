@@ -30,6 +30,13 @@ def test_adapter_converts_backend_payloads_to_ai_contracts() -> None:
                         "prerequisites": ["摄像设备", "缺陷样本"],
                         "risks": ["现场光照变化"],
                     },
+                    "source_snapshot": {
+                        "source_version": "3",
+                        "reviewed_version": "3",
+                        "permission_snapshot_id": "source-1:3:checked",
+                        "permission_valid": True,
+                        "available": True,
+                    },
                 }
             ],
             "capabilities": [
@@ -57,5 +64,6 @@ def test_adapter_converts_backend_payloads_to_ai_contracts() -> None:
     assert validated_snapshot.experiences[0].rank == 1
     assert validated_snapshot.experiences[0].data.applicable_problem == "人工复检压力"
     assert validated_snapshot.experiences[0].data.prerequisites == "摄像设备；缺陷样本"
+    assert snapshot["experiences"][0]["source_snapshot"]["reviewed_version"] == "3"
     assert validated_snapshot.capabilities[0].data.source_id == "source-2"
     assert validated_snapshot.capabilities[0].data.limitations == "需要现场校准；依赖样本质量"
