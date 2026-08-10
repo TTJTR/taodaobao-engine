@@ -25,3 +25,16 @@ PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS 
 FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+
+## pptx-renderer
+
+Parts of `app/services/pptx_parser.py` are Python adaptations of Theme, Master, Layout,
+relationship, placeholder geometry, and inheritance algorithms in `aiden0z/pptx-renderer`.
+The adaptation is based on commit `68cb570940fb28d5c4628f31d1365016c4483521`.
+
+Copyright (c) pptx-renderer contributors
+
+Licensed under the Apache License, Version 2.0. You may obtain a copy of the License at
+<https://www.apache.org/licenses/LICENSE-2.0>. Unless required by applicable law or agreed to
+in writing, software distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.

@@ -17,6 +17,9 @@ MASTER_RELS = b"""<?xml version="1.0"?>
   <Relationship Id="rId1"
     Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme"
     Target="../theme/theme1.xml"/>
+  <Relationship Id="rId2"
+    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout"
+    Target="../slideLayouts/slideLayout1.xml"/>
 </Relationships>"""
 
 SLIDE_MASTER = b"""<?xml version="1.0"?>
@@ -25,7 +28,21 @@ SLIDE_MASTER = b"""<?xml version="1.0"?>
   <p:cSld><p:spTree><p:sp><p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>
   </p:sp></p:spTree></p:cSld>
   <p:clrMap accent1="accent2" accent2="accent1" bg1="lt1" tx1="dk1"/>
+  <p:txStyles>
+   <p:titleStyle><a:lvl1pPr><a:defRPr sz="3600"/></a:lvl1pPr></p:titleStyle>
+   <p:bodyStyle><a:lvl1pPr><a:defRPr sz="1800"/></a:lvl1pPr></p:bodyStyle>
+  </p:txStyles>
 </p:sldMaster>"""
+
+SLIDE_LAYOUT = b"""<?xml version="1.0"?>
+<p:sldLayout xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+ <p:cSld name="Title and Content"><p:spTree><p:sp>
+  <p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>
+  <p:spPr><a:xfrm><a:off x="952500" y="1905000"/><a:ext cx="7620000" cy="3810000"/>
+  </a:xfrm></p:spPr>
+ </p:sp></p:spTree></p:cSld>
+</p:sldLayout>"""
 
 THEME = b"""<?xml version="1.0"?>
 <a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
@@ -38,8 +55,9 @@ THEME = b"""<?xml version="1.0"?>
    <a:accent3><a:srgbClr val="808080"><a:lumMod val="50000"/></a:srgbClr></a:accent3>
   </a:clrScheme>
   <a:fontScheme name="Corporate Fonts">
-   <a:majorFont><a:latin typeface="Arial"/></a:majorFont>
-   <a:minorFont><a:latin typeface="Georgia"/></a:minorFont>
+   <a:majorFont><a:latin typeface="Arial"/><a:ea typeface=""/>
+    <a:font script="Hans" typeface="Microsoft YaHei"/></a:majorFont>
+   <a:minorFont><a:latin typeface="Georgia"/><a:ea typeface="Microsoft YaHei"/></a:minorFont>
   </a:fontScheme>
  </a:themeElements>
 </a:theme>"""
@@ -52,6 +70,7 @@ def _pptx(*, theme_target: str = "../theme/theme1.xml") -> io.BytesIO:
         archive.writestr("ppt/_rels/presentation.xml.rels", PRESENTATION_RELS)
         archive.writestr("ppt/slideMasters/slideMaster1.xml", SLIDE_MASTER)
         archive.writestr("ppt/slideMasters/_rels/slideMaster1.xml.rels", master_rels)
+        archive.writestr("ppt/slideLayouts/slideLayout1.xml", SLIDE_LAYOUT)
         archive.writestr("ppt/theme/theme1.xml", THEME)
         archive.writestr(
             "ppt/slides/slide1.xml",
@@ -69,9 +88,11 @@ def test_parser_follows_relationships_and_maps_theme_without_reading_slides() ->
     assert profile.palette.accent == "#404040"
     assert profile.palette.background == "#F8FAFC"
     assert profile.palette.foreground == "#102030"
-    assert profile.typography.heading_font == "Inter"
-    assert profile.typography.body_font == "Source Serif Pro"
-    assert profile.layout_grammar == ["master-placeholder:title"]
+    assert profile.typography.heading_font == "Microsoft YaHei"
+    assert profile.typography.body_font == "Microsoft YaHei"
+    assert profile.typography.base_size_px == 24
+    assert profile.typography.scale_ratio == 2
+    assert profile.layout_grammar == ["layout:Title and Content|body@100,200,800,400"]
     assert "SECRET" not in profile.model_dump_json()
     assert "99999999" not in profile.model_dump_json()
 
