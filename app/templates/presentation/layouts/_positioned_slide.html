@@ -14,6 +14,16 @@
           {{ components.key_message(item) }}
         {% elif item.component.component_type == "evidence_card" %}
           {{ components.evidence_card(item) }}
+        {% elif item.component.component_type == "metric" %}
+          {{ components.metric(item) }}
+        {% elif item.component.component_type == "comparison" %}
+          {{ components.comparison(item) }}
+        {% elif item.component.component_type == "timeline" %}
+          {{ components.timeline(item) }}
+        {% elif item.component.component_type == "process" %}
+          {{ components.process(item) }}
+        {% elif item.component.component_type == "source_list" %}
+          {{ components.source_list(item) }}
         {% endif %}
       </div>
     {% endfor %}

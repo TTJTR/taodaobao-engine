@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from app.presentation.layouts.diagnostics import diagnose_layout
 from app.presentation.layouts.engine import LayoutEngine
+from app.presentation.layouts.paginator import SlidePaginator
 from app.presentation.layouts.registry import default_layout_registry
 from app.schemas.presentation import PresentationSpecData
 
@@ -104,3 +105,45 @@ def test_layout_rejects_content_over_slot_capacity() -> None:
 
     with pytest.raises(ValueError, match="character capacity"):
         LayoutEngine().position(spec)
+
+
+def test_paginator_splits_timeline_before_evidence_preflight_with_stable_ids() -> None:
+    items = []
+    for index in range(9):
+        item = _component("evidence_card", index)
+        items.append(
+            {
+                "item_id": uuid.uuid4(),
+                "label": f"阶段 {index + 1}",
+                "text": item["body"],
+                "fact_binding": item["fact_binding"],
+            }
+        )
+    spec = PresentationSpecData.model_validate(
+        {
+            "schema_version": "slide-schema-v1",
+            "presentation_id": uuid.uuid4(),
+            "slides": [
+                {
+                    "slide_id": uuid.uuid4(),
+                    "layout_token": "timeline",
+                    "components": [
+                        _component("title", 0),
+                        {
+                            "component_id": uuid.uuid4(),
+                            "component_type": "timeline",
+                            "heading": "九阶段实施路径",
+                            "items": items,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    first = SlidePaginator().paginate(spec)
+    second = SlidePaginator().paginate(spec)
+
+    assert [len(slide.components[1].items) for slide in first.slides] == [4, 3, 2]
+    assert [slide.slide_id for slide in first.slides] == [slide.slide_id for slide in second.slides]
+    assert len({slide.slide_id for slide in first.slides}) == 3

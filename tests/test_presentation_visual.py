@@ -45,6 +45,26 @@ def _evidence(index: int) -> dict:
     }
 
 
+def _bound_item(index: int) -> dict:
+    return {
+        "item_id": uuid.uuid4(),
+        "label": f"节点 {index}",
+        "text": f"经过验证且不可改写的实施事实 {index}",
+        "fact_binding": _binding(index),
+    }
+
+
+def _source_item(index: int) -> dict:
+    binding = _binding(index)
+    binding["content_mode"] = "label_only"
+    return {
+        "item_id": uuid.uuid4(),
+        "label": f"已授权来源资料 {index}",
+        "source_id": binding["source_ids"][0],
+        "fact_binding": binding,
+    }
+
+
 def _html() -> str:
     layouts = (
         ("cover", [_title("企业数字化转型可信方案")]),
@@ -57,6 +77,68 @@ def _html() -> str:
         (
             "evidence_grid",
             [_title("可追溯证据矩阵"), *[_evidence(index) for index in range(7, 11)]],
+        ),
+        (
+            "metric_highlight",
+            [
+                _title("核心业务指标"),
+                {
+                    "component_id": uuid.uuid4(),
+                    "component_type": "metric",
+                    "label": "经验证年度营收",
+                    "value": "2025年营业收入为1438亿元",
+                    "fact_binding": _binding(11),
+                },
+            ],
+        ),
+        (
+            "comparison",
+            [
+                _title("双路径方案对比"),
+                {
+                    "component_id": uuid.uuid4(),
+                    "component_type": "comparison",
+                    "heading": "当前基础与目标能力",
+                    "left": _bound_item(12),
+                    "right": _bound_item(13),
+                },
+            ],
+        ),
+        (
+            "timeline",
+            [
+                _title("分阶段实施路线"),
+                {
+                    "component_id": uuid.uuid4(),
+                    "component_type": "timeline",
+                    "heading": "从验证到规模化落地",
+                    "items": [_bound_item(index) for index in range(14, 18)],
+                },
+            ],
+        ),
+        (
+            "process",
+            [
+                _title("可信方案生成流程"),
+                {
+                    "component_id": uuid.uuid4(),
+                    "component_type": "process",
+                    "heading": "五步闭环",
+                    "steps": [_bound_item(index) for index in range(18, 23)],
+                },
+            ],
+        ),
+        (
+            "source_list",
+            [
+                _title("方案事实来源"),
+                {
+                    "component_id": uuid.uuid4(),
+                    "component_type": "source_list",
+                    "heading": "当前展示引用的已授权资料",
+                    "sources": [_source_item(index) for index in range(23, 29)],
+                },
+            ],
         ),
     )
     spec = PresentationSpecData.model_validate(
@@ -100,7 +182,7 @@ def _html() -> str:
 
 
 @pytest.mark.parametrize("viewport", [(1440, 900), (1366, 768), (390, 844)])
-def test_phase_a_html_has_no_browser_overflow_or_blank_slides(
+def test_supported_html_templates_have_no_browser_overflow_or_blank_slides(
     viewport: tuple[int, int], tmp_path: Path
 ) -> None:
     executable = _browser_path()
@@ -112,7 +194,7 @@ def test_phase_a_html_has_no_browser_overflow_or_blank_slides(
         page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
         page.set_content(_html(), wait_until="load")
         slides = page.locator(".slide")
-        assert slides.count() == 5
+        assert slides.count() == 10
         for index in range(slides.count()):
             slide = slides.nth(index)
             assert slide.inner_text().strip()

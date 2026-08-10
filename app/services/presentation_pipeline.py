@@ -14,6 +14,7 @@ from app.db.models import (
 )
 from app.presentation.layouts.diagnostics import diagnose_layout
 from app.presentation.layouts.engine import LayoutEngine
+from app.presentation.layouts.paginator import SlidePaginator
 from app.schemas.presentation import PresentationSpecData, VisualStyleProfileData
 from app.services.evidence_guard import EvidenceGuard
 from app.services.fact_ledger_service import FactLedgerService
@@ -55,7 +56,7 @@ async def run_presentation_generation(
             ledger = await FactLedgerService(session, presentation.workspace_id).build_ledger(
                 run_id
             )
-            spec = _mock_plan(presentation_id, ledger)
+            spec = SlidePaginator().paginate(_mock_plan(presentation_id, ledger))
 
             presentation.status = PresentationStatus.VALIDATING
             await session.commit()

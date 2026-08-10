@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictDomainModel(BaseModel):
@@ -87,12 +87,84 @@ class EvidenceCardComponent(SlideComponent):
     fact_binding: FactBinding
 
 
+class BoundFactItem(StrictDomainModel):
+    item_id: uuid.UUID
+    label: str = Field(min_length=1, max_length=120)
+    text: str = Field(min_length=1, max_length=1_000)
+    fact_binding: FactBinding
+
+
+class MetricComponent(SlideComponent):
+    component_type: Literal["metric"] = "metric"
+    label: str = Field(min_length=1, max_length=120)
+    value: str = Field(min_length=1, max_length=300)
+    fact_binding: FactBinding
+
+
+class ComparisonComponent(SlideComponent):
+    component_type: Literal["comparison"] = "comparison"
+    heading: str = Field(min_length=1, max_length=200)
+    left: BoundFactItem
+    right: BoundFactItem
+
+
+class TimelineComponent(SlideComponent):
+    component_type: Literal["timeline"] = "timeline"
+    heading: str = Field(min_length=1, max_length=200)
+    items: list[BoundFactItem] = Field(min_length=2, max_length=12)
+
+
+class ProcessComponent(SlideComponent):
+    component_type: Literal["process"] = "process"
+    heading: str = Field(min_length=1, max_length=200)
+    steps: list[BoundFactItem] = Field(min_length=2, max_length=12)
+
+
+class BoundSourceItem(StrictDomainModel):
+    item_id: uuid.UUID
+    label: str = Field(min_length=1, max_length=160)
+    source_id: uuid.UUID
+    fact_binding: FactBinding
+
+    @model_validator(mode="after")
+    def validate_source_binding(self) -> "BoundSourceItem":
+        if self.fact_binding.content_mode != "label_only":
+            raise ValueError("source list items must use label_only content mode")
+        if self.source_id not in self.fact_binding.source_ids:
+            raise ValueError("source_id must be included in fact_binding.source_ids")
+        return self
+
+
+class SourceListComponent(SlideComponent):
+    component_type: Literal["source_list"] = "source_list"
+    heading: str = Field(min_length=1, max_length=200)
+    sources: list[BoundSourceItem] = Field(min_length=1, max_length=12)
+
+
 SemanticComponent = Annotated[
-    TitleComponent | KeyMessageComponent | EvidenceCardComponent,
+    TitleComponent
+    | KeyMessageComponent
+    | EvidenceCardComponent
+    | MetricComponent
+    | ComparisonComponent
+    | TimelineComponent
+    | ProcessComponent
+    | SourceListComponent,
     Field(discriminator="component_type"),
 ]
 
-LayoutToken = Literal["cover", "title_body", "two_column", "three_cards", "evidence_grid"]
+LayoutToken = Literal[
+    "cover",
+    "title_body",
+    "two_column",
+    "three_cards",
+    "evidence_grid",
+    "metric_highlight",
+    "comparison",
+    "timeline",
+    "process",
+    "source_list",
+]
 
 
 class SlideSchema(StrictDomainModel):
@@ -137,7 +209,7 @@ class PositionedPresentationSpec(FrozenDomainModel):
 
 class EvidenceGuardSnapshot(FrozenDomainModel):
     component_fingerprints: dict[uuid.UUID, str]
-    component_claim_ids: dict[uuid.UUID, uuid.UUID]
+    component_claim_ids: dict[uuid.UUID, tuple[uuid.UUID, ...]]
 
 
 class Palette(StrictDomainModel):

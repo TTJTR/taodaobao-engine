@@ -152,4 +152,69 @@ LAYOUT_TEMPLATES = (
         ),
         fallback_token="three_cards",
     ),
+    LayoutTemplate(
+        token="metric_highlight",
+        slots=(
+            _slot("title", (650, 550, 8700, 1100), ("title",), chars=120, lines=2, style="heading"),
+            _slot(
+                "metric", (1450, 2450, 7100, 5200), ("metric",), chars=420, lines=8, style="display"
+            ),
+        ),
+        fallback_token="title_body",
+    ),
+    LayoutTemplate(
+        token="comparison",
+        slots=(
+            _slot("title", (650, 550, 8700, 1100), ("title",), chars=120, lines=2, style="heading"),
+            _slot(
+                "comparison",
+                (650, 2050, 8700, 7000),
+                ("comparison",),
+                chars=1400,
+                lines=20,
+                style="body",
+            ),
+        ),
+        fallback_token="two_column",
+    ),
+    LayoutTemplate(
+        token="timeline",
+        slots=(
+            _slot("title", (650, 550, 8700, 1100), ("title",), chars=120, lines=2, style="heading"),
+            _slot(
+                "timeline",
+                (650, 2150, 8700, 6700),
+                ("timeline",),
+                chars=1800,
+                lines=24,
+                style="body",
+            ),
+        ),
+        fallback_token="title_body",
+    ),
+    LayoutTemplate(
+        token="process",
+        slots=(
+            _slot("title", (650, 550, 8700, 1100), ("title",), chars=120, lines=2, style="heading"),
+            _slot(
+                "process", (650, 2150, 8700, 6700), ("process",), chars=1800, lines=24, style="body"
+            ),
+        ),
+        fallback_token="title_body",
+    ),
+    LayoutTemplate(
+        token="source_list",
+        slots=(
+            _slot("title", (650, 550, 8700, 1100), ("title",), chars=120, lines=2, style="heading"),
+            _slot(
+                "sources",
+                (1000, 2050, 8000, 6800),
+                ("source_list",),
+                chars=1400,
+                lines=18,
+                style="body",
+            ),
+        ),
+        fallback_token="title_body",
+    ),
 )

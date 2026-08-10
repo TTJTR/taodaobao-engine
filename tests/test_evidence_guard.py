@@ -126,6 +126,86 @@ def test_final_evidence_guard_rejects_layout_stage_content_mutation() -> None:
     }
 
 
+def test_evidence_guard_checks_each_comparison_side_independently() -> None:
+    ledger = _ledger()
+    fact = ledger.facts[0]
+    evidence = fact.evidence[0]
+
+    def side(label: str, text: str) -> dict:
+        return {
+            "item_id": uuid.uuid4(),
+            "label": label,
+            "text": text,
+            "fact_binding": {
+                "claim_id": fact.claim_id,
+                "claim_key": fact.claim_key,
+                "evidence_ids": [evidence.evidence_id],
+                "source_ids": [evidence.source_id],
+                "content_mode": "verbatim",
+            },
+        }
+
+    slide = SlideSchema.model_validate(
+        {
+            "slide_id": uuid.uuid4(),
+            "layout_token": "comparison",
+            "components": [
+                {
+                    "component_id": uuid.uuid4(),
+                    "component_type": "comparison",
+                    "heading": "财务数据对比",
+                    "left": side("已核验", fact.verbatim_text),
+                    "right": side("被篡改", "2025年营业收入为1538亿元"),
+                }
+            ],
+        }
+    )
+
+    report = EvidenceGuard().validate(slide, ledger)
+
+    assert report.checked_components == 2
+    assert [failure.code for failure in report.failures] == ["VERBATIM_CONTENT_MISMATCH"]
+
+
+def test_evidence_guard_rejects_source_list_outside_claim_sources() -> None:
+    ledger = _ledger()
+    fact = ledger.facts[0]
+    evidence = fact.evidence[0]
+    rogue_source_id = uuid.uuid4()
+    slide = SlideSchema.model_validate(
+        {
+            "slide_id": uuid.uuid4(),
+            "layout_token": "source_list",
+            "components": [
+                {
+                    "component_id": uuid.uuid4(),
+                    "component_type": "source_list",
+                    "heading": "资料来源",
+                    "sources": [
+                        {
+                            "item_id": uuid.uuid4(),
+                            "label": "越权来源",
+                            "source_id": rogue_source_id,
+                            "fact_binding": {
+                                "claim_id": fact.claim_id,
+                                "claim_key": fact.claim_key,
+                                "evidence_ids": [evidence.evidence_id],
+                                "source_ids": [rogue_source_id],
+                                "content_mode": "label_only",
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    report = EvidenceGuard().validate(slide, ledger)
+
+    assert report.passed is False
+    assert [failure.code for failure in report.failures] == ["SOURCE_OUT_OF_BOUNDS"]
+
+
 @pytest.mark.asyncio
 async def test_fact_ledger_builds_only_joined_released_granted_facts() -> None:
     workspace_id = uuid.uuid4()

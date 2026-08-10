@@ -14,3 +14,65 @@
   <p>{{ item.component.body }}</p>
 </article>
 {%- endmacro %}
+
+{% macro metric(item) -%}
+<article class="component-metric" data-component-id="{{ item.component.component_id }}"
+         data-claim-id="{{ item.component.fact_binding.claim_id }}">
+  <p class="component-metric__label">{{ item.component.label }}</p>
+  <p class="component-metric__value">{{ item.component.value }}</p>
+</article>
+{%- endmacro %}
+
+{% macro comparison(item) -%}
+<article class="component-comparison" data-component-id="{{ item.component.component_id }}">
+  <h2>{{ item.component.heading }}</h2>
+  <div class="component-comparison__grid">
+    {% for side in [item.component.left, item.component.right] %}
+      <section data-claim-id="{{ side.fact_binding.claim_id }}">
+        <p class="item-label">{{ side.label }}</p><p class="item-text">{{ side.text }}</p>
+      </section>
+    {% endfor %}
+  </div>
+</article>
+{%- endmacro %}
+
+{% macro timeline(item) -%}
+<article class="component-timeline" data-component-id="{{ item.component.component_id }}">
+  <h2>{{ item.component.heading }}</h2>
+  <ol style="--item-count: {{ item.component.items | length }};">
+    {% for entry in item.component.items %}
+      <li data-claim-id="{{ entry.fact_binding.claim_id }}">
+        <span class="timeline-dot"></span><p class="item-label">{{ entry.label }}</p>
+        <p class="item-text">{{ entry.text }}</p>
+      </li>
+    {% endfor %}
+  </ol>
+</article>
+{%- endmacro %}
+
+{% macro process(item) -%}
+<article class="component-process" data-component-id="{{ item.component.component_id }}">
+  <h2>{{ item.component.heading }}</h2>
+  <ol style="--item-count: {{ item.component.steps | length }};">
+    {% for step in item.component.steps %}
+      <li data-claim-id="{{ step.fact_binding.claim_id }}">
+        <span class="step-index">{{ loop.index }}</span><p class="item-label">{{ step.label }}</p>
+        <p class="item-text">{{ step.text }}</p>
+      </li>
+    {% endfor %}
+  </ol>
+</article>
+{%- endmacro %}
+
+{% macro source_list(item) -%}
+<article class="component-source-list" data-component-id="{{ item.component.component_id }}">
+  <h2>{{ item.component.heading }}</h2>
+  <ol>
+    {% for source in item.component.sources %}
+      <li data-claim-id="{{ source.fact_binding.claim_id }}" data-source-id="{{ source.source_id }}">
+        <span>{{ loop.index }}</span><p>{{ source.label }}</p>
+      </li>
+    {% endfor %}
+  </ol>
+</article>
+{%- endmacro %}
