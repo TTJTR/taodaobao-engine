@@ -19,6 +19,8 @@ from app.db.models import (
     WorkflowTaskStatus,
 )
 from app.integrations.presentation import PresentationProvider, get_presentation_provider
+from app.schemas.presentation import PositionedPresentationSpec, VisualStyleProfileData
+from app.services.pptx_renderer import PPTXRenderer
 
 
 async def run_presentation_task(
@@ -214,20 +216,31 @@ async def _render_presentation(session, workspace_id, target_id, task, provider)
 async def _export_presentation(session, workspace_id, target_id, task, provider) -> None:
     export = await _entity(session, ExportArtifact, workspace_id, target_id)
     artifact = await _entity(session, HtmlArtifact, workspace_id, export.html_artifact_id)
+    run = await _entity(session, PresentationRun, workspace_id, export.presentation_id)
     export.status = ExportStatus.RUNNING
     task.stage = "exporting"
     _renew_lease(task)
     await session.commit()
-    result = await provider.export(
-        {
-            "artifact_id": str(artifact.id),
-            "html": artifact.html,
-            "css": artifact.css,
-            "assets": artifact.assets,
-            "render_report": artifact.render_report,
-        },
-        export.export_type,
-    )
+    if export.export_type == "pptx":
+        profile = await _entity(session, StyleProfile, workspace_id, run.style_profile_id)
+        spec = PositionedPresentationSpec.model_validate(run.spec)
+        style = VisualStyleProfileData.model_validate(profile.visual_json)
+        rendered = await PPTXRenderer().render(spec, style, artifact_id=str(export.id))
+        result = {
+            "object_key": str(rendered.path),
+            "provider_mode": "deterministic-pptx-v1",
+        }
+    else:
+        result = await provider.export(
+            {
+                "artifact_id": str(artifact.id),
+                "html": artifact.html,
+                "css": artifact.css,
+                "assets": artifact.assets,
+                "render_report": artifact.render_report,
+            },
+            export.export_type,
+        )
     export.object_key = result["object_key"]
     export.provider_mode = result.get("provider_mode", provider.mode)
     export.status = ExportStatus.READY

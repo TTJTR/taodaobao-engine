@@ -34,11 +34,14 @@ services:
       APP_FRONTEND_REDIRECT_URL: https://${DOMAIN:-localhost}/
       APP_COOKIE_SECURE: "true"
       APP_SESSION_SECRET: ${APP_SESSION_SECRET:?APP_SESSION_SECRET is required}
+      APP_PRESENTATION_EXPORT_DIR: /app/exports
     depends_on:
       db:
         condition: service_healthy
     expose:
       - "8000"
+    volumes:
+      - presentation_exports:/app/exports
     healthcheck:
       test:
         - CMD
@@ -70,11 +73,14 @@ services:
       APP_FRONTEND_REDIRECT_URL: https://${DOMAIN:-localhost}/
       APP_COOKIE_SECURE: "true"
       APP_SESSION_SECRET: ${APP_SESSION_SECRET:?APP_SESSION_SECRET is required}
+      APP_PRESENTATION_EXPORT_DIR: /app/exports
     depends_on:
       db:
         condition: service_healthy
       app:
         condition: service_healthy
+    volumes:
+      - presentation_exports:/app/exports
 
   caddy:
     image: caddy:2-alpine
@@ -97,3 +103,4 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+  presentation_exports:

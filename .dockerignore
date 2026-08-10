@@ -10,6 +10,7 @@ tests
 evals
 examples
 .local
+node_modules
 docs
 v1需求
 v1需求.zip

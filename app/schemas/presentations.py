@@ -34,7 +34,7 @@ class CreatePresentationRequest(BaseModel):
     style_profile_id: uuid.UUID
     mode: Literal["strict", "balanced", "brand_only"] = "balanced"
     audience: str = Field(min_length=1, max_length=64)
-    output: list[Literal["html", "pdf"]] = Field(default_factory=lambda: ["html"])
+    output: list[Literal["html", "pdf", "pptx"]] = Field(default_factory=lambda: ["html"])
     language: Literal["zh-CN", "en-US"] = "zh-CN"
 
     @model_validator(mode="after")
@@ -61,4 +61,4 @@ class RegeneratePresentationRequest(BaseModel):
 
 class ExportPresentationRequest(BaseModel):
     expected_version: int = Field(ge=1)
-    export_type: Literal["html", "pdf"]
+    export_type: Literal["html", "pdf", "pptx"]
