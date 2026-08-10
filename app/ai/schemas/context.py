@@ -26,8 +26,11 @@ class SolutionContext(AISchema):
     schema_version: Literal["solution-v1", "solution-v2"] = "solution-v1"
     customer_profile: CustomerProfileDraft
     current_requirement: NonEmptyStr
+    schema_version: Literal["solution-v1", "solution-v2"] = "solution-v1"
     opening_line: NonEmptyStr | None = None
     trace_id: NonEmptyStr | None = None
+    trust_deadline_seconds: float = Field(default=60.0, ge=1.0, le=300.0)
+    trust_retry_budget: int = Field(default=12, ge=1, le=50)
     mode: ResearchMode = ResearchMode.QUICK
     stage: ResearchStage | None = None
     research_task_id: NonEmptyStr | None = None

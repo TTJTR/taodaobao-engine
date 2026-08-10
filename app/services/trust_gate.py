@@ -116,7 +116,7 @@ class TrustPersistenceService:
         raw_snapshot: dict[str, Any],
     ) -> TrustDecisionRecord:
         snapshot_items = {
-            f"{item['id']}/{item['source_id']}": item
+            (str(item["id"]), str(item["source_id"])): item
             for item in [
                 *raw_snapshot.get("experiences", []),
                 *raw_snapshot.get("capabilities", []),
@@ -138,29 +138,50 @@ class TrustPersistenceService:
         evidence_rows: dict[str, EvidenceRecord] = {}
         evidence_states: dict[str, EvidenceState] = {}
         for evidence in payload.evidence:
-            item = snapshot_items.get(evidence.evidence_key)
+            item = snapshot_items.get((evidence.asset_id, evidence.source_id))
             source = sources.get(evidence.source_id)
-            location = (item or {}).get("evidence_location") or {}
-            source_version = int((item or {}).get("source_version") or 0)
-            reviewed_version = (item or {}).get("reviewed_source_version")
+            raw_location = (item or {}).get("evidence_location") or {}
+            location = evidence.location or raw_location
+            if location.get("value") and not location.get("path"):
+                location = {**location, "path": location["value"]}
+            quote = str(evidence.quote or (item or {}).get("evidence_quote") or "")
+            snapshot_quote = str((item or {}).get("evidence_quote") or "")
+            source_version_value = evidence.source_version or (item or {}).get("source_version")
+            reviewed_version_value = evidence.reviewed_version or (item or {}).get(
+                "reviewed_source_version"
+            )
+            source_version = int(source_version_value or 0)
+            reviewed_version = (
+                int(reviewed_version_value) if reviewed_version_value is not None else None
+            )
+            snapshot_permission_valid = (
+                evidence.permission_valid
+                if evidence.permission_valid is not None
+                else (item or {}).get("permission_status") == "granted"
+            )
+            snapshot_available = evidence.available is not False
             permission_valid = bool(
                 source
                 and source.status == SourceStatus.COMPLETED
                 and source.freshness_status == SourceFreshness.CURRENT
                 and not source.is_deleted
+                and snapshot_permission_valid
+                and snapshot_available
             )
             state = EvidenceState(
                 evidence_key=evidence.evidence_key,
                 in_snapshot=item is not None,
                 location_reproducible=bool(
-                    (item or {}).get("evidence_quote")
+                    quote
+                    and snapshot_quote
+                    and quote in snapshot_quote
                     and location.get("kind")
                     and location.get("path")
                 ),
                 reviewed_version_current=bool(
                     source
                     and reviewed_version is not None
-                    and int(reviewed_version) == source.content_version == source_version
+                    and reviewed_version == source.content_version == source_version
                 ),
                 permission_valid=permission_valid,
             )
@@ -175,8 +196,8 @@ class TrustPersistenceService:
                 asset_id=uuid.UUID(evidence.asset_id),
                 source_id=uuid.UUID(evidence.source_id),
                 source_version=source_version,
-                reviewed_source_version=(int(reviewed_version) if reviewed_version else None),
-                quote=str(item.get("evidence_quote") or ""),
+                reviewed_source_version=reviewed_version,
+                quote=quote,
                 location=location,
                 permission_status="granted" if permission_valid else "revoked",
                 permission_checked_at=(source.permission_checked_at if source else None),

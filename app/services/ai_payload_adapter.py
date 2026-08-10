@@ -1,5 +1,20 @@
 from typing import Any
 
+from app.ai.schemas import Solution, TrustedSolution
+from app.schemas.trust import SolutionV2Payload
+
+_SOLUTION_FIELDS = (
+    "requirement_understanding",
+    "initial_recommendations",
+    "historical_evidence",
+    "capability_composition",
+    "prerequisites_and_risks",
+    "pending_confirmations",
+    "sources",
+    "suggested_questions",
+)
+_TRUST_VERIFIER_VERSION = "molly-trusted-solution-v2"
+
 
 def build_solution_context(requirement: str, profile_snapshot: dict[str, Any]) -> dict:
     profile_data = profile_snapshot.get("profile") or {}
@@ -51,6 +66,97 @@ def normalize_retrieval_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "can_generate_solution": snapshot.get("can_generate_solution", True),
         "created_at": snapshot["created_at"],
     }
+
+
+def normalize_solution_v2_result(candidate: dict[str, Any]) -> dict[str, Any]:
+    """Adapt the frozen AI method's V2 result to the backend persistence contract.
+
+    The backend also accepts its earlier nested V2 payload so offline Mock and stored
+    fixtures remain compatible. Live Molly output is validated as ``TrustedSolution``
+    before it is converted; this is an explicit boundary adapter, not field guessing.
+    """
+
+    try:
+        return SolutionV2Payload.model_validate(candidate).model_dump(mode="json")
+    except ValueError:
+        trusted = TrustedSolution.model_validate(candidate)
+
+    trusted_data = trusted.model_dump(mode="json")
+    solution = Solution.model_validate(
+        {field: trusted_data[field] for field in _SOLUTION_FIELDS}
+    ).model_dump(mode="json")
+    claims = [
+        {
+            "claim_id": claim.claim_id,
+            "section": claim.section,
+            "text": claim.text,
+            "claim_type": claim.claim_type.value,
+            "boundary": claim.boundary.value,
+            "risk_level": claim.risk_level.value,
+            "verification_status": claim.verification_status.value,
+            "evidence_refs": list(claim.evidence_refs),
+        }
+        for claim in trusted.claims
+    ]
+    evidence = [
+        {
+            "evidence_key": item.evidence_id,
+            "asset_id": item.asset_id,
+            "source_id": item.source_id,
+            "source_version": item.source_version,
+            "reviewed_version": item.reviewed_version,
+            "permission_snapshot_id": item.permission_snapshot_id,
+            "quote": item.quote,
+            "location": item.location.model_dump(mode="json"),
+            "title": item.title,
+            "url": item.url,
+            "author": item.author,
+            "source_updated_at": item.source_updated_at,
+            "last_synced_at": item.last_synced_at,
+            "permission_valid": item.permission_valid,
+            "available": item.available,
+            "invalid_reason": item.invalid_reason,
+        }
+        for item in trusted.evidence
+    ]
+    links = [
+        {
+            "claim_id": claim.claim_id,
+            "evidence_key": evidence_key,
+            "label": claim.verification_status.value,
+            "score": None,
+            "verifier_version": _TRUST_VERIFIER_VERSION,
+        }
+        for claim in trusted.claims
+        for evidence_key in claim.evidence_refs
+    ]
+    attempts = []
+    for attempt in trusted.quality_attempts:
+        attempt_data = attempt.model_dump(mode="json")
+        attempts.append(
+            {
+                "attempt": attempt.attempt,
+                "candidate_version": attempt.attempt,
+                "failed_claim_ids": [
+                    claim.claim_id
+                    for claim in attempt.claims
+                    if claim.verification_status.value != "entailed"
+                ],
+                "quality_report": attempt_data,
+                "duration_ms": None,
+            }
+        )
+    payload = {
+        "schema_version": "solution-v2",
+        "solution": solution,
+        "claims": claims,
+        "evidence": evidence,
+        "claim_evidence_links": links,
+        "quality_attempts": attempts,
+        "verifier_version": _TRUST_VERIFIER_VERSION,
+        "recommended_action": trusted.recommended_action.value,
+    }
+    return SolutionV2Payload.model_validate(payload).model_dump(mode="json")
 
 
 def _normalize_experience(item: dict[str, Any], rank: int) -> dict[str, Any]:

@@ -100,3 +100,17 @@ Mock 的资产命中率为 0 是设计结果：它只保证格式和边界，不
 3. 经验/能力分库召回，并按硬约束、问题相关、场景、来源新鲜度、向量相似度排序。
 4. 实现任务重试、阶段恢复和真实飞书发送。
 5. 用 Mock 先联调，再切真实百炼；不要让接口层直接拼 Prompt。
+
+## 8. V1.1 AI 可信服务升级
+
+- 五方法外层签名不变；快速方案传 `context.schema_version="solution-v2"` 启用可信链路。
+- 后端必须同时传入 `trace_id`、`trust_deadline_seconds`、`trust_retry_budget`。
+- 每条检索资产应提供 `source_snapshot`：来源版本、审核版本、权限快照、标题、更新时间和同步时间。
+- AI 返回原八区块并新增 `claims`、`evidence`、`verification_summary`、`quality_attempts`、
+  `recommended_action`；旧前端仍可只读八区块。
+- `recommended_action` 只是 AI 信号，不是最终发布状态；后端必须自行执行 Trust Gate 并持久化
+  `TrustDecision`。
+- 可信链路代码位于 `app/ai/pipelines/trust.py`，版本化 Schema 位于
+  `app/ai/schemas/trust.py`。
+- AI 不实现后端 `RELEASE / DOWNGRADE / REVIEW / BLOCK` 状态机、不写业务数据库、
+  不执行权限查询，也不把未校准不确定性包装成可信度百分比。

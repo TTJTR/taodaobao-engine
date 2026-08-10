@@ -57,6 +57,25 @@ class Solution(AISchema):
         source_pairs = {(source.asset_id, source.source_id) for source in self.sources}
         if len(source_pairs) != len(self.sources):
             raise ValueError("sources must be unique")
+        if getattr(self, "schema_version", "solution-v1") == "solution-v2":
+            claims = getattr(self, "claims", [])
+            evidence = getattr(self, "evidence", [])
+            entailed_claim_ids = {
+                claim.claim_id
+                for claim in claims
+                if getattr(claim.verification_status, "value", claim.verification_status)
+                == "entailed"
+            }
+            published_pairs = {
+                (item.asset_id, item.source_id)
+                for item in evidence
+                if set(item.claim_ids).intersection(entailed_claim_ids)
+            }
+            if source_pairs != published_pairs:
+                raise ValueError(
+                    "solution-v2 sources must contain only evidence used by entailed claims"
+                )
+            return self
         sections = (
             self.requirement_understanding,
             self.initial_recommendations,

@@ -222,6 +222,7 @@ class PresentationService:
         await self.session.flush()
         snapshot = await self._build_input_snapshot(run, claims, profile)
         self.session.add(snapshot)
+        await self._queue_render(run, {"operation": "initial"})
         await self.session.commit()
         return run
 

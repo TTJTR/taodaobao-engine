@@ -20,7 +20,11 @@ from app.db.models import (
 )
 from app.db.repositories import MessageRepository, SolutionRunRepository
 from app.schemas.trust import SolutionV2Payload
-from app.services.ai_payload_adapter import build_solution_context, normalize_retrieval_snapshot
+from app.services.ai_payload_adapter import (
+    build_solution_context,
+    normalize_retrieval_snapshot,
+    normalize_solution_v2_result,
+)
 from app.services.ai_run_service import persist_last_ai_run
 from app.services.retrieval_service import RetrievalService
 from app.services.trust_gate import TrustPersistenceService, build_safe_solution
@@ -120,7 +124,7 @@ async def run_solution_pipeline(
             async with asyncio.timeout(_remaining_seconds(run.deadline_at)):
                 candidate = await ai_engine.generate_solution(solution_context, ai_snapshot)
             await _set_stage(session, run, task, "verifying")
-            payload = SolutionV2Payload.model_validate(candidate)
+            payload = SolutionV2Payload.model_validate(normalize_solution_v2_result(candidate))
             persist_last_ai_run(
                 session,
                 workspace_id,

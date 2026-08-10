@@ -51,6 +51,18 @@ from app.ai.schemas.retrieval import (
     SourceSnapshot,
 )
 from app.ai.schemas.solution import CitedItem, EvidenceBoundary, Solution, SourceReference
+from app.ai.schemas.trust import (
+    ClaimRecord,
+    ClaimType,
+    EvidenceLocation,
+    EvidenceRecord,
+    RecommendedAction,
+    RiskLevel,
+    TrustedSolution,
+    TrustQualityAttempt,
+    VerificationStatus,
+    VerificationSummary,
+)
 from app.ai.schemas.workflow import QualityAttempt, VerifiedSolutionResult
 
 __all__ = [
@@ -58,6 +70,8 @@ __all__ = [
     "CandidateRecommendation",
     "CandidateRecord",
     "ClaimReview",
+    "ClaimRecord",
+    "ClaimType",
     "ClaimVerdict",
     "CollaborationContentBundle",
     "CollaborationDocumentItem",
@@ -68,6 +82,8 @@ __all__ = [
     "CustomerProfileDraft",
     "EvidenceBoundary",
     "EvidenceConflict",
+    "EvidenceLocation",
+    "EvidenceRecord",
     "DeepResearchStageResult",
     "ExpertAnswerInput",
     "ExpertQuestion",
@@ -97,6 +113,7 @@ __all__ = [
     "ResearchStage",
     "ResearchSubquestion",
     "ResearchTaskStatus",
+    "RecommendedAction",
     "RetrievedCapability",
     "RetrievedExperience",
     "SearchIntent",
@@ -105,5 +122,10 @@ __all__ = [
     "SpeakerRole",
     "SourceReference",
     "SourceSnapshot",
+    "RiskLevel",
+    "TrustedSolution",
+    "TrustQualityAttempt",
+    "VerificationStatus",
+    "VerificationSummary",
     "VerifiedSolutionResult",
 ]

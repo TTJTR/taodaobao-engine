@@ -4,9 +4,12 @@ import os
 import time
 import urllib.error
 import urllib.request
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from app.ai.runtime import ACTIVE_TRUST_BUDGET
 
 BAILIAN_BEIJING_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
@@ -74,7 +77,14 @@ class BailianSettings:
 class BailianChatClient:
     def __init__(self, settings: BailianSettings) -> None:
         self._settings = settings
-        self.last_attempt_count = 0
+        self._last_attempt_count: ContextVar[int] = ContextVar(
+            f"bailian_attempt_count_{id(self)}",
+            default=0,
+        )
+
+    @property
+    def last_attempt_count(self) -> int:
+        return self._last_attempt_count.get()
 
     @property
     def model_version(self) -> str:
@@ -85,9 +95,31 @@ class BailianChatClient:
         return f"temperature={self._settings.temperature};json_object=true"
 
     async def generate_json(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-        return await asyncio.to_thread(self._generate_json_sync, system_prompt, user_prompt)
+        result, attempt_count = await asyncio.to_thread(
+            self._generate_json_sync_with_attempts,
+            system_prompt,
+            user_prompt,
+        )
+        self._last_attempt_count.set(attempt_count)
+        return result
 
-    def _generate_json_sync(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def _generate_json_sync(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, Any]:
+        result, attempt_count = self._generate_json_sync_with_attempts(
+            system_prompt,
+            user_prompt,
+        )
+        self._last_attempt_count.set(attempt_count)
+        return result
+
+    def _generate_json_sync_with_attempts(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> tuple[dict[str, Any], int]:
         payload = {
             "model": self._settings.chat_model,
             "messages": [
@@ -99,10 +131,12 @@ class BailianChatClient:
         }
         last_error: ModelClientError | None = None
         for attempt in range(1, self._settings.max_retries + 2):
-            self.last_attempt_count = attempt
             try:
+                budget = ACTIVE_TRUST_BUDGET.get()
+                if budget is not None:
+                    budget.consume_attempt()
                 response_data = self._request_once(payload)
-                return self._read_message_json(response_data)
+                return self._read_message_json(response_data), attempt
             except ModelClientError as exc:
                 last_error = exc
                 if not exc.retryable or attempt > self._settings.max_retries:

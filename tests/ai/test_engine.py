@@ -168,6 +168,30 @@ def test_mock_solution_renders_every_retrieved_asset_in_matching_section() -> No
     assert solution.prerequisites_and_risks
 
 
+def test_mock_solution_does_not_repeat_unverified_customer_claims() -> None:
+    context = make_context()
+    unsupported_claim = "已经在全厂实现 99.99% 准确率"
+    context["current_requirement"] = unsupported_claim
+
+    result = asyncio.run(MockAIEngine().generate_solution(context, make_populated_snapshot()))
+    solution = Solution.model_validate(result)
+
+    rendered = "\n".join(
+        item.text
+        for section in (
+            solution.requirement_understanding,
+            solution.initial_recommendations,
+            solution.historical_evidence,
+            solution.capability_composition,
+            solution.prerequisites_and_risks,
+            solution.pending_confirmations,
+        )
+        for item in section
+    )
+    assert unsupported_claim not in rendered
+    assert solution.requirement_understanding[0].boundary.value == "pending_confirmation"
+
+
 def test_bailian_engine_deep_stage_uses_shared_trace_and_stage_metadata() -> None:
     client = SequenceModelClient(
         [

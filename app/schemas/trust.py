@@ -1,4 +1,5 @@
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -29,6 +30,19 @@ class SolutionV2EvidenceRef(BaseModel):
     evidence_key: str = Field(min_length=3, max_length=256)
     asset_id: str = Field(min_length=1, max_length=128)
     source_id: str = Field(min_length=1, max_length=128)
+    source_version: str | None = None
+    reviewed_version: str | None = None
+    permission_snapshot_id: str | None = None
+    quote: str | None = None
+    location: dict[str, Any] | None = None
+    title: str | None = None
+    url: str | None = None
+    author: str | None = None
+    source_updated_at: datetime | None = None
+    last_synced_at: datetime | None = None
+    permission_valid: bool | None = None
+    available: bool | None = None
+    invalid_reason: str | None = None
 
 
 class SolutionV2Link(BaseModel):
@@ -76,10 +90,12 @@ class SolutionV2Payload(BaseModel):
         for claim in self.claims:
             if not set(claim.evidence_refs).issubset(allowed_evidence):
                 raise ValueError("claim references evidence outside the evidence ledger")
-            if claim.boundary in {"historical_fact", "enterprise_capability"} and not (
-                claim.evidence_refs
+            if (
+                claim.boundary in {"historical_fact", "enterprise_capability"}
+                and claim.verification_status == "entailed"
+                and not claim.evidence_refs
             ):
-                raise ValueError("enterprise claims require evidence")
+                raise ValueError("entailed enterprise claims require evidence")
         for link in self.claim_evidence_links:
             if link.claim_id not in allowed_claims or link.evidence_key not in allowed_evidence:
                 raise ValueError("claim-evidence link points outside the ledgers")
