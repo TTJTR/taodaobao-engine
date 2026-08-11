@@ -19,6 +19,7 @@ dependencies = [
     "pypdf>=5.9,<6.0",
     "pydantic-settings>=2.10,<3.0",
     "sqlalchemy[asyncio]>=2.0.43,<3.0",
+    "trafilatura>=2.0,<3.0",
     "uvicorn[standard]>=0.35,<1.0",
 ]
 

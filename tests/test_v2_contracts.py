@@ -47,6 +47,7 @@ def test_v2_contract_freezes_raw_artifact_and_document_locations() -> None:
     schemas = contract["components"]["schemas"]
 
     assert schemas["RawArtifact"]["properties"]["content_sha256"]["pattern"]
+    assert "partial" in schemas["RawArtifactStatus"]["enum"]
     assert schemas["DocumentLocation"]["discriminator"]["propertyName"] == "kind"
     assert set(schemas["DocumentLocation"]["discriminator"]["mapping"]) == {
         "pdf_page",

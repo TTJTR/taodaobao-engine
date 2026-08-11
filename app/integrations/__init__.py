@@ -13,6 +13,7 @@ from app.integrations.protocols import (
     FeishuUserInfo,
     LLMAdapter,
 )
+from app.integrations.web_scraper import WebScrapeArtifact, WebScraperAdapter
 
 __all__ = [
     "FeishuAdapter",
@@ -27,4 +28,6 @@ __all__ = [
     "MockFeishuAdapter",
     "MockAIEngine",
     "MockLLMAdapter",
+    "WebScrapeArtifact",
+    "WebScraperAdapter",
 ]

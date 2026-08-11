@@ -190,6 +190,7 @@ class RawArtifactKind(StrEnum):
 
 class RawArtifactStatus(StrEnum):
     CAPTURED = "captured"
+    PARTIAL = "partial"
     VALIDATED = "validated"
     REJECTED = "rejected"
     UNAVAILABLE = "unavailable"

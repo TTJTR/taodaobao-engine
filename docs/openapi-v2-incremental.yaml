@@ -224,7 +224,7 @@ components:
       enum: [web_page, tender_file, pasted_text]
     RawArtifactStatus:
       type: string
-      enum: [captured, validated, rejected, unavailable]
+      enum: [captured, partial, validated, rejected, unavailable]
     RawArtifact:
       type: object
       additionalProperties: false
