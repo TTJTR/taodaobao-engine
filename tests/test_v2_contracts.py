@@ -42,6 +42,26 @@ def test_v2_contract_does_not_replace_frozen_contracts() -> None:
     assert "/solution-runs" not in contract["paths"]
 
 
+def test_v2_contract_freezes_raw_artifact_and_document_locations() -> None:
+    contract = yaml.safe_load(Path("docs/openapi-v2-incremental.yaml").read_text(encoding="utf-8"))
+    schemas = contract["components"]["schemas"]
+
+    assert schemas["RawArtifact"]["properties"]["content_sha256"]["pattern"]
+    assert schemas["DocumentLocation"]["discriminator"]["propertyName"] == "kind"
+    assert set(schemas["DocumentLocation"]["discriminator"]["mapping"]) == {
+        "pdf_page",
+        "docx_paragraph",
+        "xlsx_cell",
+        "pptx_shape",
+        "plain_text",
+    }
+    requirement = schemas["TenderRequirement"]
+    assert requirement["properties"]["source_location"] == {
+        "$ref": "#/components/schemas/DocumentLocation"
+    }
+    assert contract["components"]["parameters"]["IdempotencyKey"]["schema"]["minLength"] == 16
+
+
 def test_ai_workbench_frontend_uses_v2_backend_endpoints() -> None:
     frontend = Path("static/index.html").read_text(encoding="utf-8")
     assert 'apiFetch("/runtime/tasks?page=1&page_size=100")' in frontend

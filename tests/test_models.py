@@ -24,6 +24,7 @@ from app.db.models import (
     HtmlArtifact,
     HumanReviewRecord,
     IdempotencyRecord,
+    IntelligenceItemArtifactLink,
     Job,
     Message,
     NarrativeProfile,
@@ -31,6 +32,7 @@ from app.db.models import (
     PresentationInputSnapshot,
     PresentationRun,
     QualityAttemptRecord,
+    RawArtifact,
     ReferenceDeck,
     ResearchStep,
     ResearchTask,
@@ -40,6 +42,9 @@ from app.db.models import (
     SolutionRun,
     Source,
     StyleProfile,
+    TenderParseVersion,
+    TenderRequirement,
+    TenderRequirementVersion,
     TrustDecisionRecord,
     User,
     VisualStyleProfile,
@@ -78,6 +83,11 @@ MODELS = [
     PresentationInputSnapshot,
     HtmlArtifact,
     ExportArtifact,
+    RawArtifact,
+    IntelligenceItemArtifactLink,
+    TenderParseVersion,
+    TenderRequirement,
+    TenderRequirementVersion,
 ]
 
 
@@ -175,11 +185,15 @@ def test_metadata_contains_core_and_idempotency_tables() -> None:
         "html_artifacts",
         "export_artifacts",
         "search_runs",
+        "raw_artifacts",
         "intelligence_items",
+        "intelligence_item_artifact_links",
         "intelligence_snapshots",
         "profile_intelligence_proposals",
         "tender_documents",
+        "tender_parse_versions",
         "tender_requirements",
+        "tender_requirement_versions",
         "response_matrices",
         "response_matrix_items",
         "rehearsal_sessions",
@@ -194,7 +208,7 @@ def test_all_tables_compile_to_postgresql_ddl() -> None:
         for table in Base.metadata.sorted_tables
     ]
 
-    assert len(statements) == 44
+    assert len(statements) == 48
     assert all("UUID" in statement for statement in statements)
 
 

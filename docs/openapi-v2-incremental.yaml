@@ -122,7 +122,7 @@ paths:
     get:
       operationId: listTenderRequirements
       parameters: [{$ref: '#/components/parameters/TenderId'}]
-      responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+      responses: {'200': {$ref: '#/components/responses/TenderRequirementListResponse'}}
   /tenders/{tender_id}/response-matrices:
     post:
       operationId: createResponseMatrix
@@ -208,7 +208,7 @@ components:
   securitySchemes:
     sessionCookie: {type: apiKey, in: cookie, name: taodaobao_session}
   parameters:
-    IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 1, maxLength: 128}}
+    IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 16, maxLength: 128}}
     TaskId: {name: task_id, in: path, required: true, schema: {type: string, format: uuid}}
     RunId: {name: run_id, in: path, required: true, schema: {type: string, format: uuid}}
     ItemId: {name: item_id, in: path, required: true, schema: {type: string, format: uuid}}
@@ -219,6 +219,160 @@ components:
     MatrixId: {name: matrix_id, in: path, required: true, schema: {type: string, format: uuid}}
     RehearsalId: {name: rehearsal_id, in: path, required: true, schema: {type: string, format: uuid}}
   schemas:
+    RawArtifactKind:
+      type: string
+      enum: [web_page, tender_file, pasted_text]
+    RawArtifactStatus:
+      type: string
+      enum: [captured, validated, rejected, unavailable]
+    RawArtifact:
+      type: object
+      additionalProperties: false
+      required: [id, artifact_key, kind, status, provider, content_sha256, byte_size, captured_at]
+      properties:
+        id: {type: string, format: uuid}
+        search_run_id: {type: [string, 'null'], format: uuid}
+        artifact_key: {type: string, pattern: '^[a-f0-9]{64}$'}
+        kind: {$ref: '#/components/schemas/RawArtifactKind'}
+        status: {$ref: '#/components/schemas/RawArtifactStatus'}
+        provider: {type: string, maxLength: 64}
+        source_url: {type: [string, 'null'], format: uri, maxLength: 2000}
+        normalized_url: {type: [string, 'null'], format: uri, maxLength: 2000}
+        source_filename: {type: [string, 'null'], maxLength: 500}
+        mime_type: {type: [string, 'null'], maxLength: 128}
+        http_status: {type: [integer, 'null'], minimum: 100, maximum: 599}
+        content_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        byte_size: {type: integer, minimum: 0}
+        storage_uri: {type: [string, 'null'], maxLength: 2000}
+        published_at: {type: [string, 'null'], format: date-time}
+        captured_at: {type: string, format: date-time}
+        security_report: {type: object, additionalProperties: true}
+        metadata_snapshot: {type: object, additionalProperties: true}
+        error_code: {type: [string, 'null'], maxLength: 64}
+    DocumentLocation:
+      oneOf:
+        - {$ref: '#/components/schemas/PdfDocumentLocation'}
+        - {$ref: '#/components/schemas/DocxDocumentLocation'}
+        - {$ref: '#/components/schemas/XlsxDocumentLocation'}
+        - {$ref: '#/components/schemas/PptxDocumentLocation'}
+        - {$ref: '#/components/schemas/PlainTextDocumentLocation'}
+      discriminator:
+        propertyName: kind
+        mapping:
+          pdf_page: '#/components/schemas/PdfDocumentLocation'
+          docx_paragraph: '#/components/schemas/DocxDocumentLocation'
+          xlsx_cell: '#/components/schemas/XlsxDocumentLocation'
+          pptx_shape: '#/components/schemas/PptxDocumentLocation'
+          plain_text: '#/components/schemas/PlainTextDocumentLocation'
+    DocumentLocationBase:
+      type: object
+      required: [kind, schema_version, quote_hash]
+      properties:
+        kind: {type: string}
+        schema_version: {const: document-location-v1}
+        quote_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
+        section_path:
+          type: array
+          maxItems: 32
+          items: {type: string, maxLength: 500}
+    PdfDocumentLocation:
+      allOf:
+        - {$ref: '#/components/schemas/DocumentLocationBase'}
+        - type: object
+          required: [page]
+          properties:
+            kind: {const: pdf_page}
+            page: {type: integer, minimum: 1}
+            bounding_box:
+              type: [array, 'null']
+              minItems: 4
+              maxItems: 4
+              items: {type: number, minimum: 0}
+    DocxDocumentLocation:
+      allOf:
+        - {$ref: '#/components/schemas/DocumentLocationBase'}
+        - type: object
+          required: [paragraph_index]
+          properties:
+            kind: {const: docx_paragraph}
+            paragraph_index: {type: integer, minimum: 0}
+            table_index: {type: [integer, 'null'], minimum: 0}
+            row_index: {type: [integer, 'null'], minimum: 0}
+            column_index: {type: [integer, 'null'], minimum: 0}
+    XlsxDocumentLocation:
+      allOf:
+        - {$ref: '#/components/schemas/DocumentLocationBase'}
+        - type: object
+          required: [sheet, cell_range]
+          properties:
+            kind: {const: xlsx_cell}
+            sheet: {type: string, minLength: 1, maxLength: 31}
+            cell_range: {type: string, minLength: 1, maxLength: 64}
+    PptxDocumentLocation:
+      allOf:
+        - {$ref: '#/components/schemas/DocumentLocationBase'}
+        - type: object
+          required: [slide, shape_id]
+          properties:
+            kind: {const: pptx_shape}
+            slide: {type: integer, minimum: 1}
+            shape_id: {type: string, minLength: 1, maxLength: 128}
+    PlainTextDocumentLocation:
+      allOf:
+        - {$ref: '#/components/schemas/DocumentLocationBase'}
+        - type: object
+          required: [start_offset, end_offset]
+          properties:
+            kind: {const: plain_text}
+            start_offset: {type: integer, minimum: 0}
+            end_offset: {type: integer, minimum: 1}
+    TenderParseVersion:
+      type: object
+      additionalProperties: false
+      required: [id, tender_id, raw_artifact_id, version, parser_name, parser_version, document_schema_version, status]
+      properties:
+        id: {type: string, format: uuid}
+        tender_id: {type: string, format: uuid}
+        raw_artifact_id: {type: string, format: uuid}
+        version: {type: integer, minimum: 1}
+        parser_name: {type: string, maxLength: 128}
+        parser_version: {type: string, maxLength: 128}
+        document_schema_version: {type: string, maxLength: 32}
+        status: {enum: [queued, parsing, parsed, failed, rejected]}
+        resource_usage: {type: object, additionalProperties: true}
+        error_code: {type: [string, 'null'], maxLength: 64}
+    TenderRequirement:
+      type: object
+      additionalProperties: false
+      required: [id, tender_id, sequence, version, requirement_text, category, mandatory, source_location, status]
+      properties:
+        id: {type: string, format: uuid}
+        tender_id: {type: string, format: uuid}
+        parse_version_id: {type: [string, 'null'], format: uuid}
+        sequence: {type: integer, minimum: 1}
+        version: {type: integer, minimum: 1}
+        requirement_text: {type: string, minLength: 1}
+        category: {type: string, maxLength: 64}
+        mandatory: {type: boolean}
+        acceptance_condition: {type: [string, 'null']}
+        constraints: {type: object, additionalProperties: true}
+        ambiguities: {type: array, items: {type: string}}
+        source_location: {$ref: '#/components/schemas/DocumentLocation'}
+        status: {enum: [ai_draft, edited, confirmed, rejected, superseded]}
+        confirmed_by_id: {type: [string, 'null'], format: uuid}
+        confirmed_at: {type: [string, 'null'], format: date-time}
+    TenderRequirementVersion:
+      type: object
+      additionalProperties: false
+      required: [id, requirement_id, version, change_type, requirement_snapshot, source_location]
+      properties:
+        id: {type: string, format: uuid}
+        requirement_id: {type: string, format: uuid}
+        version: {type: integer, minimum: 1}
+        changed_by_id: {type: [string, 'null'], format: uuid}
+        change_type: {enum: [created, migrated, edited, merged, split, confirmed, rejected, superseded]}
+        requirement_snapshot: {type: object, additionalProperties: true}
+        source_location: {$ref: '#/components/schemas/DocumentLocation'}
     ManualIntelligenceSource:
       type: object
       required: [title, source_url, content]
@@ -320,6 +474,25 @@ components:
     ListResponse:
       description: 成功，data 包含 items 与分页字段
       content: {application/json: {schema: {$ref: '#/components/schemas/SuccessEnvelope'}}}
+    TenderRequirementListResponse:
+      description: 招标要求列表，所有要求包含可校验的原文位置
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [request_id, data]
+            properties:
+              request_id: {type: string}
+              data:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/TenderRequirement'}
+                  page: {type: integer, minimum: 1}
+                  page_size: {type: integer, minimum: 1, maximum: 100}
+                  has_more: {type: boolean}
     ErrorResponse:
       description: 失败
       content: {application/json: {schema: {$ref: '#/components/schemas/ErrorEnvelope'}}}
