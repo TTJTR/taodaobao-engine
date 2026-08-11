@@ -19,6 +19,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.presentation.layouts.engine import LayoutEngine  # noqa: E402
+from app.presentation.style.profile_builder import StyleProfileBuilder  # noqa: E402
+from app.presentation.style.template_compiler import (  # noqa: E402
+    TemplateCompiler,
+    compiled_bundle_hash,
+)
 from app.schemas.presentation import PresentationSpecData  # noqa: E402
 from app.services.pptx_parser import PPTXParseError, SafePPTXParser  # noqa: E402
 from app.services.pptx_renderer import PPTXRenderer  # noqa: E402
@@ -148,8 +153,12 @@ async def _validate_sample(source: Path, output_dir: Path) -> dict:
     parser = SafePPTXParser()
     theme_profile = parser.parse(source, mode="theme_only")
     visual_profile = parser.parse(source, mode="sanitized_visual")
+    features = parser.extract_features(source, mode="sanitized_visual")
+    profile_id = uuid.uuid5(uuid.NAMESPACE_URL, f"pptx-style:{digest}")
+    style_profile_v2 = StyleProfileBuilder().build(features, profile_id=profile_id)
+    compiled_bundle = TemplateCompiler().compile(style_profile_v2)
     source_text = _source_slide_text(source)
-    serialized_profile = visual_profile.model_dump_json()
+    serialized_profile = style_profile_v2.model_dump_json()
     leaked = sorted(text for text in source_text if text in serialized_profile)
 
     spec, facts = _trusted_spec(source.stem)
@@ -164,6 +173,7 @@ async def _validate_sample(source: Path, output_dir: Path) -> dict:
             output_report["valid_ooxml"],
             output_report["slide_count"] == output_report["expected_slide_count"],
             output_report["facts_preserved"],
+            all(candidate.status == "needs_review" for candidate in compiled_bundle.candidates),
             not visual_report.get("available") or visual_report.get("passed"),
         )
     )
@@ -175,6 +185,18 @@ async def _validate_sample(source: Path, output_dir: Path) -> dict:
         "sensitive_text_leaks": leaked,
         "theme_only": theme_profile.model_dump(mode="json"),
         "sanitized_visual": visual_profile.model_dump(mode="json"),
+        "feature_set_summary": {
+            "schema_version": features.schema_version,
+            "canvas": features.canvas.model_dump(mode="json"),
+            "colors": len(features.color_samples),
+            "fonts": len(features.font_samples),
+            "shapes": len(features.shape_samples),
+            "pages": len(features.page_samples),
+            "master_layouts": len(features.master_layouts),
+        },
+        "style_profile_v2": style_profile_v2.model_dump(mode="json"),
+        "compiled_template_bundle": compiled_bundle.model_dump(mode="json"),
+        "compiled_template_hash": compiled_bundle_hash(compiled_bundle),
         "rendered_pptx": str(rendered.path),
         "output_validation": output_report,
         "visual_validation": visual_report,
@@ -198,25 +220,37 @@ def _markdown(report: dict) -> str:
         f"- 样本数：{len(report['samples'])}",
         f"- LibreOffice：{'可用' if report['libreoffice_available'] else '未安装，未执行转图验收'}",
         "",
-        "| 样本 | 结果 | 提取颜色 | 标题字体 | 布局模式数 | 文本泄漏 | 输出文件 |",
-        "| --- | --- | --- | --- | ---: | ---: | --- |",
+        "| 样本 | 结果 | V2 主色/正文色 | Archetype | 候选状态 | 文本泄漏 | 输出文件 |",
+        "| --- | --- | --- | --- | --- | ---: | --- |",
     ]
     for item in report["samples"]:
-        style = item["sanitized_visual"]
-        palette = style["palette"]
+        if "error" in item:
+            lines.append(
+                f"| {Path(item['source']).name} | 失败：{item['error']} | - | - | - | - | - |"
+            )
+            continue
+        profile = item["style_profile_v2"]
+        palette = profile["design_tokens"]["colors"]
+        archetypes = ", ".join(
+            archetype["archetype_token"] for archetype in profile["layout_archetypes"]
+        )
+        candidate_statuses = ", ".join(
+            candidate["status"]
+            for candidate in item["compiled_template_bundle"]["candidates"]
+        )
         output = Path(item["rendered_pptx"])
         row_template = (
-            "| {name} | {status} | {primary}/{accent} | {font} | "
-            "{layouts} | {leaks} | {output} |"
+            "| {name} | {status} | {primary}/{text} | {archetypes} | "
+            "{candidates} | {leaks} | {output} |"
         )
         lines.append(
             row_template.format(
                 name=Path(item["source"]).name,
                 status="通过" if item["passed"] else "失败",
                 primary=palette["primary"],
-                accent=palette["accent"],
-                font=style["typography"]["heading_font"],
-                layouts=len(style["layout_grammar"]),
+                text=palette["text_primary"],
+                archetypes=archetypes,
+                candidates=candidate_statuses,
                 leaks=len(item["sensitive_text_leaks"]),
                 output=output.name,
             )
@@ -227,6 +261,8 @@ def _markdown(report: dict) -> str:
             "## 验收边界",
             "",
             "- 已检查 PPTX 可解析、风格提取、原业务文本不进入 StyleProfile。",
+            "- 已检查 StyleFeatureSet、StyleProfile v2、布局聚类和六类候选容量场景。",
+            "- `needs_review` 只表示候选项通过机器预检，仍需人工确认后才能进入正式生成。",
             "- 已用提取风格生成可信测试稿，并检查 OOXML 页数和事实逐字一致。",
             "- 未安装 LibreOffice 时，本报告不宣称完成像素级视觉验收；"
             "请人工打开输出 PPTX 查看效果。",

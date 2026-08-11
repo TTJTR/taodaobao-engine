@@ -1,5 +1,6 @@
 import uuid
 
+from app.presentation.render_ir.system_labels import PURPOSE_TITLES
 from app.schemas.presentation import (
     BoundFactItem,
     BoundSourceItem,
@@ -19,17 +20,6 @@ from app.schemas.presentation import (
     TimelineComponent,
     TitleComponent,
 )
-
-PURPOSE_TITLES = {
-    "cover": "企业数字化转型可信方案",
-    "executive_summary": "方案核心结论",
-    "key_metric": "已验证关键指标",
-    "comparison": "方案事实对比",
-    "implementation_timeline": "分阶段实施路线",
-    "delivery_process": "可信交付流程",
-    "evidence": "已验证事实与能力",
-    "sources": "方案事实来源",
-}
 
 
 class SlidePlanMaterializer:

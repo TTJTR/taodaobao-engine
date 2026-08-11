@@ -3,6 +3,7 @@ import json
 import uuid
 from dataclasses import dataclass
 
+from app.presentation.render_ir.models import RenderIR
 from app.schemas.presentation import (
     EvidenceGuardSnapshot,
     FactBinding,
@@ -23,6 +24,50 @@ class _BindingEntry:
 
 
 class EvidenceGuard:
+    def validate_render_ir(self, render_ir: RenderIR, ledger: FactLedger) -> ValidationReport:
+        facts = {fact.claim_id: fact for fact in ledger.facts}
+        failures: list[GuardFailure] = []
+        checked_components = 0
+        for slide in render_ir.slides:
+            for node in slide.layers:
+                if node.node_type != "text":
+                    continue
+                for run in node.runs:
+                    trace = run.fact_trace
+                    if trace is None:
+                        continue
+                    checked_components += 1
+                    binding = FactBinding(
+                        claim_id=trace.claim_id,
+                        claim_key=trace.claim_key,
+                        evidence_ids=list(trace.evidence_ids),
+                        source_ids=list(trace.source_ids),
+                        content_mode=trace.content_mode,
+                    )
+                    content = run.text if run.content_origin == "ledger_verbatim" else None
+                    self._validate_entry(
+                        node.component_id,
+                        _BindingEntry(binding=binding, content=content),
+                        facts,
+                        failures,
+                    )
+                    if run.content_origin == "ledger_label":
+                        fact = facts.get(trace.claim_id)
+                        if fact is not None and run.text not in fact.allowed_labels:
+                            failures.append(
+                                GuardFailure(
+                                    code="LEDGER_LABEL_MISMATCH",
+                                    component_id=node.component_id,
+                                    claim_id=trace.claim_id,
+                                    message="text is not an allowed label frozen in FactLedger",
+                                )
+                            )
+        return ValidationReport(
+            passed=not failures,
+            checked_components=checked_components,
+            failures=tuple(failures),
+        )
+
     def validate_bindings(
         self, spec: PresentationSpecData, ledger: FactLedger
     ) -> tuple[ValidationReport, EvidenceGuardSnapshot]:

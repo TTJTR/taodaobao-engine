@@ -235,6 +235,7 @@ async def test_fact_ledger_builds_only_joined_released_granted_facts() -> None:
     ledger = await FactLedgerService(session, workspace_id).build_ledger(run_id)
 
     assert ledger.facts[0].claim_id == claim_id
+    assert ledger.facts[0].allowed_labels == ("capability:delivery",)
     assert ledger.facts[0].evidence[0].source_id == source_id
     statement = session.execute.await_args.args[0]
     sql = str(statement.compile(dialect=postgresql.dialect()))

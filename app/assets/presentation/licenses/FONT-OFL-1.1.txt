@@ -1,0 +1,8 @@
+The bundled font files are distributed under the SIL Open Font License 1.1.
+
+Font families: Anton, DM Sans, Montserrat, Lato, Noto Sans SC.
+Canonical license: https://openfontlicense.org/open-font-license-official-text/
+Upstream font source: https://github.com/google/fonts
+
+The fonts may be used and redistributed subject to the OFL, including its
+Reserved Font Name and standalone-sale restrictions.

@@ -33,6 +33,7 @@ class FactAtom(FrozenDomainModel):
     verbatim_text: str = Field(min_length=1)
     boundary: str = Field(min_length=1, max_length=64)
     evidence: tuple[LedgerEvidence, ...] = Field(min_length=1)
+    allowed_labels: tuple[str, ...] = ()
 
 
 class FactLedger(FrozenDomainModel):
@@ -52,6 +53,7 @@ class GuardFailure(FrozenDomainModel):
         "CONTENT_FINGERPRINT_MISMATCH",
         "BOUND_COMPONENT_MISSING",
         "BOUND_COMPONENT_ADDED",
+        "LEDGER_LABEL_MISMATCH",
     ]
     component_id: uuid.UUID
     claim_id: uuid.UUID

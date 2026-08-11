@@ -1,3 +1,5 @@
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime
 
@@ -13,21 +15,26 @@ from app.db.models import (
     StyleProfileStatus,
     VisualStyleProfile,
 )
+from app.db.repositories import PresentationRenderSnapshotRepository
 from app.integrations.presentation_planner import MockSlidePlanner
 from app.presentation.layouts.diagnostics import diagnose_layout
 from app.presentation.layouts.engine import LayoutEngine
 from app.presentation.layouts.paginator import SlidePaginator
 from app.presentation.layouts.registry import default_layout_registry
+from app.presentation.render_ir import RenderIRBuilder, SystemLabelCatalog
+from app.presentation.style.legacy_adapter import adapt_legacy_style_profile
 from app.schemas.presentation import (
     PlanningFact,
     SlidePlanningContext,
     SlidePlanningStyleConstraints,
     VisualStyleProfileData,
 )
+from app.schemas.style_profile import VisualStyleProfileV2
 from app.services.ai_harness import PresentationPlanningHarness, PresentationPlanningUnavailable
 from app.services.evidence_guard import EvidenceGuard
 from app.services.fact_ledger_service import FactLedgerService
 from app.services.html_renderer import HTMLRenderer
+from app.services.html_renderer_v2 import HTMLRendererV2, HTMLShadowAuditor
 from app.services.slide_plan_materializer import SlidePlanMaterializer
 
 
@@ -96,6 +103,7 @@ async def run_presentation_generation(
                 planner or MockSlidePlanner()
             ).run_slide_planning(planning_context, fact_catalog, style_constraints)
             spec = SlidePaginator().paginate(SlidePlanMaterializer().materialize(plan, ledger))
+            text_provenance = SystemLabelCatalog().build_provenance(spec, ledger)
 
             presentation.status = PresentationStatus.VALIDATING
             await session.commit()
@@ -117,9 +125,61 @@ async def run_presentation_generation(
                     + ",".join(failure.code for failure in final_report.failures)
                 )
 
+            render_style = _render_style_v2(style_profile.visual_json, style_profile.id)
+            render_ir = RenderIRBuilder().build(
+                positioned_spec,
+                render_style,
+                compiled_style_hash=_compiled_style_hash(
+                    style_profile.visual_json, render_style
+                ),
+                text_provenance=text_provenance,
+            )
+            render_ir_report = guard.validate_render_ir(render_ir, ledger)
+            if not render_ir_report.passed:
+                raise ValueError(
+                    "evidence guard rejected RenderIR: "
+                    + ",".join(failure.code for failure in render_ir_report.failures)
+                )
+            render_ir_hash = _canonical_hash(render_ir.model_dump(mode="json"))
+            fact_ledger_json = ledger.model_dump(mode="json")
+            await PresentationRenderSnapshotRepository(
+                session, presentation.workspace_id
+            ).create_or_verify(
+                presentation_id=presentation.id,
+                version=presentation.version,
+                schema_version="presentation-render-snapshot-v1",
+                fact_ledger_hash=_canonical_hash(fact_ledger_json),
+                positioned_spec_hash=render_ir.positioned_spec_hash,
+                compiled_style_hash=render_ir.compiled_style_hash,
+                render_ir_hash=render_ir_hash,
+                fact_ledger_json=fact_ledger_json,
+                render_ir_json=render_ir.model_dump(mode="json"),
+                renderer_versions={
+                    "render_ir_builder": "render-ir-builder-v1",
+                    "text_layout": "text-layout-v1",
+                    "system_labels": SystemLabelCatalog.version,
+                    "html_renderer": "jinja2-deterministic-v1",
+                    "html_renderer_v2": HTMLRendererV2.version,
+                },
+                diagnostics={
+                    "mode": "shadow",
+                    "layout_errors": list(layout_report.errors),
+                    "prechecked_components": binding_report.checked_components,
+                    "positioned_checked_components": final_report.checked_components,
+                    "render_ir_checked_text_runs": render_ir_report.checked_components,
+                },
+            )
+
             presentation.status = PresentationStatus.RENDERING
             await session.commit()
             html = HTMLRenderer().render(positioned_spec, style)
+            shadow_html = HTMLRendererV2().render(render_ir)
+            shadow_audit = HTMLShadowAuditor().audit(html, shadow_html, render_ir)
+            if not shadow_audit.passed:
+                raise ValueError(
+                    "HTML v2 shadow audit failed: " + ",".join(shadow_audit.errors)
+                )
+            shadow_html_hash = hashlib.sha256(shadow_html.encode()).hexdigest()
             presentation.spec = positioned_spec.model_dump(mode="json")
             presentation.status = PresentationStatus.READY
             presentation.completed_at = datetime.now(UTC)
@@ -138,6 +198,18 @@ async def run_presentation_generation(
                         "validated_slides": len(positioned_spec.slides),
                         "prechecked_components": binding_report.checked_components,
                         "final_checked_components": final_report.checked_components,
+                        "render_ir_schema_version": render_ir.schema_version,
+                        "render_ir_hash": render_ir_hash,
+                        "render_ir_checked_text_runs": render_ir_report.checked_components,
+                        "render_ir_mode": "shadow",
+                        "html_v2_renderer": HTMLRendererV2.version,
+                        "html_v2_hash": shadow_html_hash,
+                        "html_v2_shadow_audit": {
+                            "passed": shadow_audit.passed,
+                            "slide_count": shadow_audit.slide_count,
+                            "text_node_count": shadow_audit.text_node_count,
+                            "errors": list(shadow_audit.errors),
+                        },
                         "layout_diagnostics": list(layout_report.errors),
                     },
                     provider_mode="deterministic",
@@ -169,3 +241,27 @@ def _error_code(exc: Exception) -> str:
     if isinstance(exc, PresentationPlanningUnavailable):
         return "PRESENTATION_PLANNER_UNAVAILABLE"
     return "PRESENTATION_GENERATION_FAILED"
+
+
+def _render_style_v2(visual_json: dict, profile_id: uuid.UUID) -> VisualStyleProfileV2:
+    if visual_json.get("schema_version") == "style-profile-v2":
+        return VisualStyleProfileV2.model_validate(visual_json)
+    return adapt_legacy_style_profile(visual_json, profile_id=profile_id)
+
+
+def _compiled_style_hash(visual_json: dict, style: VisualStyleProfileV2) -> str:
+    confirmed = visual_json.get("confirmed_template") or {}
+    value = confirmed.get("compiled_template_hash")
+    if isinstance(value, str) and len(value) == 64:
+        try:
+            int(value, 16)
+        except ValueError:
+            pass
+        else:
+            return value.lower()
+    return _canonical_hash(style.model_dump(mode="json"))
+
+
+def _canonical_hash(value: dict) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()

@@ -30,6 +30,15 @@ class ConfirmStyleProfileRequest(BaseModel):
     expected_version: int = Field(ge=1)
 
 
+class RegenerateTemplateCandidatesRequest(BaseModel):
+    expected_profile_version: int = Field(ge=1)
+
+
+class ConfirmTemplateCandidateRequest(BaseModel):
+    expected_profile_version: int = Field(ge=1)
+    expected_candidate_version: int = Field(ge=1)
+
+
 class CreatePresentationRequest(BaseModel):
     style_profile_id: uuid.UUID
     mode: Literal["strict", "balanced", "brand_only"] = "balanced"

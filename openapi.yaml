@@ -722,6 +722,77 @@ paths:
         default:
           $ref: '#/components/responses/ErrorResponse'
 
+  /style-profiles/{style_profile_id}/template-candidates:
+    parameters:
+      - $ref: '#/components/parameters/StyleProfileId'
+    get:
+      tags: [Presentations]
+      operationId: listStyleTemplateCandidates
+      summary: 查询当前画像最新一代脱敏模板候选及容量校验结果
+      responses:
+        '200':
+          description: 模板候选列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StyleTemplateCandidateListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /style-profiles/{style_profile_id}/template-candidates/regenerate-preview:
+    parameters:
+      - $ref: '#/components/parameters/StyleProfileId'
+    post:
+      tags: [Presentations]
+      operationId: regenerateStyleTemplateCandidatePreviews
+      summary: 基于当前 StyleProfile Schema 重新生成脱敏候选预览
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegenerateTemplateCandidatesRequest'
+      responses:
+        '200':
+          description: 新一代候选模板
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StyleTemplateCandidateListResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
+  /style-profiles/{style_profile_id}/template-candidates/{candidate_id}/confirm:
+    parameters:
+      - $ref: '#/components/parameters/StyleProfileId'
+      - name: candidate_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Presentations]
+      operationId: confirmStyleTemplateCandidate
+      summary: 人工确认指定候选模板并冻结其编译快照
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmTemplateCandidateRequest'
+      responses:
+        '200':
+          description: 已确认候选模板
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StyleTemplateCandidateResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
   /solution-runs/{run_id}/presentations:
     parameters:
       - $ref: '#/components/parameters/RunId'
@@ -1716,6 +1787,73 @@ components:
       required: [expected_version]
       properties:
         expected_version: { type: integer, minimum: 1 }
+    RegenerateTemplateCandidatesRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_profile_version]
+      properties:
+        expected_profile_version: { type: integer, minimum: 1 }
+    ConfirmTemplateCandidateRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_profile_version, expected_candidate_version]
+      properties:
+        expected_profile_version: { type: integer, minimum: 1 }
+        expected_candidate_version: { type: integer, minimum: 1 }
+    StyleTemplateCandidate:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - candidate_id
+        - style_profile_id
+        - version
+        - status
+        - archetype_token
+        - compiled_template_hash
+        - compiler_version
+        - confidence_report
+        - validation_report
+        - preview_artifacts
+      properties:
+        id: { $ref: '#/components/schemas/BusinessId' }
+        candidate_id: { $ref: '#/components/schemas/BusinessId' }
+        style_profile_id: { $ref: '#/components/schemas/BusinessId' }
+        version: { type: integer, minimum: 1 }
+        status:
+          type: string
+          enum: [draft, previewing, needs_review, confirmed, rejected, superseded, failed]
+        archetype_token: { type: string, minLength: 1, maxLength: 64 }
+        compiled_template_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        compiler_version: { type: string, minLength: 1, maxLength: 32 }
+        confidence_report: { type: object, additionalProperties: true }
+        validation_report: { type: object, additionalProperties: true }
+        preview_artifacts: { type: object, additionalProperties: true }
+        confirmed_by_id:
+          oneOf:
+            - { $ref: '#/components/schemas/BusinessId' }
+            - { type: 'null' }
+        confirmed_at: { type: [string, 'null'], format: date-time }
+    StyleTemplateCandidateResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data: { $ref: '#/components/schemas/StyleTemplateCandidate' }
+    StyleTemplateCandidateListResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        data:
+          type: object
+          additionalProperties: false
+          required: [items, profile_version]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/StyleTemplateCandidate' }
+            profile_version: { type: integer, minimum: 1 }
     CreatePresentationRequest:
       type: object
       additionalProperties: false

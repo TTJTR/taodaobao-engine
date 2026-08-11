@@ -76,6 +76,7 @@ class FactLedgerService:
                     verbatim_text=claim.claim_text,
                     boundary=claim.boundary,
                     evidence=tuple(evidence_by_claim[claim.id]),
+                    allowed_labels=(claim.claim_key,),
                 )
                 for claim in claims.values()
             ),

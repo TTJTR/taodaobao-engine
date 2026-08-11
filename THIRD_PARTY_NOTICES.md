@@ -38,3 +38,21 @@ Licensed under the Apache License, Version 2.0. You may obtain a copy of the Lic
 <https://www.apache.org/licenses/LICENSE-2.0>. Unless required by applicable law or agreed to
 in writing, software distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+## FontTools
+
+The presentation text-layout subsystem uses FontTools to read advance widths and metadata
+from trusted local OpenType font files. No FontTools source code is copied into this project.
+
+Copyright (c) 2017 The FontTools Authors
+
+Licensed under the MIT License. See <https://github.com/fonttools/fonttools>.
+
+## Noto Sans SC
+
+The R1 Chinese presentation capacity baseline bundles Noto Sans SC Variable Font from
+`google/fonts`, revision `038b637da7b3fd956a4ed93ffc607c3d5e4ce172`.
+
+Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name
+"Source". Noto Sans SC is distributed under the SIL Open Font License, Version 1.1.
+The license text is retained at `app/assets/presentation/licenses/FONT-OFL-1.1.txt`.

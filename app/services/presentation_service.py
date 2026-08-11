@@ -24,6 +24,8 @@ from app.db.models import (
     SourceStatus,
     StyleProfile,
     StyleProfileStatus,
+    StyleTemplateStatus,
+    StyleTemplateVersion,
     TrustAction,
     TrustDecisionRecord,
     WorkflowTask,
@@ -160,6 +162,7 @@ class PresentationService:
                 status_code=409,
                 details={"conflicts": profile.conflict_notes},
             )
+        await self._confirmed_template(profile)
         profile.status = StyleProfileStatus.CONFIRMED
         profile.confirmed_by_id = self.user_id
         profile.confirmed_at = datetime.now(UTC)
@@ -180,6 +183,7 @@ class PresentationService:
         profile = await self.get_style(payload.style_profile_id)
         if profile.status != StyleProfileStatus.CONFIRMED:
             raise AppError(ErrorCode.VALIDATION_FAILED, "风格画像尚未人工确认", status_code=409)
+        template = await self._confirmed_template(profile)
         solution_run = await self._get(SolutionRun, run_id, "方案运行不存在")
         claims = list(
             (
@@ -220,7 +224,7 @@ class PresentationService:
         )
         self.session.add(run)
         await self.session.flush()
-        snapshot = await self._build_input_snapshot(run, claims, profile)
+        snapshot = await self._build_input_snapshot(run, claims, profile, template)
         self.session.add(snapshot)
         await self.session.commit()
         return run
@@ -408,7 +412,11 @@ class PresentationService:
         return export
 
     async def _build_input_snapshot(
-        self, run: PresentationRun, claims: list[ClaimRecord], profile: StyleProfile
+        self,
+        run: PresentationRun,
+        claims: list[ClaimRecord],
+        profile: StyleProfile,
+        template: StyleTemplateVersion | None,
     ) -> PresentationInputSnapshot:
         claim_ids = [item.id for item in claims]
         links = list(
@@ -448,6 +456,16 @@ class PresentationService:
                 "trust_version": run.upstream_trust_version,
                 "style_profile_id": str(profile.id),
                 "style_version": profile.version,
+                "style_template": (
+                    {
+                        "candidate_id": str(template.candidate_id),
+                        "version": template.version,
+                        "compiled_template_hash": template.compiled_template_hash,
+                        "compiled_template": template.compiled_template_json,
+                    }
+                    if template is not None
+                    else None
+                ),
                 "audience": run.audience,
                 "language": run.language,
                 "released_claims": [
@@ -471,6 +489,48 @@ class PresentationService:
                 ],
             },
         )
+
+    async def _confirmed_template(
+        self, profile: StyleProfile
+    ) -> StyleTemplateVersion | None:
+        reference = profile.visual_json.get("confirmed_template")
+        requires_template = "template_generation" in profile.visual_json
+        if not reference:
+            if requires_template:
+                raise AppError(
+                    ErrorCode.VALIDATION_FAILED,
+                    "必须先人工确认一个候选模板",
+                    status_code=409,
+                )
+            return None
+        try:
+            candidate_id = uuid.UUID(str(reference["candidate_id"]))
+            version = int(reference["version"])
+            expected_hash = str(reference["compiled_template_hash"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "已确认模板引用格式无效",
+                status_code=409,
+            ) from exc
+        template = await self.session.scalar(
+            select(StyleTemplateVersion).where(
+                StyleTemplateVersion.workspace_id == self.workspace_id,
+                StyleTemplateVersion.style_profile_id == profile.id,
+                StyleTemplateVersion.candidate_id == candidate_id,
+                StyleTemplateVersion.version == version,
+                StyleTemplateVersion.status == StyleTemplateStatus.CONFIRMED,
+                StyleTemplateVersion.compiled_template_hash == expected_hash,
+                StyleTemplateVersion.is_deleted.is_(False),
+            )
+        )
+        if template is None:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "已确认模板快照不存在或哈希不一致",
+                status_code=409,
+            )
+        return template
 
     async def _released_claims(
         self, run_id: uuid.UUID, candidate_version: int

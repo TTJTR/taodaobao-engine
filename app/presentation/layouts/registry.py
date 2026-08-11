@@ -19,5 +19,11 @@ class LayoutRegistry:
     def tokens(self) -> tuple[str, ...]:
         return tuple(self._templates)
 
+    def with_templates(self, templates: tuple[LayoutTemplate, ...]) -> "LayoutRegistry":
+        """Create an isolated registry where confirmed profile templates override defaults."""
+        merged = dict(self._templates)
+        merged.update((template.token, template) for template in templates)
+        return LayoutRegistry(tuple(merged.values()))
+
 
 default_layout_registry = LayoutRegistry(LAYOUT_TEMPLATES)
