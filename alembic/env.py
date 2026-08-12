@@ -1,4 +1,6 @@
 import asyncio
+import os
+import re
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -22,6 +24,7 @@ target_metadata = Base.metadata
 
 ENUM_CHECK_CONSTRAINTS = {
     "ai_run_status",
+    "artifact_relation_type",
     "capability_review_status",
     "claim_evidence_label",
     "claim_verification_status",
@@ -38,6 +41,8 @@ ENUM_CHECK_CONSTRAINTS = {
     "profile_status",
     "profile_intelligence_proposal_status",
     "presentation_status",
+    "raw_artifact_kind",
+    "raw_artifact_status",
     "reference_deck_status",
     "rehearsal_status",
     "research_step_status",
@@ -50,6 +55,8 @@ ENUM_CHECK_CONSTRAINTS = {
     "source_status",
     "source_type",
     "style_profile_status",
+    "tender_parse_status",
+    "tender_requirement_status",
     "trust_decision_action",
     "workflow_task_status",
 }
@@ -62,6 +69,8 @@ def include_object(
     reflected: bool,
     compare_to: object | None,
 ) -> bool:
+    if type_ == "table" and name == "alembic_version":
+        return False
     # Alembic cannot pair reflected CHECKs created by non-native SAEnum.
     if (
         type_ == "check_constraint"
@@ -118,12 +127,22 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
+    schema = os.getenv("ALEMBIC_SCHEMA")
+    if schema:
+        if re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", schema) is None:
+            raise RuntimeError("ALEMBIC_SCHEMA must be a safe PostgreSQL identifier")
+        search_path = f'"{schema}"'
+        if os.getenv("ALEMBIC_INCLUDE_PUBLIC_EXTENSIONS") == "1":
+            search_path += ", public"
+        connection.exec_driver_sql(f"SET search_path TO {search_path}")
+        connection.commit()
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
         compare_server_default=True,
         include_object=include_object,
+        version_table_schema=schema,
     )
 
     with context.begin_transaction():

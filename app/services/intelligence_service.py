@@ -2,26 +2,38 @@ import hashlib
 import ipaddress
 import socket
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.contracts.ai import AIEngine
 from app.core.errors import AppError, ErrorCode
 from app.db.models import (
+    ArtifactRelationType,
     CustomerProfile,
+    CustomerProfileVersion,
     IntelligenceFreshness,
     IntelligenceItem,
+    IntelligenceItemArtifactLink,
     IntelligenceReviewStatus,
     IntelligenceSnapshot,
     ProfileIntelligenceProposal,
     ProfileStatus,
     ProposalStatus,
+    RawArtifact,
+    RawArtifactStatus,
     SearchRun,
     SearchRunStatus,
+    WorkflowTask,
+    WorkflowTaskStatus,
 )
+from app.schemas.intelligence_provider import EnrichmentJobRequest, EnrichmentJobResult
 from app.schemas.v2 import ManualIntelligenceSource
+
+MAX_AI_FACTS = 50
+MAX_AI_FIELD_CHARS = 10_000
 
 
 def validate_public_source_url(url: str) -> str:
@@ -47,6 +59,25 @@ def validate_public_source_url(url: str) -> str:
     return hostname
 
 
+def validate_provider_source_url(url: str) -> str:
+    hostname = validate_public_source_url(url)
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo(hostname, None)}
+    except socket.gaierror as exc:
+        raise AppError(
+            ErrorCode.UNSAFE_EXTERNAL_URL,
+            "Provider 来源域名当前无法验证",
+            status_code=422,
+        ) from exc
+    if not addresses:
+        raise AppError(
+            ErrorCode.UNSAFE_EXTERNAL_URL,
+            "Provider 来源域名没有可验证地址",
+            status_code=422,
+        )
+    return hostname
+
+
 def _extract_facts(content: str) -> list[dict[str, str]]:
     paragraphs = [part.strip() for part in content.replace("\r", "\n").split("\n") if part.strip()]
     return [
@@ -55,11 +86,430 @@ def _extract_facts(content: str) -> list[dict[str, str]]:
     ]
 
 
+def _normalize_ai_facts(ai_output: dict, artifact: RawArtifact) -> list[dict]:
+    facts: list[dict] = []
+    for field, value in sorted(ai_output.items()):
+        if field in {"source_ids", "title", "summary"} or value in (None, "", [], {}):
+            continue
+        safe_value = _bounded_json_value(value)
+        facts.append(
+            {
+                "field": str(field)[:128],
+                "value": safe_value,
+                "classification": "external_public_information",
+                "raw_artifact_id": str(artifact.id),
+                "content_sha256": artifact.content_sha256,
+            }
+        )
+        if len(facts) >= MAX_AI_FACTS:
+            break
+    if not facts:
+        raise AppError(ErrorCode.AI_OUTPUT_INVALID, "AI 未返回可用情报事实", status_code=422)
+    return facts
+
+
+def _profile_diff(profile_data: dict, ai_output: dict) -> dict:
+    current = profile_data.get("external_intelligence", {})
+    patch: dict[str, dict] = {}
+    for field, proposed in sorted(ai_output.items()):
+        if field in {"source_ids", "title", "summary"} or proposed in (None, "", [], {}):
+            continue
+        proposed = _bounded_json_value(proposed)
+        previous = current.get(field)
+        if previous != proposed:
+            patch[field] = {
+                "operation": "replace" if field in current else "add",
+                "previous": previous,
+                "proposed": proposed,
+            }
+    return patch
+
+
+def _apply_profile_patch(current: dict, patch: dict) -> dict:
+    updated = dict(current)
+    for field, change in patch.items():
+        if isinstance(change, dict) and "operation" in change:
+            if change.get("operation") not in {"add", "replace"}:
+                raise AppError(ErrorCode.VALIDATION_FAILED, "画像提议格式无效", status_code=422)
+            updated[field] = change.get("proposed")
+        else:
+            updated[field] = _bounded_json_value(change)
+    return updated
+
+
+def _bounded_json_value(value):
+    if isinstance(value, str):
+        return value[:MAX_AI_FIELD_CHARS]
+    if isinstance(value, list):
+        return [_bounded_json_value(item) for item in value[:100]]
+    if isinstance(value, dict):
+        return {
+            str(key)[:128]: _bounded_json_value(item)
+            for key, item in list(value.items())[:100]
+        }
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return str(value)[:MAX_AI_FIELD_CHARS]
+
+
+def _ai_title(ai_output: dict, artifact: RawArtifact) -> str:
+    title = ai_output.get("title") or artifact.metadata_snapshot.get("title") or artifact.source_url
+    return str(title)[:500]
+
+
+def _ai_summary(ai_output: dict, fallback: str) -> str:
+    summary = ai_output.get("summary") or ai_output.get("background") or fallback
+    return str(summary)[:2000]
+
+
+def _canonical_url(url: str) -> str:
+    parsed = urlparse(url)
+    path = parsed.path or "/"
+    return parsed._replace(
+        scheme=parsed.scheme.lower(),
+        netloc=parsed.netloc.lower(),
+        path=path.rstrip("/") or "/",
+        fragment="",
+    ).geturl()
+
+
+def _verify_provider_facts(
+    request: EnrichmentJobRequest,
+    result: EnrichmentJobResult,
+    artifacts: list[RawArtifact],
+) -> tuple[list[dict], dict[uuid.UUID, RawArtifact], dict[str, object]]:
+    allowed_fields = set(request.allowed_fields)
+    artifacts_by_url = {
+        _canonical_url(source_url): artifact
+        for artifact in artifacts
+        if (source_url := artifact.normalized_url or artifact.source_url)
+        and artifact.text_content
+    }
+    verified_facts: list[dict] = []
+    linked_artifacts: dict[uuid.UUID, RawArtifact] = {}
+    proposed_values: dict[str, object] = {}
+    for fact in result.facts:
+        if fact.field not in allowed_fields:
+            raise AppError(
+                ErrorCode.AI_OUTPUT_INVALID,
+                "Provider 返回了未授权字段",
+                status_code=422,
+                details={"field": fact.field},
+            )
+        citations = []
+        for citation in fact.citations:
+            source_url = str(citation.url)
+            validate_provider_source_url(source_url)
+            artifact = artifacts_by_url.get(_canonical_url(source_url))
+            if artifact is None:
+                raise AppError(
+                    ErrorCode.AI_OUTPUT_INVALID,
+                    "Provider 引文没有对应的原始制品",
+                    status_code=422,
+                )
+            quote = citation.quote.strip()
+            if not quote or quote not in (artifact.text_content or ""):
+                raise AppError(
+                    ErrorCode.AI_OUTPUT_INVALID,
+                    "Provider 引文无法在原始正文中定位",
+                    status_code=422,
+                )
+            quote_hash = hashlib.sha256(quote.encode()).hexdigest()
+            citations.append(
+                {
+                    "raw_artifact_id": str(artifact.id),
+                    "source_url": artifact.source_url,
+                    "quote": quote,
+                    "quote_hash": quote_hash,
+                    "provider_confidence": citation.provider_confidence,
+                    "captured_at": artifact.captured_at.isoformat(),
+                }
+            )
+            linked_artifacts[artifact.id] = artifact
+        verified_facts.append(
+            {
+                "field": fact.field,
+                "value": _bounded_json_value(fact.value),
+                "category": fact.category,
+                "classification": "external_public_information",
+                "provider_confidence": fact.provider_confidence,
+                "citation_status": "verified",
+                "citations": citations,
+            }
+        )
+        proposed_values[fact.field] = _bounded_json_value(fact.value)
+    if not verified_facts or not linked_artifacts:
+        raise AppError(
+            ErrorCode.AI_OUTPUT_INVALID,
+            "Provider 未返回可验证事实",
+            status_code=422,
+        )
+    return verified_facts, linked_artifacts, proposed_values
+
+
 class IntelligenceService:
     def __init__(self, session: AsyncSession, workspace_id: uuid.UUID, user_id: uuid.UUID) -> None:
         self.session = session
         self.workspace_id = workspace_id
         self.user_id = user_id
+
+    async def enrich_artifact_for_profile(
+        self,
+        artifact_id: uuid.UUID,
+        profile_id: uuid.UUID,
+        ai_engine: AIEngine,
+    ) -> tuple[IntelligenceItem, IntelligenceSnapshot, ProfileIntelligenceProposal | None]:
+        artifact = await self._get(RawArtifact, artifact_id)
+        profile = await self._get(CustomerProfile, profile_id)
+        if artifact.status not in {RawArtifactStatus.CAPTURED, RawArtifactStatus.PARTIAL}:
+            raise AppError(
+                ErrorCode.INTELLIGENCE_ITEM_UNAVAILABLE,
+                "原始情报制品当前不可用于抽取",
+                status_code=409,
+            )
+        if not artifact.text_content or not artifact.source_url or not artifact.search_run_id:
+            raise AppError(
+                ErrorCode.INTELLIGENCE_ITEM_UNAVAILABLE,
+                "原始情报缺少正文、来源 URL 或采集运行",
+                status_code=409,
+            )
+        run = await self._get(SearchRun, artifact.search_run_id)
+        ai_output = await ai_engine.extract_profile(
+            artifact.text_content,
+            [str(artifact.id)],
+        )
+        facts = _normalize_ai_facts(ai_output, artifact)
+        normalized_content = " ".join(artifact.text_content.split())
+        fingerprint = hashlib.sha256(
+            f"{artifact.id}\n{artifact.content_sha256}\n{facts!r}".encode()
+        ).hexdigest()
+        existing = await self.session.scalar(
+            select(IntelligenceItem).where(
+                IntelligenceItem.workspace_id == self.workspace_id,
+                IntelligenceItem.fingerprint == fingerprint,
+                IntelligenceItem.is_deleted.is_(False),
+            )
+        )
+        if existing is not None:
+            item = existing
+        else:
+            item = IntelligenceItem(
+                workspace_id=self.workspace_id,
+                search_run_id=run.id,
+                title=_ai_title(ai_output, artifact),
+                source_url=artifact.source_url,
+                source_domain=urlparse(artifact.source_url).hostname or "unknown",
+                published_at=artifact.published_at,
+                captured_at=artifact.captured_at,
+                content=artifact.text_content,
+                summary=_ai_summary(ai_output, normalized_content),
+                facts=facts,
+                fingerprint=fingerprint,
+                freshness=IntelligenceFreshness.CURRENT,
+                review_status=IntelligenceReviewStatus.PENDING,
+                metadata_snapshot={
+                    "provider": "ai_enrichment",
+                    "raw_artifact_id": str(artifact.id),
+                    "content_sha256": artifact.content_sha256,
+                    "boundary": "external_public_information",
+                },
+            )
+            self.session.add(item)
+            await self.session.flush()
+            self.session.add(
+                IntelligenceItemArtifactLink(
+                    workspace_id=self.workspace_id,
+                    intelligence_item_id=item.id,
+                    raw_artifact_id=artifact.id,
+                    relation_type=ArtifactRelationType.PRIMARY,
+                    source_snapshot={
+                        "source_url": artifact.source_url,
+                        "content_sha256": artifact.content_sha256,
+                        "captured_at": artifact.captured_at.isoformat(),
+                    },
+                )
+            )
+        snapshot = await self._create_snapshot_uncommitted("customer_profile", [item])
+        patch = _profile_diff(profile.profile, ai_output)
+        proposal = None
+        if patch:
+            proposal = ProfileIntelligenceProposal(
+                workspace_id=self.workspace_id,
+                profile_id=profile.id,
+                snapshot_id=snapshot.id,
+                created_by_id=self.user_id,
+                proposed_patch=patch,
+                status=ProposalStatus.PENDING_CONFIRMATION,
+            )
+            self.session.add(proposal)
+        await self.session.commit()
+        await self.session.refresh(item)
+        await self.session.refresh(snapshot)
+        if proposal is not None:
+            await self.session.refresh(proposal)
+        return item, snapshot, proposal
+
+    async def accept_provider_result(
+        self,
+        *,
+        run_id: uuid.UUID,
+        profile_id: uuid.UUID,
+        request: EnrichmentJobRequest,
+        result: EnrichmentJobResult,
+    ) -> tuple[IntelligenceItem, IntelligenceSnapshot, ProfileIntelligenceProposal | None]:
+        run = await self._get(SearchRun, run_id)
+        profile = await self._get(CustomerProfile, profile_id)
+        artifacts = list(
+            await self.session.scalars(
+                select(RawArtifact).where(
+                    RawArtifact.workspace_id == self.workspace_id,
+                    RawArtifact.search_run_id == run.id,
+                    RawArtifact.status.in_([RawArtifactStatus.CAPTURED, RawArtifactStatus.PARTIAL]),
+                    RawArtifact.is_deleted.is_(False),
+                )
+            )
+        )
+        verified_facts, linked_artifacts, proposed_values = _verify_provider_facts(
+            request, result, artifacts
+        )
+        fingerprint = hashlib.sha256(
+            repr((result.provider_job_id, verified_facts)).encode()
+        ).hexdigest()
+        item = await self.session.scalar(
+            select(IntelligenceItem).where(
+                IntelligenceItem.workspace_id == self.workspace_id,
+                IntelligenceItem.fingerprint == fingerprint,
+                IntelligenceItem.is_deleted.is_(False),
+            )
+        )
+        if item is None:
+            primary = next(iter(linked_artifacts.values()))
+            item = IntelligenceItem(
+                workspace_id=self.workspace_id,
+                search_run_id=run.id,
+                title=f"{request.company_name} 公开情报",
+                source_url=primary.source_url or str(request.website_url),
+                source_domain=urlparse(primary.source_url or str(request.website_url)).hostname
+                or "unknown",
+                published_at=primary.published_at,
+                captured_at=max(row.captured_at for row in linked_artifacts.values()),
+                content="\n\n".join(
+                    citation["quote"]
+                    for fact in verified_facts
+                    for citation in fact["citations"]
+                ),
+                summary=f"Open Enrich 返回 {len(verified_facts)} 条经原文验证的候选事实。",
+                facts=verified_facts,
+                fingerprint=fingerprint,
+                freshness=IntelligenceFreshness.CURRENT,
+                review_status=IntelligenceReviewStatus.PENDING,
+                metadata_snapshot={
+                    "provider": "open_enrich",
+                    "provider_job_id": result.provider_job_id,
+                    "provider_status": result.status,
+                    "tool_calls_used": result.tool_calls_used,
+                    "cost_usd": result.cost_usd,
+                    "boundary": "external_public_information",
+                },
+            )
+            self.session.add(item)
+            await self.session.flush()
+            for index, artifact in enumerate(linked_artifacts.values()):
+                self.session.add(
+                    IntelligenceItemArtifactLink(
+                        workspace_id=self.workspace_id,
+                        intelligence_item_id=item.id,
+                        raw_artifact_id=artifact.id,
+                        relation_type=(
+                            ArtifactRelationType.PRIMARY
+                            if index == 0
+                            else ArtifactRelationType.CORROBORATING
+                        ),
+                        source_snapshot={
+                            "source_url": artifact.source_url,
+                            "content_sha256": artifact.content_sha256,
+                            "captured_at": artifact.captured_at.isoformat(),
+                        },
+                    )
+                )
+        snapshot = await self._create_snapshot_uncommitted("customer_profile", [item])
+        patch = _profile_diff(profile.profile, proposed_values)
+        proposal = None
+        if patch:
+            proposal = ProfileIntelligenceProposal(
+                workspace_id=self.workspace_id,
+                profile_id=profile.id,
+                snapshot_id=snapshot.id,
+                created_by_id=self.user_id,
+                proposed_patch=patch,
+                status=ProposalStatus.PENDING_CONFIRMATION,
+            )
+            self.session.add(proposal)
+        await self.session.commit()
+        await self.session.refresh(item)
+        await self.session.refresh(snapshot)
+        if proposal:
+            await self.session.refresh(proposal)
+        return item, snapshot, proposal
+
+    async def queue_provider_enrichment(
+        self,
+        run_id: uuid.UUID,
+        profile_id: uuid.UUID,
+        request: EnrichmentJobRequest,
+    ) -> WorkflowTask:
+        run = await self._get(SearchRun, run_id)
+        await self._get(CustomerProfile, profile_id)
+        if request.client_job_id != run.id:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "Provider client_job_id 必须等于 SearchRun ID",
+                status_code=422,
+            )
+        if request.website_url is not None:
+            validate_provider_source_url(str(request.website_url))
+        task = await self.session.scalar(
+            select(WorkflowTask).where(
+                WorkflowTask.kind == "open_enrich",
+                WorkflowTask.target_id == run.id,
+                *self._filters(WorkflowTask),
+            )
+        )
+        payload = {
+            "profile_id": str(profile_id),
+            "user_id": str(self.user_id),
+            "request": request.model_dump(mode="json"),
+            "provider_job_id": None,
+            "poll_count": 0,
+            "cost_usd": 0,
+            "tool_calls_used": 0,
+        }
+        if task is None:
+            task = WorkflowTask(
+                workspace_id=self.workspace_id,
+                kind="open_enrich",
+                target_id=run.id,
+                status=WorkflowTaskStatus.QUEUED,
+                stage="queued",
+                trace_id=run.trace_id,
+                payload=payload,
+                attempt_count=0,
+                max_attempts=200,
+                available_at=datetime.now(UTC),
+                deadline_at=datetime.now(UTC) + timedelta(minutes=30),
+            )
+            self.session.add(task)
+        elif task.payload.get("request") != payload["request"]:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "该 SearchRun 已存在不同参数的富化任务",
+                status_code=409,
+            )
+        run.provider = "open_enrich"
+        run.status = SearchRunStatus.QUEUED
+        await self.session.commit()
+        await self.session.refresh(task)
+        return task
 
     async def create_run(
         self,
@@ -190,6 +640,14 @@ class IntelligenceService:
                 "部分情报不存在、已失效或不属于当前工作区",
                 status_code=409,
             )
+        snapshot = await self._create_snapshot_uncommitted(purpose, items)
+        await self.session.commit()
+        await self.session.refresh(snapshot)
+        return snapshot
+
+    async def _create_snapshot_uncommitted(
+        self, purpose: str, items: list[IntelligenceItem]
+    ) -> IntelligenceSnapshot:
         rows = [
             self.serialize_item(item, include_content=True)
             for item in sorted(items, key=lambda x: str(x.id))
@@ -215,8 +673,7 @@ class IntelligenceService:
             schema_version="v2.0",
         )
         self.session.add(snapshot)
-        await self.session.commit()
-        await self.session.refresh(snapshot)
+        await self.session.flush()
         return snapshot
 
     async def get_snapshot(self, snapshot_id: uuid.UUID) -> IntelligenceSnapshot:
@@ -243,19 +700,61 @@ class IntelligenceService:
     async def decide_proposal(
         self, profile_id: uuid.UUID, proposal_id: uuid.UUID, *, accept: bool, note: str | None
     ) -> ProfileIntelligenceProposal:
-        proposal = await self._get(ProfileIntelligenceProposal, proposal_id)
+        proposal = await self.session.scalar(
+            select(ProfileIntelligenceProposal)
+            .where(
+                ProfileIntelligenceProposal.id == proposal_id,
+                *self._filters(ProfileIntelligenceProposal),
+            )
+            .with_for_update()
+        )
+        if proposal is None:
+            raise AppError(ErrorCode.VALIDATION_FAILED, "资源不存在", status_code=404)
         if proposal.profile_id != profile_id:
             raise AppError(ErrorCode.VALIDATION_FAILED, "画像提案与客户不匹配", status_code=409)
         if proposal.status != ProposalStatus.PENDING_CONFIRMATION:
             raise AppError(ErrorCode.PROPOSAL_ALREADY_DECIDED, "该画像提案已处理", status_code=409)
         if accept:
-            profile = await self._get(CustomerProfile, profile_id)
+            profile = await self.session.scalar(
+                select(CustomerProfile)
+                .where(
+                    CustomerProfile.id == profile_id,
+                    *self._filters(CustomerProfile),
+                )
+                .with_for_update()
+            )
+            if profile is None:
+                raise AppError(ErrorCode.VALIDATION_FAILED, "资源不存在", status_code=404)
+            self.session.add(
+                CustomerProfileVersion(
+                    workspace_id=self.workspace_id,
+                    profile_id=profile.id,
+                    proposal_id=proposal.id,
+                    version=profile.version,
+                    changed_by_id=self.user_id,
+                    change_type="intelligence_confirm",
+                    profile_snapshot={
+                        "customer_name": profile.customer_name,
+                        "profile": profile.profile,
+                        "status": profile.status.value,
+                        "confirmed_by_id": str(profile.confirmed_by_id)
+                        if profile.confirmed_by_id
+                        else None,
+                        "confirmed_at": profile.confirmed_at.isoformat()
+                        if profile.confirmed_at
+                        else None,
+                    },
+                )
+            )
             # External intelligence is namespaced and cannot masquerade as confirmed internal fact.
             profile.profile = {
                 **profile.profile,
                 "external_intelligence": {
                     **profile.profile.get("external_intelligence", {}),
-                    **proposal.proposed_patch,
+                    **_apply_profile_patch(
+                        profile.profile.get("external_intelligence", {}),
+                        proposal.proposed_patch,
+                    ),
                     "source_snapshot_id": str(proposal.snapshot_id),
                     "confirmed_by": str(self.user_id),
                 },
@@ -263,6 +762,7 @@ class IntelligenceService:
             profile.status = ProfileStatus.PENDING_CONFIRMATION
             profile.confirmed_by_id = None
             profile.confirmed_at = None
+            profile.version += 1
             proposal.status = ProposalStatus.ACCEPTED
         else:
             proposal.status = ProposalStatus.REJECTED

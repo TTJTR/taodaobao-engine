@@ -9,8 +9,13 @@ from app.core.responses import success_response
 from app.schemas.v2 import (
     CreateResponseMatrixRequest,
     CreateTenderRequest,
+    MergeTenderRequirementsRequest,
+    QueueTenderParseRequest,
+    RequirementVersionRequest,
     ReviewResponseItemRequest,
+    SplitTenderRequirementRequest,
     UpdateResponseItemRequest,
+    UpdateTenderRequirementRequest,
 )
 from app.services.tender_service import TenderService
 
@@ -41,6 +46,13 @@ def _requirement(row) -> dict:
         "category": row.category,
         "mandatory": row.mandatory,
         "source_location": row.source_location,
+        "version": row.version,
+        "status": row.status.value,
+        "acceptance_condition": row.acceptance_condition,
+        "constraints": row.constraints,
+        "ambiguities": row.ambiguities,
+        "confirmed_by_id": str(row.confirmed_by_id) if row.confirmed_by_id else None,
+        "confirmed_at": row.confirmed_at.isoformat() if row.confirmed_at else None,
     }
 
 
@@ -50,12 +62,20 @@ def _item(row) -> dict:
         "matrix_id": str(row.matrix_id),
         "requirement_id": str(row.requirement_id),
         "response_text": row.response_text,
+        "ai_draft": row.ai_draft,
+        "current_answer": row.current_answer,
         "evidence_status": row.evidence_status.value,
         "evidence_refs": row.evidence_refs,
         "risks": row.risks,
+        "internal_exp_links": row.internal_exp_links,
+        "internal_cap_links": row.internal_cap_links,
+        "external_ctx_links": row.external_ctx_links,
+        "risk_flags": row.risk_flags,
         "review_status": row.review_status,
         "reviewer_id": str(row.reviewer_id) if row.reviewer_id else None,
         "review_note": row.review_note,
+        "approved_at": row.approved_at.isoformat() if row.approved_at else None,
+        "version": row.version,
         "updated_at": row.updated_at.isoformat(),
     }
 
@@ -116,6 +136,32 @@ async def get_tender(
     return success_response(request, _tender(row))
 
 
+@router.post("/{tender_id}/parse-tasks", status_code=status.HTTP_202_ACCEPTED)
+async def queue_tender_parse(
+    tender_id: uuid.UUID,
+    payload: QueueTenderParseRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    task = await TenderService(session, workspace_id, current_user.id).queue_parse(
+        tender_id, payload.raw_artifact_id
+    )
+    return success_response(
+        request,
+        {
+            "task_id": str(task.id),
+            "tender_id": str(task.target_id),
+            "raw_artifact_id": task.payload["raw_artifact_id"],
+            "status": task.status.value,
+            "stage": task.stage,
+            "trace_id": task.trace_id,
+        },
+    )
+
+
 @router.get("/{tender_id}/requirements")
 async def get_tender_requirements(
     tender_id: uuid.UUID,
@@ -128,6 +174,108 @@ async def get_tender_requirements(
     return success_response(
         request, {"items": [_requirement(row) for row in rows], "total": len(rows)}
     )
+
+
+@router.post("/{tender_id}/requirements/breakdown", status_code=status.HTTP_201_CREATED)
+async def breakdown_tender_requirements(
+    tender_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    rows = await TenderService(session, workspace_id, current_user.id).breakdown_requirements(
+        tender_id
+    )
+    return success_response(
+        request, {"items": [_requirement(row) for row in rows], "total": len(rows)}
+    )
+
+
+@router.patch("/{tender_id}/requirements/{requirement_id}")
+async def update_tender_requirement(
+    tender_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    payload: UpdateTenderRequirementRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    changes = payload.model_dump(exclude={"expected_version"}, exclude_unset=True)
+    row = await TenderService(session, workspace_id, current_user.id).update_requirement(
+        tender_id, requirement_id, payload.expected_version, **changes
+    )
+    return success_response(request, _requirement(row))
+
+
+@router.post("/{tender_id}/requirements/{requirement_id}/confirm")
+async def confirm_tender_requirement(
+    tender_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    payload: RequirementVersionRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    row = await TenderService(session, workspace_id, current_user.id).confirm_requirement(
+        tender_id, requirement_id, payload.expected_version
+    )
+    return success_response(request, _requirement(row))
+
+
+@router.delete("/{tender_id}/requirements/{requirement_id}")
+async def delete_tender_requirement(
+    tender_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    payload: RequirementVersionRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    await TenderService(session, workspace_id, current_user.id).delete_requirement(
+        tender_id, requirement_id, payload.expected_version
+    )
+    return success_response(request, {"deleted": True, "id": str(requirement_id)})
+
+
+@router.post("/{tender_id}/requirements/merge")
+async def merge_tender_requirements(
+    tender_id: uuid.UUID,
+    payload: MergeTenderRequirementsRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    row = await TenderService(session, workspace_id, current_user.id).merge_requirements(
+        tender_id, payload.requirement_ids, payload.expected_versions, payload.requirement_text
+    )
+    return success_response(request, _requirement(row))
+
+
+@router.post("/{tender_id}/requirements/{requirement_id}/split", status_code=201)
+async def split_tender_requirement(
+    tender_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    payload: SplitTenderRequirementRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    rows = await TenderService(session, workspace_id, current_user.id).split_requirement(
+        tender_id, requirement_id, payload.expected_version, payload.items
+    )
+    return success_response(request, {"items": [_requirement(row) for row in rows]})
 
 
 @router.post("/{tender_id}/response-matrices", status_code=status.HTTP_201_CREATED)
@@ -194,7 +342,7 @@ async def update_response_matrix_item(
     _: str = Depends(require_idempotency_key),
 ) -> dict:
     row = await TenderService(session, workspace_id, current_user.id).update_item(
-        matrix_id, item_id, payload.response_text, payload.risks
+        matrix_id, item_id, payload.response_text, payload.risks, payload.expected_version
     )
     return success_response(request, _item(row))
 
@@ -211,6 +359,11 @@ async def review_response_matrix_item(
     _: str = Depends(require_idempotency_key),
 ) -> dict:
     row = await TenderService(session, workspace_id, current_user.id).review_item(
-        matrix_id, item_id, payload.action, payload.note
+        matrix_id,
+        item_id,
+        payload.action,
+        payload.note,
+        payload.expected_version,
+        payload.current_answer,
     )
     return success_response(request, _item(row))

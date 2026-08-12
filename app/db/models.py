@@ -5,6 +5,7 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -181,6 +182,43 @@ class SearchRunStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class RawArtifactKind(StrEnum):
+    WEB_PAGE = "web_page"
+    TENDER_FILE = "tender_file"
+    PASTED_TEXT = "pasted_text"
+
+
+class RawArtifactStatus(StrEnum):
+    CAPTURED = "captured"
+    PARTIAL = "partial"
+    VALIDATED = "validated"
+    REJECTED = "rejected"
+    UNAVAILABLE = "unavailable"
+
+
+class ArtifactRelationType(StrEnum):
+    PRIMARY = "primary"
+    DUPLICATE = "duplicate"
+    CORROBORATING = "corroborating"
+    CONFLICTING = "conflicting"
+
+
+class TenderParseStatus(StrEnum):
+    QUEUED = "queued"
+    PARSING = "parsing"
+    PARSED = "parsed"
+    FAILED = "failed"
+    REJECTED = "rejected"
+
+
+class TenderRequirementStatus(StrEnum):
+    AI_DRAFT = "ai_draft"
+    EDITED = "edited"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+    SUPERSEDED = "superseded"
+
+
 class IntelligenceFreshness(StrEnum):
     CURRENT = "current"
     STALE = "stale"
@@ -292,6 +330,7 @@ class CustomerProfile(EntityMixin, WorkspaceMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
     sources: Mapped[list["Source"]] = relationship(back_populates="customer_profile")
     sessions: Mapped[list["Session"]] = relationship(back_populates="customer_profile")
@@ -299,6 +338,27 @@ class CustomerProfile(EntityMixin, WorkspaceMixin, Base):
     @property
     def source_ids(self) -> list[uuid.UUID]:
         return [source.id for source in self.sources if not source.is_deleted]
+
+
+class CustomerProfileVersion(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "customer_profile_versions"
+    __table_args__ = (
+        UniqueConstraint("profile_id", "version", name="uq_customer_profile_version"),
+        Index("ix_customer_profile_versions_profile", "profile_id", "version"),
+    )
+
+    profile_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customer_profiles.id", ondelete="CASCADE"), nullable=False
+    )
+    proposal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("profile_intelligence_proposals.id", ondelete="SET NULL")
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    changed_by_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    change_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    profile_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
 
 class Source(EntityMixin, WorkspaceMixin, Base):
@@ -1230,6 +1290,42 @@ class SearchRun(EntityMixin, WorkspaceMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class RawArtifact(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "raw_artifacts"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "artifact_key", name="uq_raw_artifact_key"),
+        Index("ix_raw_artifacts_run_captured", "search_run_id", "captured_at"),
+        Index("ix_raw_artifacts_content_sha256", "workspace_id", "content_sha256"),
+    )
+
+    search_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("search_runs.id", ondelete="RESTRICT")
+    )
+    artifact_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[RawArtifactKind] = mapped_column(
+        enum_column(RawArtifactKind, "raw_artifact_kind"), nullable=False
+    )
+    status: Mapped[RawArtifactStatus] = mapped_column(
+        enum_column(RawArtifactStatus, "raw_artifact_status"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(String(2000))
+    normalized_url: Mapped[str | None] = mapped_column(String(2000))
+    source_filename: Mapped[str | None] = mapped_column(String(500))
+    mime_type: Mapped[str | None] = mapped_column(String(128))
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    storage_uri: Mapped[str | None] = mapped_column(String(2000))
+    text_content: Mapped[str | None] = mapped_column(Text)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    security_report: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    metadata_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_summary: Mapped[str | None] = mapped_column(String(1000))
+
+
 class IntelligenceItem(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "intelligence_items"
     __table_args__ = (
@@ -1256,6 +1352,29 @@ class IntelligenceItem(EntityMixin, WorkspaceMixin, Base):
         enum_column(IntelligenceReviewStatus, "intelligence_review_status"), nullable=False
     )
     metadata_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class IntelligenceItemArtifactLink(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "intelligence_item_artifact_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "intelligence_item_id",
+            "raw_artifact_id",
+            name="uq_intelligence_item_artifact_link",
+        ),
+        Index("ix_intelligence_item_artifacts_item", "intelligence_item_id", "created_at"),
+    )
+
+    intelligence_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("intelligence_items.id", ondelete="CASCADE"), nullable=False
+    )
+    raw_artifact_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("raw_artifacts.id", ondelete="RESTRICT"), nullable=False
+    )
+    relation_type: Mapped[ArtifactRelationType] = mapped_column(
+        enum_column(ArtifactRelationType, "artifact_relation_type"), nullable=False
+    )
+    source_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
 class IntelligenceSnapshot(EntityMixin, WorkspaceMixin, Base):
@@ -1312,11 +1431,42 @@ class TenderDocument(EntityMixin, WorkspaceMixin, Base):
     customer_profile_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("customer_profiles.id", ondelete="SET NULL")
     )
+    raw_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("raw_artifacts.id", ondelete="RESTRICT")
+    )
     source_filename: Mapped[str | None] = mapped_column(String(500))
     source_mime_type: Mapped[str | None] = mapped_column(String(128))
     source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     content_text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ready")
+
+
+class TenderParseVersion(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "tender_parse_versions"
+    __table_args__ = (
+        UniqueConstraint("tender_id", "version", name="uq_tender_parse_version"),
+        Index("ix_tender_parse_versions_tender", "tender_id", "version"),
+    )
+
+    tender_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tender_documents.id", ondelete="CASCADE"), nullable=False
+    )
+    raw_artifact_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("raw_artifacts.id", ondelete="RESTRICT"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    parser_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    parser_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    document_schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[TenderParseStatus] = mapped_column(
+        enum_column(TenderParseStatus, "tender_parse_status"), nullable=False
+    )
+    document_ir: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    resource_usage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_summary: Mapped[str | None] = mapped_column(String(1000))
 
 
 class TenderRequirement(EntityMixin, WorkspaceMixin, Base):
@@ -1328,11 +1478,44 @@ class TenderRequirement(EntityMixin, WorkspaceMixin, Base):
     tender_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tender_documents.id", ondelete="CASCADE"), nullable=False
     )
+    parse_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tender_parse_versions.id", ondelete="RESTRICT")
+    )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     requirement_text: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str] = mapped_column(String(64), nullable=False, default="general")
     mandatory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    acceptance_condition: Mapped[str | None] = mapped_column(Text)
+    constraints: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    ambiguities: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     source_location: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[TenderRequirementStatus] = mapped_column(
+        enum_column(TenderRequirementStatus, "tender_requirement_status"), nullable=False
+    )
+    confirmed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TenderRequirementVersion(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "tender_requirement_versions"
+    __table_args__ = (
+        UniqueConstraint("requirement_id", "version", name="uq_tender_requirement_version"),
+        Index("ix_tender_requirement_versions_requirement", "requirement_id", "version"),
+    )
+
+    requirement_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tender_requirements.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    changed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    change_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    requirement_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    source_location: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
 
 class ResponseMatrix(EntityMixin, WorkspaceMixin, Base):
@@ -1362,16 +1545,32 @@ class ResponseMatrixItem(EntityMixin, WorkspaceMixin, Base):
         nullable=False,
     )
     response_text: Mapped[str] = mapped_column(Text, nullable=False)
+    ai_draft: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    current_answer: Mapped[str] = mapped_column(Text, nullable=False, default="")
     evidence_status: Mapped[ResponseEvidenceStatus] = mapped_column(
         enum_column(ResponseEvidenceStatus, "response_evidence_status"), nullable=False
     )
     evidence_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     risks: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    internal_exp_links: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    internal_cap_links: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    external_ctx_links: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    risk_flags: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     review_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     reviewer_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
     review_note: Mapped[str | None] = mapped_column(String(1000))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
 
 class RehearsalSession(EntityMixin, WorkspaceMixin, Base):

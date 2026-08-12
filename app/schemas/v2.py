@@ -29,6 +29,21 @@ class CreateProfileProposalRequest(BaseModel):
     proposed_patch: dict = Field(min_length=1)
 
 
+class EnrichRawArtifactRequest(BaseModel):
+    profile_id: uuid.UUID
+
+
+class QueueProviderEnrichmentRequest(BaseModel):
+    profile_id: uuid.UUID
+    company_name: str = Field(min_length=1, max_length=500)
+    website_url: HttpUrl | None = None
+    allowed_fields: list[str] = Field(min_length=1, max_length=20)
+    language: str = Field(default="zh-CN", min_length=2, max_length=16)
+    country: str | None = Field(default="CN", min_length=2, max_length=2)
+    max_tool_calls: int = Field(default=50, ge=1, le=200)
+    max_cost_usd: float = Field(default=2.0, gt=0, le=100)
+
+
 class DecideProposalRequest(BaseModel):
     note: str | None = Field(default=None, max_length=1000)
 
@@ -48,6 +63,41 @@ class CreateTenderRequest(BaseModel):
         return self
 
 
+class QueueTenderParseRequest(BaseModel):
+    raw_artifact_id: uuid.UUID
+
+
+class UpdateTenderRequirementRequest(BaseModel):
+    requirement_text: str | None = Field(default=None, min_length=1, max_length=20_000)
+    category: str | None = Field(default=None, min_length=1, max_length=64)
+    mandatory: bool | None = None
+    acceptance_condition: str | None = Field(default=None, max_length=20_000)
+    constraints: dict | None = None
+    ambiguities: list[str] | None = Field(default=None, max_length=100)
+    expected_version: int = Field(ge=1)
+
+
+class RequirementVersionRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
+class MergeTenderRequirementsRequest(BaseModel):
+    requirement_ids: list[uuid.UUID] = Field(min_length=2, max_length=50)
+    expected_versions: dict[str, int] = Field(min_length=2, max_length=50)
+    requirement_text: str = Field(min_length=1, max_length=20_000)
+
+
+class SplitTenderRequirementItem(BaseModel):
+    requirement_text: str = Field(min_length=1, max_length=20_000)
+    category: str | None = Field(default=None, min_length=1, max_length=64)
+    mandatory: bool | None = None
+
+
+class SplitTenderRequirementRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    items: list[SplitTenderRequirementItem] = Field(min_length=2, max_length=50)
+
+
 class CreateResponseMatrixRequest(BaseModel):
     experience_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
     capability_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
@@ -57,10 +107,13 @@ class CreateResponseMatrixRequest(BaseModel):
 class UpdateResponseItemRequest(BaseModel):
     response_text: str | None = Field(default=None, min_length=1, max_length=20_000)
     risks: list[str] | None = Field(default=None, max_length=20)
+    expected_version: int = Field(ge=1)
 
 
 class ReviewResponseItemRequest(BaseModel):
-    action: Literal["accept", "reject", "needs_revision"]
+    action: Literal["approve", "edit_and_approve", "reject", "needs_evidence"]
+    expected_version: int = Field(ge=1)
+    current_answer: str | None = Field(default=None, min_length=1, max_length=20_000)
     note: str | None = Field(default=None, max_length=1000)
 
 

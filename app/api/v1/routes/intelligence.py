@@ -3,14 +3,17 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
-from app.api.deps import CurrentUser, DatabaseSession, WorkspaceId
+from app.api.deps import AIEngineDependency, CurrentUser, DatabaseSession, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
+from app.schemas.intelligence_provider import EnrichmentJobRequest
 from app.schemas.v2 import (
     CreateIntelligenceSnapshotRequest,
     CreateProfileProposalRequest,
     CreateSearchRunRequest,
     DecideProposalRequest,
+    EnrichRawArtifactRequest,
+    QueueProviderEnrichmentRequest,
 )
 from app.services.intelligence_service import IntelligenceService
 
@@ -60,6 +63,33 @@ def _proposal(row) -> dict:
         "decision_note": row.decision_note,
         "created_at": row.created_at.isoformat(),
     }
+
+
+@router.post("/raw-artifacts/{artifact_id}/enrich", status_code=status.HTTP_201_CREATED)
+async def enrich_raw_artifact(
+    artifact_id: uuid.UUID,
+    payload: EnrichRawArtifactRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    ai_engine: AIEngineDependency,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    service = IntelligenceService(session, workspace_id, current_user.id)
+    item, snapshot, proposal = await service.enrich_artifact_for_profile(
+        artifact_id,
+        payload.profile_id,
+        ai_engine,
+    )
+    return success_response(
+        request,
+        {
+            "item": service.serialize_item(item, include_content=True),
+            "snapshot": _snapshot(snapshot),
+            "proposal": _proposal(proposal) if proposal else None,
+        },
+    )
 
 
 @router.post("/search-runs", status_code=status.HTTP_201_CREATED)
@@ -114,6 +144,41 @@ async def get_search_run(
 ) -> dict:
     row = await IntelligenceService(session, workspace_id, current_user.id).get_run(run_id)
     return success_response(request, _run(row))
+
+
+@router.post("/search-runs/{run_id}/enrichment-jobs", status_code=status.HTTP_202_ACCEPTED)
+async def queue_provider_enrichment(
+    run_id: uuid.UUID,
+    payload: QueueProviderEnrichmentRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    provider_request = EnrichmentJobRequest(
+        client_job_id=run_id,
+        company_name=payload.company_name,
+        website_url=payload.website_url,
+        allowed_fields=payload.allowed_fields,
+        language=payload.language,
+        country=payload.country,
+        max_tool_calls=payload.max_tool_calls,
+        max_cost_usd=payload.max_cost_usd,
+    )
+    task = await IntelligenceService(
+        session, workspace_id, current_user.id
+    ).queue_provider_enrichment(run_id, payload.profile_id, provider_request)
+    return success_response(
+        request,
+        {
+            "task_id": str(task.id),
+            "run_id": str(task.target_id),
+            "status": task.status.value,
+            "stage": task.stage,
+            "trace_id": task.trace_id,
+        },
+    )
 
 
 @router.get("/items")

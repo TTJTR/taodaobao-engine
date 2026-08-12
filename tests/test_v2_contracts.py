@@ -42,6 +42,76 @@ def test_v2_contract_does_not_replace_frozen_contracts() -> None:
     assert "/solution-runs" not in contract["paths"]
 
 
+def test_v2_contract_freezes_raw_artifact_and_document_locations() -> None:
+    contract = yaml.safe_load(Path("docs/openapi-v2-incremental.yaml").read_text(encoding="utf-8"))
+    schemas = contract["components"]["schemas"]
+
+    assert schemas["RawArtifact"]["properties"]["content_sha256"]["pattern"]
+    assert "partial" in schemas["RawArtifactStatus"]["enum"]
+    assert schemas["DocumentLocation"]["discriminator"]["propertyName"] == "kind"
+    assert set(schemas["DocumentLocation"]["discriminator"]["mapping"]) == {
+        "pdf_page",
+        "docx_paragraph",
+        "xlsx_cell",
+        "pptx_shape",
+        "plain_text",
+    }
+    requirement = schemas["TenderRequirement"]
+    assert requirement["properties"]["source_location"] == {
+        "$ref": "#/components/schemas/DocumentLocation"
+    }
+    assert contract["components"]["parameters"]["IdempotencyKey"]["schema"]["minLength"] == 16
+
+
+def test_intelligence_enrichment_write_requires_idempotency_key() -> None:
+    contract = yaml.safe_load(Path("docs/openapi-v2-incremental.yaml").read_text(encoding="utf-8"))
+    operation = contract["paths"]["/intelligence/raw-artifacts/{artifact_id}/enrich"]["post"]
+    assert {parameter.get("$ref") for parameter in operation["parameters"]} >= {
+        "#/components/parameters/IdempotencyKey"
+    }
+
+
+def test_tender_breakdown_and_review_contracts_enforce_trust_gate() -> None:
+    contract = yaml.safe_load(Path("docs/openapi-v2-incremental.yaml").read_text(encoding="utf-8"))
+    paths = contract["paths"]
+    schemas = contract["components"]["schemas"]
+    for path, method in (
+        ("/tenders/{tender_id}/requirements/breakdown", "post"),
+        ("/response-matrices/{matrix_id}/items/{item_id}/review", "post"),
+    ):
+        refs = {item.get("$ref") for item in paths[path][method]["parameters"]}
+        assert "#/components/parameters/IdempotencyKey" in refs
+    assert schemas["ReviewResponseItemRequest"]["properties"]["action"]["enum"] == [
+        "approve",
+        "edit_and_approve",
+        "reject",
+        "needs_evidence",
+    ]
+    assert "expected_version" in schemas["ReviewResponseItemRequest"]["required"]
+    assert schemas["ResponseMatrixItem"]["properties"]["ai_draft"] == {"type": "string"}
+
+
+def test_tender_requirement_correction_contracts_are_idempotent_and_versioned() -> None:
+    contract = yaml.safe_load(Path("docs/openapi-v2-incremental.yaml").read_text(encoding="utf-8"))
+    paths = contract["paths"]
+    operations = (
+        ("/tenders/{tender_id}/requirements/{requirement_id}", "patch"),
+        ("/tenders/{tender_id}/requirements/{requirement_id}", "delete"),
+        ("/tenders/{tender_id}/requirements/{requirement_id}/confirm", "post"),
+        ("/tenders/{tender_id}/requirements/merge", "post"),
+        ("/tenders/{tender_id}/requirements/{requirement_id}/split", "post"),
+    )
+    for path, method in operations:
+        refs = {item.get("$ref") for item in paths[path][method]["parameters"]}
+        assert "#/components/parameters/IdempotencyKey" in refs
+    schemas = contract["components"]["schemas"]
+    assert "expected_version" in schemas["UpdateTenderRequirementRequest"]["required"]
+    assert "expected_version" in schemas["SplitTenderRequirementRequest"]["required"]
+    assert schemas["MergeTenderRequirementsRequest"]["properties"]["requirement_ids"][
+        "minItems"
+    ] == 2
+
+
 def test_ai_workbench_frontend_uses_v2_backend_endpoints() -> None:
     frontend = Path("static/index.html").read_text(encoding="utf-8")
     assert 'apiFetch("/runtime/tasks?page=1&page_size=100")' in frontend

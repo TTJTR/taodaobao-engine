@@ -1,6 +1,71 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from pathlib import Path
+from typing import Any, Literal, Protocol, runtime_checkable
+
+from app.schemas.intelligence_provider import (
+    EnrichmentJobAccepted,
+    EnrichmentJobRequest,
+    EnrichmentJobResult,
+    EnrichmentJobStatus,
+)
+
+DocumentLocation = dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentNode:
+    text: str
+    node_type: Literal["paragraph", "table", "heading"]
+    location: DocumentLocation
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentIR:
+    nodes: tuple[DocumentNode, ...]
+    parser_name: str
+    parser_version: str
+    schema_version: str = "document-ir-v1"
+    warnings: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "parser_name": self.parser_name,
+            "parser_version": self.parser_version,
+            "warnings": list(self.warnings),
+            "nodes": [
+                {"text": node.text, "node_type": node.node_type, "location": node.location}
+                for node in self.nodes
+            ],
+        }
+
+
+@runtime_checkable
+class DocumentParserAdapter(Protocol):
+    parser_name: str
+    parser_version: str
+
+    def parse(
+        self,
+        source: bytes | Path,
+        mime_type: str,
+        *,
+        filename: str | None = None,
+    ) -> DocumentIR: ...
+
+
+@runtime_checkable
+class IntelligenceProvider(Protocol):
+    provider_name: str
+
+    async def submit_job(self, request: EnrichmentJobRequest) -> EnrichmentJobAccepted: ...
+
+    async def get_job_status(self, provider_job_id: str) -> EnrichmentJobStatus: ...
+
+    async def fetch_results(self, provider_job_id: str) -> EnrichmentJobResult: ...
+
+    async def cancel_job(self, provider_job_id: str) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)

@@ -20,6 +20,7 @@ from app.db.models import (
     PresentationInputSnapshot,
     PresentationRun,
     QualityAttemptRecord,
+    RawArtifact,
     ReferenceDeck,
     ResearchStep,
     ResearchTask,
@@ -29,6 +30,9 @@ from app.db.models import (
     SolutionRun,
     Source,
     StyleProfile,
+    TenderDocument,
+    TenderParseVersion,
+    TenderRequirement,
     TrustDecisionRecord,
     User,
     WorkflowTask,
@@ -112,6 +116,55 @@ class SourceRepository(BaseRepository[Source]):
         if purpose:
             filters.append(Source.purpose == purpose)
         return tuple(filters)
+
+
+class TenderDocumentRepository(BaseRepository[TenderDocument]):
+    model = TenderDocument
+
+    async def get_for_update(self, entity_id) -> TenderDocument | None:
+        statement = (
+            select(TenderDocument)
+            .where(TenderDocument.id == entity_id, *self._active_filters())
+            .with_for_update()
+        )
+        return await self.session.scalar(statement)
+
+
+class RawArtifactRepository(BaseRepository[RawArtifact]):
+    model = RawArtifact
+
+
+class TenderParseVersionRepository(BaseRepository[TenderParseVersion]):
+    model = TenderParseVersion
+
+    async def next_version(self, tender_id) -> int:
+        statement = select(func.max(TenderParseVersion.version)).where(
+            TenderParseVersion.tender_id == tender_id,
+            *self._active_filters(),
+        )
+        return int(await self.session.scalar(statement) or 0) + 1
+
+
+class TenderRequirementRepository(BaseRepository[TenderRequirement]):
+    model = TenderRequirement
+
+    async def soft_delete_for_tender(self, tender_id) -> None:
+        rows = await self.session.scalars(
+            select(TenderRequirement).where(
+                TenderRequirement.tender_id == tender_id,
+                *self._active_filters(),
+            )
+        )
+        for row in rows:
+            row.is_deleted = True
+        await self.session.flush()
+
+    async def next_sequence(self, tender_id) -> int:
+        statement = select(func.max(TenderRequirement.sequence)).where(
+            TenderRequirement.tender_id == tender_id,
+            TenderRequirement.workspace_id == self.workspace_id,
+        )
+        return int(await self.session.scalar(statement) or 0) + 1
 
 
 class CustomerProfileRepository(BaseRepository[CustomerProfile]):
