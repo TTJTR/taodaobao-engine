@@ -731,7 +731,9 @@ class TenderService:
                     {
                         "type": kind,
                         "id": str(row.id),
+                        "source_id": str(row.source_id),
                         "data": row.data,
+                        "match_reasons": ["explicitly_selected_evidence"],
                         "source_snapshot": {
                             "source_id": str(source.id),
                             "title": source.title,

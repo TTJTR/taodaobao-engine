@@ -55,6 +55,20 @@ def test_internal_evidence_link_drops_external_context_fields() -> None:
     assert set(link) == {"asset_id", "source_id", "source_snapshot", "match_reasons"}
 
 
+def test_explicit_internal_evidence_link_keeps_source_identity() -> None:
+    link = _evidence_link(
+        {
+            "id": "capability-1",
+            "source_id": "source-1",
+            "source_snapshot": {"available": True},
+            "match_reasons": ["explicitly_selected_evidence"],
+        }
+    )
+
+    assert link["asset_id"] == "capability-1"
+    assert link["source_id"] == "source-1"
+
+
 def test_missing_evidence_cannot_be_approved_and_ai_draft_is_immutable() -> None:
     item = SimpleNamespace(version=1, risk_flags=["missing_evidence"], ai_draft="原始 AI 草稿")
 
