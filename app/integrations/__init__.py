@@ -4,6 +4,9 @@ from app.integrations.ai_engine import MockAIEngine
 from app.integrations.feishu import LiveFeishuAdapter, MockFeishuAdapter
 from app.integrations.llm import MockLLMAdapter
 from app.integrations.protocols import (
+    DocumentIR,
+    DocumentNode,
+    DocumentParserAdapter,
     FeishuAdapter,
     FeishuCreatedDocument,
     FeishuCreatedGroup,
@@ -23,6 +26,9 @@ __all__ = [
     "FeishuResource",
     "FeishuTokenInfo",
     "FeishuUserInfo",
+    "DocumentIR",
+    "DocumentNode",
+    "DocumentParserAdapter",
     "LLMAdapter",
     "LiveFeishuAdapter",
     "MockFeishuAdapter",
