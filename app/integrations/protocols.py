@@ -3,6 +3,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from app.schemas.intelligence_provider import (
+    EnrichmentJobAccepted,
+    EnrichmentJobRequest,
+    EnrichmentJobResult,
+    EnrichmentJobStatus,
+)
+
 DocumentLocation = dict[str, Any]
 
 
@@ -46,6 +53,17 @@ class DocumentParserAdapter(Protocol):
         *,
         filename: str | None = None,
     ) -> DocumentIR: ...
+
+
+@runtime_checkable
+class IntelligenceProvider(Protocol):
+    provider_name: str
+
+    async def submit_job(self, request: EnrichmentJobRequest) -> EnrichmentJobAccepted: ...
+
+    async def get_job_status(self, provider_job_id: str) -> EnrichmentJobStatus: ...
+
+    async def fetch_results(self, provider_job_id: str) -> EnrichmentJobResult: ...
 
 
 @dataclass(frozen=True, slots=True)
