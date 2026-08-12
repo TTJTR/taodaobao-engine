@@ -13,7 +13,9 @@ RUN python -m pip download --dest /wheels \
         'torch==2.8.0+cpu' 'torchvision==0.23.0+cpu' \
     && python -m pip install --no-index --find-links /wheels \
         'torch==2.8.0+cpu' 'torchvision==0.23.0+cpu' \
-    && python -m pip wheel --wheel-dir /wheels '.[v2-parser]'
+    && printf 'torch==2.8.0+cpu\ntorchvision==0.23.0+cpu\n' > /tmp/parser-constraints.txt \
+    && python -m pip wheel --wheel-dir /wheels --find-links /wheels \
+        --constraint /tmp/parser-constraints.txt '.[v2-parser]'
 
 
 FROM python:3.11-slim AS runtime
