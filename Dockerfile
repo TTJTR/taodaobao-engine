@@ -39,6 +39,9 @@ RUN apt-get update \
         libglib2.0-0 \
         libxcb1 \
     && rm -rf /var/lib/apt/lists/*
+RUN rapidocr_models="$(python -c 'from pathlib import Path; import rapidocr; print(Path(rapidocr.__file__).parent / "models")')" \
+    && mkdir -p "${rapidocr_models}" \
+    && chown -R app:app "${rapidocr_models}"
 
 COPY --chown=app:app alembic ./alembic
 COPY --chown=app:app alembic.ini ./alembic.ini
