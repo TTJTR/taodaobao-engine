@@ -4,6 +4,9 @@ V2 后台与业务后端说明见 [docs/V2后端实现与联调说明.md](docs/V
 增量接口见 [docs/openapi-v2-incremental.yaml](docs/openapi-v2-incremental.yaml)，
 协作上传规则见 [docs/V2_分支上传与接力规范.md](docs/V2_分支上传与接力规范.md)。
 
+方案演练 AI 增强见 [docs/V2_方案演练AI增强实现与交接说明.md](docs/V2_方案演练AI增强实现与交接说明.md)，
+演练到展示稿接口建议见 [docs/V2_演练到展示稿增量契约提案.md](docs/V2_演练到展示稿增量契约提案.md)。
+
 AI-driven customer solution generation engine for the Feishu AI competition.
 
 ## Backend scaffold
