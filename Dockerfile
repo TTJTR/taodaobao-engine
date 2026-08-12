@@ -23,6 +23,7 @@ FROM python:3.11-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TORCHDYNAMO_DISABLE=1 \
     PATH="/home/app/.local/bin:${PATH}"
 
 RUN groupadd --system app \
