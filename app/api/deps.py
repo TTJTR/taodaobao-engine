@@ -12,7 +12,6 @@ from app.ai import (
     BailianChatClient,
     BailianSettings,
     MockAIEngine,
-    ModelClientError,
 )
 from app.ai.embedding import (
     BailianEmbeddingProvider,
@@ -76,13 +75,7 @@ InvitationRedemptionStoreDependency = Annotated[
 def get_ai_engine() -> AIEngine:
     if settings.ai_mode == "mock":
         return MockAIEngine()
-    try:
-        bailian_settings = BailianSettings.from_env(Path(".env"))
-    except ModelClientError:
-        return RehearsalAIWorkflow(
-            timeout_seconds=settings.rehearsal_ai_timeout_seconds,
-            max_prompt_characters=settings.rehearsal_ai_max_prompt_characters,
-        )
+    bailian_settings = BailianSettings.from_env(Path(".env"))
     return BailianAIEngine(BailianChatClient(bailian_settings))
 
 
