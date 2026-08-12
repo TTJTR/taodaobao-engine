@@ -33,6 +33,12 @@ WORKDIR /app
 COPY --from=builder /wheels /wheels
 RUN python -m pip install --no-cache-dir /wheels/* \
     && rm -rf /wheels
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        libgl1 \
+        libglib2.0-0 \
+        libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --chown=app:app alembic ./alembic
 COPY --chown=app:app alembic.ini ./alembic.ini
