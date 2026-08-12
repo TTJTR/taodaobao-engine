@@ -31,7 +31,7 @@ paths:
       parameters:
         - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
         - {name: page_size, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
-        - {name: task_type, in: query, schema: {enum: [quick_solution, deep_research, presentation, intelligence, rehearsal]}}
+        - {name: task_type, in: query, schema: {enum: [quick_solution, deep_research, presentation, intelligence, rehearsal, tender_parse]}}
         - {name: status, in: query, schema: {type: string}}
       responses: {'200': {$ref: '#/components/responses/ListResponse'}}
   /runtime/tasks/{task_id}:
@@ -133,6 +133,18 @@ paths:
       operationId: getTender
       parameters: [{$ref: '#/components/parameters/TenderId'}]
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
+  /tenders/{tender_id}/parse-tasks:
+    post:
+      operationId: queueTenderParse
+      parameters: [{$ref: '#/components/parameters/TenderId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/QueueTenderParseRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/ItemResponse'}
+        '409': {$ref: '#/components/responses/ErrorResponse'}
   /tenders/{tender_id}/requirements:
     get:
       operationId: listTenderRequirements
@@ -438,6 +450,12 @@ components:
         source_mime_type: {type: [string, 'null'], maxLength: 128}
         content_base64: {type: [string, 'null'], maxLength: 8000000}
       anyOf: [{required: [pasted_text]}, {required: [content_base64]}]
+    QueueTenderParseRequest:
+      type: object
+      additionalProperties: false
+      required: [raw_artifact_id]
+      properties:
+        raw_artifact_id: {type: string, format: uuid}
     CreateResponseMatrixRequest:
       type: object
       properties:

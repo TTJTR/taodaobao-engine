@@ -9,6 +9,7 @@ from app.core.responses import success_response
 from app.schemas.v2 import (
     CreateResponseMatrixRequest,
     CreateTenderRequest,
+    QueueTenderParseRequest,
     ReviewResponseItemRequest,
     UpdateResponseItemRequest,
 )
@@ -122,6 +123,32 @@ async def get_tender(
 ) -> dict:
     row = await TenderService(session, workspace_id, current_user.id).get_tender(tender_id)
     return success_response(request, _tender(row))
+
+
+@router.post("/{tender_id}/parse-tasks", status_code=status.HTTP_202_ACCEPTED)
+async def queue_tender_parse(
+    tender_id: uuid.UUID,
+    payload: QueueTenderParseRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    task = await TenderService(session, workspace_id, current_user.id).queue_parse(
+        tender_id, payload.raw_artifact_id
+    )
+    return success_response(
+        request,
+        {
+            "task_id": str(task.id),
+            "tender_id": str(task.target_id),
+            "raw_artifact_id": task.payload["raw_artifact_id"],
+            "status": task.status.value,
+            "stage": task.stage,
+            "trace_id": task.trace_id,
+        },
+    )
 
 
 @router.get("/{tender_id}/requirements")

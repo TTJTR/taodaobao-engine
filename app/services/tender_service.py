@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from defusedxml import ElementTree
 from pypdf import PdfReader
@@ -18,6 +18,7 @@ from app.db.models import (
     CustomerProfile,
     Experience,
     IntelligenceSnapshot,
+    RawArtifact,
     ResponseEvidenceStatus,
     ResponseMatrix,
     ResponseMatrixItem,
@@ -28,6 +29,8 @@ from app.db.models import (
     TenderParseStatus,
     TenderParseVersion,
     TenderRequirement,
+    WorkflowTask,
+    WorkflowTaskStatus,
 )
 from app.services.retrieval_service import RetrievalService
 
@@ -226,6 +229,47 @@ class TenderService:
 
     async def get_tender(self, tender_id: uuid.UUID) -> TenderDocument:
         return await self._get(TenderDocument, tender_id)
+
+    async def queue_parse(self, tender_id: uuid.UUID, raw_artifact_id: uuid.UUID) -> WorkflowTask:
+        await self.get_tender(tender_id)
+        artifact = await self._get(RawArtifact, raw_artifact_id)
+        if not artifact.storage_uri:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "原始制品尚未持久化，不能排队解析",
+                status_code=409,
+            )
+        task = await self.session.scalar(
+            select(WorkflowTask).where(
+                WorkflowTask.kind == "tender_parse",
+                WorkflowTask.target_id == tender_id,
+                *self._filters(WorkflowTask),
+            )
+        )
+        if task is None:
+            task = WorkflowTask(
+                workspace_id=self.workspace_id,
+                kind="tender_parse",
+                target_id=tender_id,
+                status=WorkflowTaskStatus.QUEUED,
+                stage="queued",
+                trace_id=str(uuid.uuid4()),
+                payload={"raw_artifact_id": str(artifact.id)},
+                attempt_count=0,
+                max_attempts=3,
+                available_at=datetime.now(UTC),
+                deadline_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+            self.session.add(task)
+        elif task.payload.get("raw_artifact_id") != str(artifact.id):
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "该招标文件已有其他制品的解析任务",
+                status_code=409,
+            )
+        await self.session.commit()
+        await self.session.refresh(task)
+        return task
 
     async def list_requirements(self, tender_id: uuid.UUID) -> list[TenderRequirement]:
         await self.get_tender(tender_id)

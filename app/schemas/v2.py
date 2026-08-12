@@ -52,6 +52,10 @@ class CreateTenderRequest(BaseModel):
         return self
 
 
+class QueueTenderParseRequest(BaseModel):
+    raw_artifact_id: uuid.UUID
+
+
 class CreateResponseMatrixRequest(BaseModel):
     experience_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
     capability_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)

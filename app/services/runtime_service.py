@@ -53,6 +53,9 @@ class RuntimeService:
             rows.extend(self._search(item) for item in await self._all(SearchRun))
         if task_type in {None, "rehearsal"}:
             rows.extend(self._rehearsal(item) for item in await self._all(RehearsalSession))
+        if task_type in {None, "tender_parse"}:
+            tasks = await self._all(WorkflowTask)
+            rows.extend(self._tender_parse(item) for item in tasks if item.kind == "tender_parse")
         if status:
             rows = [row for row in rows if row["status"] == status]
         rows.sort(key=lambda row: row["updated_at"], reverse=True)
@@ -60,6 +63,15 @@ class RuntimeService:
         return rows[(page - 1) * page_size : page * page_size], total
 
     async def detail(self, task_id: uuid.UUID) -> dict:
+        workflow = await self.session.scalar(
+            select(WorkflowTask).where(
+                WorkflowTask.id == task_id,
+                WorkflowTask.kind == "tender_parse",
+                *self._filters(WorkflowTask),
+            )
+        )
+        if workflow:
+            return self._tender_parse(workflow)
         for model, serializer in (
             (SolutionRun, self._solution),
             (ResearchTask, self._research),
@@ -166,6 +178,28 @@ class RuntimeService:
                     }
                 )
             return result
+        if task_type == "tender_parse":
+            workflow = await self.session.scalar(
+                select(WorkflowTask).where(
+                    WorkflowTask.id == task_id,
+                    WorkflowTask.kind == "tender_parse",
+                    *self._filters(WorkflowTask),
+                )
+            )
+            return [
+                {
+                    "id": str(workflow.id),
+                    "sequence": 1,
+                    "stage": workflow.stage,
+                    "executor": "tender_parse_worker",
+                    "is_agent": False,
+                    "status": _value(workflow.status),
+                    "attempt": workflow.attempt_count,
+                    "output_summary": workflow.payload,
+                    "error_code": workflow.error_code,
+                    "error_summary": workflow.error_summary,
+                }
+            ]
         return [
             {
                 "id": str(task_id),
@@ -305,4 +339,27 @@ class RuntimeService:
             item.trace_id,
             output_summary={"current_turn": item.current_turn, "max_turns": item.max_turns},
             error_code=item.error_code,
+        )
+
+    def _tender_parse(self, item: WorkflowTask) -> dict:
+        status = _value(item.status)
+        progress = {
+            "queued": 0,
+            "queued_retry": 10,
+            "validating_file": 20,
+            "parsing_document": 60,
+            "completed": 100,
+            "failed": 100,
+        }.get(item.stage, 40)
+        return self._base(
+            item,
+            "tender_parse",
+            f"招标解析 {str(item.target_id)[:8]}",
+            status,
+            item.stage,
+            progress,
+            item.trace_id,
+            output_summary={"tender_id": str(item.target_id), **item.payload},
+            error_code=item.error_code,
+            error_summary=item.error_summary,
         )

@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
@@ -46,6 +47,7 @@ class Settings(BaseSettings):
     oauth_state_cookie_name: str = "taodaobao_oauth_state"
     session_ttl_seconds: int = 8 * 60 * 60
     cookie_secure: bool = True
+    tender_storage_root: Path = Path(".local/tender-artifacts")
 
     @model_validator(mode="after")
     def validate_security_configuration(self) -> "Settings":

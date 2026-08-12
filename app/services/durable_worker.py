@@ -25,12 +25,13 @@ from app.services.trust_gate import GATE_POLICY_VERSION, THRESHOLD_VERSION
 logger = logging.getLogger(__name__)
 # External provider calls are bounded at 120 seconds. Keep the lease valid for
 # the whole call so a second worker cannot reclaim the same task mid-render.
-LEASE_SECONDS = 180
+LEASE_SECONDS = 360
 RETRYABLE_CODES = {
     "MODEL_TEMPORARILY_UNAVAILABLE",
     "VERIFIER_UNAVAILABLE",
     "INTERNAL_ERROR",
     "PRESENTATION_RENDER_FAILED",
+    "TENDER_PARSE_TIMEOUT",
 }
 
 
@@ -86,6 +87,10 @@ async def process_claimed_task(
             get_embedding_provider(),
             task_id=task_id,
         )
+    elif kind == "tender_parse":
+        from app.services.tender_task_worker import run_tender_parse_task
+
+        await run_tender_parse_task(task_id, workspace_id, target_id)
     else:
         from app.services.presentation_worker import run_presentation_task
 
