@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import re
 import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.rehearsal import RehearsalAIWorkflow, evaluate_answer_rules
 from app.core.errors import AppError, ErrorCode
 from app.db.models import (
     CustomerProfile,
@@ -21,44 +21,23 @@ from app.db.models import (
     SolutionRun,
 )
 
-ROLE_LABELS = {
-    "customer_decision_maker": "客户决策人",
-    "technical_reviewer": "技术评审",
-    "procurement": "采购负责人",
-    "challenger": "强势质疑者",
-}
-
 
 def evaluate_answer(answer: str, context: dict) -> dict:
-    absolute = re.findall(r"一定|保证|百分之百|绝对|零风险|完全没有|永久|全部支持", answer)
-    cited = bool(re.search(r"根据|来源|证据|案例|能力库|经验库|待确认|暂不承诺", answer))
-    pending = bool(re.search(r"待确认|需要确认|暂不承诺|尚无依据|需要补充", answer))
-    score = 80
-    issues: list[dict[str, str]] = []
-    if absolute:
-        score -= min(40, 10 * len(set(absolute)))
-        issues.append({"type": "overcommitment", "detail": "使用了未经边界限定的绝对承诺"})
-    if not cited:
-        score -= 15
-        issues.append({"type": "evidence_boundary", "detail": "没有说明企业依据或信息来源"})
-    if not pending and context.get("knowledge_gaps"):
-        score -= 10
-        issues.append({"type": "pending_confirmation", "detail": "未暴露上下文中的知识缺口"})
-    return {
-        "score": max(0, score),
-        "issues": issues,
-        "strengths": (["主动说明了证据或可信边界"] if cited else []),
-        "recommended_answer_pattern": (
-            "先回应问题，再区分企业依据、外部情报与待确认项，最后给出下一步。"
-        ),
-    }
+    return evaluate_answer_rules(answer, context)
 
 
 class RehearsalService:
-    def __init__(self, session: AsyncSession, workspace_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        workspace_id: uuid.UUID,
+        user_id: uuid.UUID,
+        ai_workflow: RehearsalAIWorkflow | None = None,
+    ) -> None:
         self.session = session
         self.workspace_id = workspace_id
         self.user_id = user_id
+        self.ai_workflow = ai_workflow or RehearsalAIWorkflow()
 
     def _filters(self, model) -> tuple:
         return model.workspace_id == self.workspace_id, model.is_deleted.is_(False)
@@ -130,6 +109,12 @@ class RehearsalService:
             "knowledge_gaps": knowledge_gaps,
             "boundary": "external intelligence is context, not enterprise capability evidence",
         }
+        context["rehearsal_persona"] = await self.ai_workflow.build_persona(
+            context,
+            role=role,
+            difficulty=difficulty,
+            focus_areas=focus_areas,
+        )
         rehearsal = RehearsalSession(
             workspace_id=self.workspace_id,
             created_by_id=self.user_id,
@@ -187,11 +172,20 @@ class RehearsalService:
         rehearsal.status = RehearsalStatus.RUNNING
         rehearsal.started_at = datetime.now(UTC)
         rehearsal.current_turn = 1
+        first_question, _ = await self.ai_workflow.generate_question(
+            rehearsal.context_snapshot,
+            persona=rehearsal.context_snapshot["rehearsal_persona"],
+            role=rehearsal.role,
+            difficulty=rehearsal.difficulty,
+            focus_areas=rehearsal.focus_areas,
+            sequence=1,
+            history=[],
+        )
         first = RehearsalTurn(
             workspace_id=self.workspace_id,
             rehearsal_id=rehearsal.id,
             sequence=1,
-            customer_question=self._question(rehearsal, 1),
+            customer_question=first_question,
         )
         self.session.add(first)
         await self.session.commit()
@@ -215,16 +209,50 @@ class RehearsalService:
             raise AppError(
                 ErrorCode.REHEARSAL_STATE_CONFLICT, "当前轮次不存在或已回答", status_code=409
             )
+        history_rows = list(
+            await self.session.scalars(
+                select(RehearsalTurn)
+                .where(
+                    RehearsalTurn.rehearsal_id == rehearsal.id,
+                    *self._filters(RehearsalTurn),
+                )
+                .order_by(RehearsalTurn.sequence)
+            )
+        )
         turn.employee_answer = answer
-        turn.evaluation = evaluate_answer(answer, rehearsal.context_snapshot)
+        turn.evaluation = await self.ai_workflow.evaluate_answer(
+            rehearsal.context_snapshot,
+            persona=rehearsal.context_snapshot["rehearsal_persona"],
+            question=turn.customer_question,
+            answer=answer,
+            sequence=turn.sequence,
+        )
         next_turn = None
         if rehearsal.current_turn < rehearsal.max_turns:
             rehearsal.current_turn += 1
+            history = [
+                {
+                    "sequence": item.sequence,
+                    "customer_question": item.customer_question,
+                    "employee_answer": answer if item.id == turn.id else item.employee_answer,
+                    "evaluation": turn.evaluation if item.id == turn.id else item.evaluation,
+                }
+                for item in history_rows
+            ]
+            next_question, _ = await self.ai_workflow.generate_question(
+                rehearsal.context_snapshot,
+                persona=rehearsal.context_snapshot["rehearsal_persona"],
+                role=rehearsal.role,
+                difficulty=rehearsal.difficulty,
+                focus_areas=rehearsal.focus_areas,
+                sequence=rehearsal.current_turn,
+                history=history,
+            )
             next_turn = RehearsalTurn(
                 workspace_id=self.workspace_id,
                 rehearsal_id=rehearsal.id,
                 sequence=rehearsal.current_turn,
-                customer_question=self._question(rehearsal, rehearsal.current_turn),
+                customer_question=next_question,
             )
             self.session.add(next_turn)
         await self.session.commit()
@@ -242,31 +270,25 @@ class RehearsalService:
         answered = [turn for turn in turns if turn.evaluation]
         if not answered:
             raise AppError(ErrorCode.REHEARSAL_STATE_CONFLICT, "至少完成一轮回答", status_code=409)
-        scores = [int(turn.evaluation["score"]) for turn in answered]
-        issues = [issue for turn in answered for issue in turn.evaluation.get("issues", [])]
-        report_data = {
-            "turn_count": len(answered),
-            "average_score": round(sum(scores) / len(scores)),
-            "issues": issues,
-            "strengths": list(
-                dict.fromkeys(
-                    strength
-                    for turn in answered
-                    for strength in turn.evaluation.get("strengths", [])
-                )
-            ),
-            "next_actions": [
-                "针对高频异议补充企业证据",
-                "把无法证明的能力表述改为待确认事项",
-                "根据报告重新演练薄弱问题",
+        report_data = await self.ai_workflow.generate_report(
+            rehearsal.context_snapshot,
+            persona=rehearsal.context_snapshot["rehearsal_persona"],
+            turns=[
+                {
+                    "sequence": turn.sequence,
+                    "customer_question": turn.customer_question,
+                    "employee_answer": turn.employee_answer,
+                    "evaluation": turn.evaluation,
+                }
+                for turn in answered
             ],
-        }
+        )
         report = RehearsalReport(
             workspace_id=self.workspace_id,
             rehearsal_id=rehearsal.id,
             score=report_data["average_score"],
             report_data=report_data,
-            schema_version="v2.0",
+            schema_version="v2.1",
         )
         self.session.add(report)
         rehearsal.status = RehearsalStatus.COMPLETED
@@ -285,20 +307,3 @@ class RehearsalService:
         if report is None:
             raise AppError(ErrorCode.VALIDATION_FAILED, "演练报告尚未生成", status_code=404)
         return report
-
-    @staticmethod
-    def _question(rehearsal: RehearsalSession, sequence: int) -> str:
-        role = ROLE_LABELS.get(rehearsal.role, "客户")
-        focus = (
-            rehearsal.focus_areas[(sequence - 1) % len(rehearsal.focus_areas)]
-            if rehearsal.focus_areas
-            else "方案依据"
-        )
-        prompts = [
-            f"作为{role}，我想先确认：你们关于“{focus}”的结论有什么企业依据？",
-            f"如果“{focus}”没有现成案例，你为什么认为方案仍然可行？",
-            f"请明确“{focus}”中哪些是历史事实、企业能力、AI推断和待确认项。",
-            f"对于“{focus}”的风险和失败条件，你准备如何向客户说明？",
-            f"如果我要求你现在承诺“{focus}”一定实现，你会怎么回应？",
-        ]
-        return prompts[(sequence - 1) % len(prompts)]
