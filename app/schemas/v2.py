@@ -56,6 +56,37 @@ class QueueTenderParseRequest(BaseModel):
     raw_artifact_id: uuid.UUID
 
 
+class UpdateTenderRequirementRequest(BaseModel):
+    requirement_text: str | None = Field(default=None, min_length=1, max_length=20_000)
+    category: str | None = Field(default=None, min_length=1, max_length=64)
+    mandatory: bool | None = None
+    acceptance_condition: str | None = Field(default=None, max_length=20_000)
+    constraints: dict | None = None
+    ambiguities: list[str] | None = Field(default=None, max_length=100)
+    expected_version: int = Field(ge=1)
+
+
+class RequirementVersionRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
+class MergeTenderRequirementsRequest(BaseModel):
+    requirement_ids: list[uuid.UUID] = Field(min_length=2, max_length=50)
+    expected_versions: dict[str, int] = Field(min_length=2, max_length=50)
+    requirement_text: str = Field(min_length=1, max_length=20_000)
+
+
+class SplitTenderRequirementItem(BaseModel):
+    requirement_text: str = Field(min_length=1, max_length=20_000)
+    category: str | None = Field(default=None, min_length=1, max_length=64)
+    mandatory: bool | None = None
+
+
+class SplitTenderRequirementRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    items: list[SplitTenderRequirementItem] = Field(min_length=2, max_length=50)
+
+
 class CreateResponseMatrixRequest(BaseModel):
     experience_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
     capability_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)

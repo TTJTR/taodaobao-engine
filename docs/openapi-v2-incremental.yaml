@@ -155,6 +155,35 @@ paths:
       operationId: breakdownTenderRequirements
       parameters: [{$ref: '#/components/parameters/TenderId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       responses: {'201': {$ref: '#/components/responses/TenderRequirementListResponse'}}
+  /tenders/{tender_id}/requirements/merge:
+    post:
+      operationId: mergeTenderRequirements
+      parameters: [{$ref: '#/components/parameters/TenderId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/MergeTenderRequirementsRequest'}}}}
+      responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
+  /tenders/{tender_id}/requirements/{requirement_id}:
+    patch:
+      operationId: updateTenderRequirement
+      parameters: [{$ref: '#/components/parameters/TenderId'}, {$ref: '#/components/parameters/RequirementId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/UpdateTenderRequirementRequest'}}}}
+      responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
+    delete:
+      operationId: deleteTenderRequirement
+      parameters: [{$ref: '#/components/parameters/TenderId'}, {$ref: '#/components/parameters/RequirementId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RequirementVersionRequest'}}}}
+      responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
+  /tenders/{tender_id}/requirements/{requirement_id}/confirm:
+    post:
+      operationId: confirmTenderRequirement
+      parameters: [{$ref: '#/components/parameters/TenderId'}, {$ref: '#/components/parameters/RequirementId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RequirementVersionRequest'}}}}
+      responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
+  /tenders/{tender_id}/requirements/{requirement_id}/split:
+    post:
+      operationId: splitTenderRequirement
+      parameters: [{$ref: '#/components/parameters/TenderId'}, {$ref: '#/components/parameters/RequirementId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SplitTenderRequirementRequest'}}}}
+      responses: {'201': {$ref: '#/components/responses/TenderRequirementListResponse'}}
   /tenders/{tender_id}/response-matrices:
     post:
       operationId: createResponseMatrix
@@ -248,6 +277,7 @@ components:
     ProfileId: {name: profile_id, in: path, required: true, schema: {type: string, format: uuid}}
     ProposalId: {name: proposal_id, in: path, required: true, schema: {type: string, format: uuid}}
     TenderId: {name: tender_id, in: path, required: true, schema: {type: string, format: uuid}}
+    RequirementId: {name: requirement_id, in: path, required: true, schema: {type: string, format: uuid}}
     MatrixId: {name: matrix_id, in: path, required: true, schema: {type: string, format: uuid}}
     RehearsalId: {name: rehearsal_id, in: path, required: true, schema: {type: string, format: uuid}}
   schemas:
@@ -456,6 +486,44 @@ components:
       required: [raw_artifact_id]
       properties:
         raw_artifact_id: {type: string, format: uuid}
+    RequirementVersionRequest:
+      type: object
+      required: [expected_version]
+      properties: {expected_version: {type: integer, minimum: 1}}
+    UpdateTenderRequirementRequest:
+      type: object
+      required: [expected_version]
+      properties:
+        requirement_text: {type: [string, 'null'], minLength: 1, maxLength: 20000}
+        category: {type: [string, 'null'], minLength: 1, maxLength: 64}
+        mandatory: {type: [boolean, 'null']}
+        acceptance_condition: {type: [string, 'null'], maxLength: 20000}
+        constraints: {type: [object, 'null']}
+        ambiguities: {type: [array, 'null'], maxItems: 100, items: {type: string}}
+        expected_version: {type: integer, minimum: 1}
+    MergeTenderRequirementsRequest:
+      type: object
+      required: [requirement_ids, expected_versions, requirement_text]
+      properties:
+        requirement_ids: {type: array, minItems: 2, maxItems: 50, items: {type: string, format: uuid}}
+        expected_versions: {type: object, minProperties: 2, maxProperties: 50, additionalProperties: {type: integer, minimum: 1}}
+        requirement_text: {type: string, minLength: 1, maxLength: 20000}
+    SplitTenderRequirementRequest:
+      type: object
+      required: [expected_version, items]
+      properties:
+        expected_version: {type: integer, minimum: 1}
+        items:
+          type: array
+          minItems: 2
+          maxItems: 50
+          items:
+            type: object
+            required: [requirement_text]
+            properties:
+              requirement_text: {type: string, minLength: 1, maxLength: 20000}
+              category: {type: [string, 'null'], minLength: 1, maxLength: 64}
+              mandatory: {type: [boolean, 'null']}
     CreateResponseMatrixRequest:
       type: object
       properties:

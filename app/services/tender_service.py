@@ -29,6 +29,8 @@ from app.db.models import (
     TenderParseStatus,
     TenderParseVersion,
     TenderRequirement,
+    TenderRequirementStatus,
+    TenderRequirementVersion,
     WorkflowTask,
     WorkflowTaskStatus,
 )
@@ -280,6 +282,174 @@ class TenderService:
                 .order_by(TenderRequirement.sequence)
             )
         )
+
+    async def update_requirement(self, tender_id, requirement_id, expected_version, **changes):
+        row = await self._locked_requirement(tender_id, requirement_id)
+        self._check_requirement_version(row, expected_version)
+        await self._ensure_requirement_snapshot(row)
+        for field, value in changes.items():
+            if field in {
+                "requirement_text",
+                "category",
+                "mandatory",
+                "constraints",
+                "ambiguities",
+            } and value is None:
+                raise AppError(ErrorCode.VALIDATION_FAILED, "要求必填字段不能为空", status_code=422)
+            setattr(row, field, value)
+        row.status = TenderRequirementStatus.EDITED
+        row.version += 1
+        await self._snapshot_requirement(row, "edited")
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def confirm_requirement(self, tender_id, requirement_id, expected_version):
+        row = await self._locked_requirement(tender_id, requirement_id)
+        self._check_requirement_version(row, expected_version)
+        await self._ensure_requirement_snapshot(row)
+        row.status = TenderRequirementStatus.CONFIRMED
+        row.confirmed_by_id = self.user_id
+        row.confirmed_at = datetime.now(UTC)
+        row.version += 1
+        await self._snapshot_requirement(row, "confirmed")
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def delete_requirement(self, tender_id, requirement_id, expected_version):
+        row = await self._locked_requirement(tender_id, requirement_id)
+        self._check_requirement_version(row, expected_version)
+        await self._ensure_requirement_unused([row.id])
+        await self._ensure_requirement_snapshot(row)
+        row.is_deleted = True
+        row.version += 1
+        await self._snapshot_requirement(row, "deleted")
+        await self.session.commit()
+
+    async def merge_requirements(
+        self, tender_id, requirement_ids, expected_versions, requirement_text
+    ):
+        ids = list(dict.fromkeys(requirement_ids))
+        if len(ids) < 2:
+            raise AppError(ErrorCode.VALIDATION_FAILED, "至少选择两条不同要求", status_code=422)
+        rows = list(await self.session.scalars(
+            select(TenderRequirement).where(
+                TenderRequirement.id.in_(ids), TenderRequirement.tender_id == tender_id,
+                *self._filters(TenderRequirement),
+            ).order_by(TenderRequirement.sequence).with_for_update()
+        ))
+        if len(rows) != len(ids):
+            raise AppError(ErrorCode.VALIDATION_FAILED, "要求不存在或跨工作区", status_code=404)
+        await self._ensure_requirement_unused(ids)
+        for row in rows:
+            self._check_requirement_version(row, expected_versions.get(str(row.id), 0))
+            await self._ensure_requirement_snapshot(row)
+        primary = rows[0]
+        primary.requirement_text = requirement_text
+        primary.constraints = {
+            **primary.constraints,
+            "merged_requirement_ids": [str(item.id) for item in rows],
+            "merged_source_locations": [item.source_location for item in rows[1:]],
+        }
+        primary.status = TenderRequirementStatus.EDITED
+        primary.version += 1
+        await self._snapshot_requirement(primary, "merged")
+        for row in rows[1:]:
+            row.status = TenderRequirementStatus.SUPERSEDED
+            row.is_deleted = True
+            row.version += 1
+            await self._snapshot_requirement(row, "superseded")
+        await self.session.commit()
+        await self.session.refresh(primary)
+        return primary
+
+    async def split_requirement(self, tender_id, requirement_id, expected_version, items):
+        parent = await self._locked_requirement(tender_id, requirement_id)
+        self._check_requirement_version(parent, expected_version)
+        await self._ensure_requirement_unused([parent.id])
+        await self._ensure_requirement_snapshot(parent)
+        sequence = int(await self.session.scalar(select(func.max(TenderRequirement.sequence)).where(
+            TenderRequirement.tender_id == tender_id,
+            TenderRequirement.workspace_id == self.workspace_id,
+        )) or 0) + 1
+        created = []
+        for item in items:
+            row = TenderRequirement(
+                workspace_id=self.workspace_id, tender_id=tender_id,
+                parse_version_id=parent.parse_version_id, sequence=sequence, version=1,
+                requirement_text=item.requirement_text,
+                category=item.category or parent.category,
+                mandatory=parent.mandatory if item.mandatory is None else item.mandatory,
+                acceptance_condition=parent.acceptance_condition,
+                constraints={**parent.constraints, "split_from_requirement_id": str(parent.id)},
+                ambiguities=list(parent.ambiguities), source_location=dict(parent.source_location),
+                status=TenderRequirementStatus.EDITED,
+            )
+            self.session.add(row)
+            await self.session.flush()
+            await self._snapshot_requirement(row, "created")
+            created.append(row)
+            sequence += 1
+        parent.status = TenderRequirementStatus.SUPERSEDED
+        parent.is_deleted = True
+        parent.version += 1
+        await self._snapshot_requirement(parent, "split")
+        await self.session.commit()
+        return created
+
+    async def _locked_requirement(self, tender_id, requirement_id):
+        await self.get_tender(tender_id)
+        row = await self.session.scalar(select(TenderRequirement).where(
+            TenderRequirement.id == requirement_id, TenderRequirement.tender_id == tender_id,
+            *self._filters(TenderRequirement),
+        ).with_for_update())
+        if row is None:
+            raise AppError(ErrorCode.VALIDATION_FAILED, "招标要求不存在", status_code=404)
+        return row
+
+    @staticmethod
+    def _check_requirement_version(row, expected):
+        if row.version != expected:
+            raise AppError(
+                ErrorCode.RESPONSE_VERSION_CONFLICT,
+                "招标要求版本已更新",
+                status_code=409,
+            )
+
+    async def _ensure_requirement_snapshot(self, row):
+        existing = await self.session.scalar(
+            select(TenderRequirementVersion.id).where(
+                TenderRequirementVersion.requirement_id == row.id,
+                TenderRequirementVersion.version == row.version,
+                *self._filters(TenderRequirementVersion),
+            )
+        )
+        if existing is None:
+            await self._snapshot_requirement(row, "created")
+
+    async def _snapshot_requirement(self, row, change_type):
+        self.session.add(TenderRequirementVersion(
+            workspace_id=self.workspace_id, requirement_id=row.id, version=row.version,
+            changed_by_id=self.user_id, change_type=change_type,
+            requirement_snapshot={
+                "requirement_text": row.requirement_text, "category": row.category,
+                "mandatory": row.mandatory, "acceptance_condition": row.acceptance_condition,
+                "constraints": row.constraints, "ambiguities": row.ambiguities,
+                "status": row.status.value,
+            }, source_location=dict(row.source_location),
+        ))
+
+    async def _ensure_requirement_unused(self, ids):
+        used = await self.session.scalar(select(ResponseMatrixItem.id).where(
+            ResponseMatrixItem.requirement_id.in_(ids), *self._filters(ResponseMatrixItem)
+        ).limit(1))
+        if used:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "要求已被响应矩阵引用，不能重组或删除",
+                status_code=409,
+            )
 
     async def breakdown_requirements(self, tender_id: uuid.UUID) -> list[TenderRequirement]:
         await self.get_tender(tender_id)

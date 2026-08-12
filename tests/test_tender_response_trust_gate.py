@@ -73,3 +73,12 @@ def test_optimistic_lock_rejects_stale_response_version() -> None:
         TenderService._check_version(item, 2)
 
     assert caught.value.code == ErrorCode.RESPONSE_VERSION_CONFLICT
+
+
+def test_optimistic_lock_rejects_stale_requirement_version() -> None:
+    requirement = SimpleNamespace(version=4)
+
+    with pytest.raises(AppError) as caught:
+        TenderService._check_requirement_version(requirement, 3)
+
+    assert caught.value.code == ErrorCode.RESPONSE_VERSION_CONFLICT

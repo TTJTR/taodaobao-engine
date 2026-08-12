@@ -91,6 +91,27 @@ def test_tender_breakdown_and_review_contracts_enforce_trust_gate() -> None:
     assert schemas["ResponseMatrixItem"]["properties"]["ai_draft"] == {"type": "string"}
 
 
+def test_tender_requirement_correction_contracts_are_idempotent_and_versioned() -> None:
+    contract = yaml.safe_load(Path("docs/openapi-v2-incremental.yaml").read_text(encoding="utf-8"))
+    paths = contract["paths"]
+    operations = (
+        ("/tenders/{tender_id}/requirements/{requirement_id}", "patch"),
+        ("/tenders/{tender_id}/requirements/{requirement_id}", "delete"),
+        ("/tenders/{tender_id}/requirements/{requirement_id}/confirm", "post"),
+        ("/tenders/{tender_id}/requirements/merge", "post"),
+        ("/tenders/{tender_id}/requirements/{requirement_id}/split", "post"),
+    )
+    for path, method in operations:
+        refs = {item.get("$ref") for item in paths[path][method]["parameters"]}
+        assert "#/components/parameters/IdempotencyKey" in refs
+    schemas = contract["components"]["schemas"]
+    assert "expected_version" in schemas["UpdateTenderRequirementRequest"]["required"]
+    assert "expected_version" in schemas["SplitTenderRequirementRequest"]["required"]
+    assert schemas["MergeTenderRequirementsRequest"]["properties"]["requirement_ids"][
+        "minItems"
+    ] == 2
+
+
 def test_ai_workbench_frontend_uses_v2_backend_endpoints() -> None:
     frontend = Path("static/index.html").read_text(encoding="utf-8")
     assert 'apiFetch("/runtime/tasks?page=1&page_size=100")' in frontend
