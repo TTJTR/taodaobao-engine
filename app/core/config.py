@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     debug: bool = False
     api_prefix: str = "/api/v1"
     ai_mode: Literal["mock", "live"] = "mock"
+    rehearsal_ai_timeout_seconds: float = 20.0
+    rehearsal_ai_max_prompt_characters: int = 36_000
     feishu_mode: Literal["mock", "live"] = "mock"
     presentation_mode: Literal["mock", "live"] = "mock"
     presentation_service_url: str | None = None

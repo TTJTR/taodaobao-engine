@@ -3,7 +3,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
-from app.api.deps import CurrentUser, DatabaseSession, WorkspaceId
+from app.api.deps import (
+    CurrentUser,
+    DatabaseSession,
+    RehearsalAIWorkflowDependency,
+    WorkspaceId,
+)
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.schemas.v2 import CreateRehearsalRequest, SubmitRehearsalTurnRequest
@@ -58,9 +63,10 @@ async def create_rehearsal(
     session: DatabaseSession,
     current_user: CurrentUser,
     workspace_id: WorkspaceId,
+    ai_workflow: RehearsalAIWorkflowDependency,
     _: str = Depends(require_idempotency_key),
 ) -> dict:
-    row = await RehearsalService(session, workspace_id, current_user.id).create(
+    row = await RehearsalService(session, workspace_id, current_user.id, ai_workflow).create(
         **payload.model_dump()
     )
     return success_response(request, _session(row, include_context=True))
@@ -111,9 +117,10 @@ async def start_rehearsal(
     session: DatabaseSession,
     current_user: CurrentUser,
     workspace_id: WorkspaceId,
+    ai_workflow: RehearsalAIWorkflowDependency,
     _: str = Depends(require_idempotency_key),
 ) -> dict:
-    service = RehearsalService(session, workspace_id, current_user.id)
+    service = RehearsalService(session, workspace_id, current_user.id, ai_workflow)
     row = await service.start(rehearsal_id)
     _, turns = await service.detail(rehearsal_id)
     data = _session(row)
@@ -129,10 +136,11 @@ async def submit_rehearsal_turn(
     session: DatabaseSession,
     current_user: CurrentUser,
     workspace_id: WorkspaceId,
+    ai_workflow: RehearsalAIWorkflowDependency,
     _: str = Depends(require_idempotency_key),
 ) -> dict:
     answered, next_turn = await RehearsalService(
-        session, workspace_id, current_user.id
+        session, workspace_id, current_user.id, ai_workflow
     ).submit_turn(rehearsal_id, payload.answer)
     return success_response(
         request,
@@ -151,9 +159,12 @@ async def complete_rehearsal(
     session: DatabaseSession,
     current_user: CurrentUser,
     workspace_id: WorkspaceId,
+    ai_workflow: RehearsalAIWorkflowDependency,
     _: str = Depends(require_idempotency_key),
 ) -> dict:
-    row = await RehearsalService(session, workspace_id, current_user.id).complete(rehearsal_id)
+    row = await RehearsalService(
+        session, workspace_id, current_user.id, ai_workflow
+    ).complete(rehearsal_id)
     return success_response(
         request,
         {
