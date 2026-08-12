@@ -7,13 +7,20 @@ from typing import Annotated
 from fastapi import Cookie, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import BailianAIEngine, BailianChatClient, BailianSettings, MockAIEngine
+from app.ai import (
+    BailianAIEngine,
+    BailianChatClient,
+    BailianSettings,
+    MockAIEngine,
+    ModelClientError,
+)
 from app.ai.embedding import (
     BailianEmbeddingProvider,
     BailianEmbeddingSettings,
     EmbeddingProvider,
     MockEmbeddingProvider,
 )
+from app.ai.rehearsal import RehearsalAIWorkflow
 from app.contracts.ai import AIEngine
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
@@ -69,11 +76,37 @@ InvitationRedemptionStoreDependency = Annotated[
 def get_ai_engine() -> AIEngine:
     if settings.ai_mode == "mock":
         return MockAIEngine()
-    bailian_settings = BailianSettings.from_env(Path(".env"))
+    try:
+        bailian_settings = BailianSettings.from_env(Path(".env"))
+    except ModelClientError:
+        return RehearsalAIWorkflow(
+            timeout_seconds=settings.rehearsal_ai_timeout_seconds,
+            max_prompt_characters=settings.rehearsal_ai_max_prompt_characters,
+        )
     return BailianAIEngine(BailianChatClient(bailian_settings))
 
 
 AIEngineDependency = Annotated[AIEngine, Depends(get_ai_engine)]
+
+
+@lru_cache
+def get_rehearsal_ai_workflow() -> RehearsalAIWorkflow:
+    if settings.ai_mode == "mock":
+        return RehearsalAIWorkflow(
+            timeout_seconds=settings.rehearsal_ai_timeout_seconds,
+            max_prompt_characters=settings.rehearsal_ai_max_prompt_characters,
+        )
+    bailian_settings = BailianSettings.from_env(Path(".env"))
+    return RehearsalAIWorkflow(
+        BailianChatClient(bailian_settings),
+        timeout_seconds=settings.rehearsal_ai_timeout_seconds,
+        max_prompt_characters=settings.rehearsal_ai_max_prompt_characters,
+    )
+
+
+RehearsalAIWorkflowDependency = Annotated[
+    RehearsalAIWorkflow, Depends(get_rehearsal_ai_workflow)
+]
 
 
 @lru_cache
