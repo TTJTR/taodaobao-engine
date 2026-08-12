@@ -330,6 +330,7 @@ class CustomerProfile(EntityMixin, WorkspaceMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
     sources: Mapped[list["Source"]] = relationship(back_populates="customer_profile")
     sessions: Mapped[list["Session"]] = relationship(back_populates="customer_profile")
@@ -337,6 +338,27 @@ class CustomerProfile(EntityMixin, WorkspaceMixin, Base):
     @property
     def source_ids(self) -> list[uuid.UUID]:
         return [source.id for source in self.sources if not source.is_deleted]
+
+
+class CustomerProfileVersion(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "customer_profile_versions"
+    __table_args__ = (
+        UniqueConstraint("profile_id", "version", name="uq_customer_profile_version"),
+        Index("ix_customer_profile_versions_profile", "profile_id", "version"),
+    )
+
+    profile_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customer_profiles.id", ondelete="CASCADE"), nullable=False
+    )
+    proposal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("profile_intelligence_proposals.id", ondelete="SET NULL")
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    changed_by_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    change_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    profile_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
 
 class Source(EntityMixin, WorkspaceMixin, Base):

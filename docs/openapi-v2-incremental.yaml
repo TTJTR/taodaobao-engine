@@ -10,6 +10,21 @@ servers:
 security:
   - sessionCookie: []
 paths:
+  /intelligence/raw-artifacts/{artifact_id}/enrich:
+    post:
+      operationId: enrichRawArtifact
+      parameters:
+        - name: artifact_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EnrichRawArtifactRequest'}
+      responses: {'201': {$ref: '#/components/responses/ItemResponse'}}
   /runtime/tasks:
     get:
       operationId: listRuntimeTasks
@@ -219,6 +234,12 @@ components:
     MatrixId: {name: matrix_id, in: path, required: true, schema: {type: string, format: uuid}}
     RehearsalId: {name: rehearsal_id, in: path, required: true, schema: {type: string, format: uuid}}
   schemas:
+    EnrichRawArtifactRequest:
+      type: object
+      additionalProperties: false
+      required: [profile_id]
+      properties:
+        profile_id: {type: string, format: uuid}
     RawArtifactKind:
       type: string
       enum: [web_page, tender_file, pasted_text]

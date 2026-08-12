@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
-from app.api.deps import CurrentUser, DatabaseSession, WorkspaceId
+from app.api.deps import AIEngineDependency, CurrentUser, DatabaseSession, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.schemas.v2 import (
@@ -11,6 +11,7 @@ from app.schemas.v2 import (
     CreateProfileProposalRequest,
     CreateSearchRunRequest,
     DecideProposalRequest,
+    EnrichRawArtifactRequest,
 )
 from app.services.intelligence_service import IntelligenceService
 
@@ -60,6 +61,33 @@ def _proposal(row) -> dict:
         "decision_note": row.decision_note,
         "created_at": row.created_at.isoformat(),
     }
+
+
+@router.post("/raw-artifacts/{artifact_id}/enrich", status_code=status.HTTP_201_CREATED)
+async def enrich_raw_artifact(
+    artifact_id: uuid.UUID,
+    payload: EnrichRawArtifactRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    ai_engine: AIEngineDependency,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    service = IntelligenceService(session, workspace_id, current_user.id)
+    item, snapshot, proposal = await service.enrich_artifact_for_profile(
+        artifact_id,
+        payload.profile_id,
+        ai_engine,
+    )
+    return success_response(
+        request,
+        {
+            "item": service.serialize_item(item, include_content=True),
+            "snapshot": _snapshot(snapshot),
+            "proposal": _proposal(proposal) if proposal else None,
+        },
+    )
 
 
 @router.post("/search-runs", status_code=status.HTTP_201_CREATED)

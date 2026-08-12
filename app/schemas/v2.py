@@ -29,6 +29,10 @@ class CreateProfileProposalRequest(BaseModel):
     proposed_patch: dict = Field(min_length=1)
 
 
+class EnrichRawArtifactRequest(BaseModel):
+    profile_id: uuid.UUID
+
+
 class DecideProposalRequest(BaseModel):
     note: str | None = Field(default=None, max_length=1000)
 

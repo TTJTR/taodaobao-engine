@@ -63,6 +63,14 @@ def test_v2_contract_freezes_raw_artifact_and_document_locations() -> None:
     assert contract["components"]["parameters"]["IdempotencyKey"]["schema"]["minLength"] == 16
 
 
+def test_intelligence_enrichment_write_requires_idempotency_key() -> None:
+    contract = yaml.safe_load(Path("docs/openapi-v2-incremental.yaml").read_text(encoding="utf-8"))
+    operation = contract["paths"]["/intelligence/raw-artifacts/{artifact_id}/enrich"]["post"]
+    assert {parameter.get("$ref") for parameter in operation["parameters"]} >= {
+        "#/components/parameters/IdempotencyKey"
+    }
+
+
 def test_ai_workbench_frontend_uses_v2_backend_endpoints() -> None:
     frontend = Path("static/index.html").read_text(encoding="utf-8")
     assert 'apiFetch("/runtime/tasks?page=1&page_size=100")' in frontend
