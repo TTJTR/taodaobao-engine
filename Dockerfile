@@ -7,7 +7,13 @@ WORKDIR /build
 
 COPY pyproject.toml README.md ./
 COPY app ./app
-RUN python -m pip wheel --wheel-dir /wheels '.[v2-parser]'
+RUN python -m pip download --dest /wheels \
+        --index-url https://download.pytorch.org/whl/cpu \
+        --extra-index-url https://pypi.org/simple \
+        'torch==2.8.0+cpu' 'torchvision==0.23.0+cpu' \
+    && python -m pip install --no-index --find-links /wheels \
+        'torch==2.8.0+cpu' 'torchvision==0.23.0+cpu' \
+    && python -m pip wheel --wheel-dir /wheels '.[v2-parser]'
 
 
 FROM python:3.11-slim AS runtime
