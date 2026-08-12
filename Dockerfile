@@ -7,7 +7,7 @@ WORKDIR /build
 
 COPY pyproject.toml README.md ./
 COPY app ./app
-RUN python -m pip wheel --wheel-dir /wheels .
+RUN python -m pip wheel --wheel-dir /wheels '.[v2-parser]'
 
 
 FROM python:3.11-slim AS runtime
