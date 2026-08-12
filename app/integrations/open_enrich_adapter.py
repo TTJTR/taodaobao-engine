@@ -65,6 +65,10 @@ class OpenEnrichAdapter:
             provider_metadata={"mode": "mock"},
         )
 
+    async def cancel_job(self, provider_job_id: str) -> None:
+        job = self._job(provider_job_id)
+        job["cancelled"] = True
+
     def _job(self, provider_job_id: str) -> dict:
         try:
             return self._jobs[provider_job_id]

@@ -2,7 +2,7 @@ import hashlib
 import ipaddress
 import socket
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
 from sqlalchemy import func, select
@@ -26,6 +26,8 @@ from app.db.models import (
     RawArtifactStatus,
     SearchRun,
     SearchRunStatus,
+    WorkflowTask,
+    WorkflowTaskStatus,
 )
 from app.schemas.intelligence_provider import EnrichmentJobRequest, EnrichmentJobResult
 from app.schemas.v2 import ManualIntelligenceSource
@@ -449,6 +451,65 @@ class IntelligenceService:
         if proposal:
             await self.session.refresh(proposal)
         return item, snapshot, proposal
+
+    async def queue_provider_enrichment(
+        self,
+        run_id: uuid.UUID,
+        profile_id: uuid.UUID,
+        request: EnrichmentJobRequest,
+    ) -> WorkflowTask:
+        run = await self._get(SearchRun, run_id)
+        await self._get(CustomerProfile, profile_id)
+        if request.client_job_id != run.id:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "Provider client_job_id 必须等于 SearchRun ID",
+                status_code=422,
+            )
+        if request.website_url is not None:
+            validate_provider_source_url(str(request.website_url))
+        task = await self.session.scalar(
+            select(WorkflowTask).where(
+                WorkflowTask.kind == "open_enrich",
+                WorkflowTask.target_id == run.id,
+                *self._filters(WorkflowTask),
+            )
+        )
+        payload = {
+            "profile_id": str(profile_id),
+            "user_id": str(self.user_id),
+            "request": request.model_dump(mode="json"),
+            "provider_job_id": None,
+            "poll_count": 0,
+            "cost_usd": 0,
+            "tool_calls_used": 0,
+        }
+        if task is None:
+            task = WorkflowTask(
+                workspace_id=self.workspace_id,
+                kind="open_enrich",
+                target_id=run.id,
+                status=WorkflowTaskStatus.QUEUED,
+                stage="queued",
+                trace_id=run.trace_id,
+                payload=payload,
+                attempt_count=0,
+                max_attempts=200,
+                available_at=datetime.now(UTC),
+                deadline_at=datetime.now(UTC) + timedelta(minutes=30),
+            )
+            self.session.add(task)
+        elif task.payload.get("request") != payload["request"]:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "该 SearchRun 已存在不同参数的富化任务",
+                status_code=409,
+            )
+        run.provider = "open_enrich"
+        run.status = SearchRunStatus.QUEUED
+        await self.session.commit()
+        await self.session.refresh(task)
+        return task
 
     async def create_run(
         self,

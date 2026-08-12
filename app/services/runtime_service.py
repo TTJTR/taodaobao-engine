@@ -200,6 +200,29 @@ class RuntimeService:
                     "error_summary": workflow.error_summary,
                 }
             ]
+        if task_type == "intelligence":
+            workflow = await self.session.scalar(
+                select(WorkflowTask).where(
+                    WorkflowTask.target_id == task_id,
+                    WorkflowTask.kind == "open_enrich",
+                    *self._filters(WorkflowTask),
+                )
+            )
+            if workflow:
+                return [
+                    {
+                        "id": str(workflow.id),
+                        "sequence": 1,
+                        "stage": workflow.stage,
+                        "executor": "open_enrich_worker",
+                        "is_agent": True,
+                        "status": _value(workflow.status),
+                        "attempt": workflow.attempt_count,
+                        "output_summary": workflow.payload,
+                        "error_code": workflow.error_code,
+                        "error_summary": workflow.error_summary,
+                    }
+                ]
         return [
             {
                 "id": str(task_id),

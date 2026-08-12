@@ -65,6 +65,8 @@ class IntelligenceProvider(Protocol):
 
     async def fetch_results(self, provider_job_id: str) -> EnrichmentJobResult: ...
 
+    async def cancel_job(self, provider_job_id: str) -> None: ...
+
 
 @dataclass(frozen=True, slots=True)
 class FeishuUserInfo:

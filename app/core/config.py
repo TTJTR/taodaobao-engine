@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 8 * 60 * 60
     cookie_secure: bool = True
     tender_storage_root: Path = Path(".local/tender-artifacts")
+    open_enrich_svc_url: str | None = None
+    open_enrich_svc_token: str | None = None
+    open_enrich_poll_seconds: int = 10
 
     @model_validator(mode="after")
     def validate_security_configuration(self) -> "Settings":
@@ -64,6 +67,8 @@ class Settings(BaseSettings):
             raise ValueError("APP_INVITATION_TTL_SECONDS must be positive")
         if self.invitation_max_token_ttl_seconds <= 0:
             raise ValueError("APP_INVITATION_MAX_TOKEN_TTL_SECONDS must be positive")
+        if self.open_enrich_poll_seconds <= 0:
+            raise ValueError("APP_OPEN_ENRICH_POLL_SECONDS must be positive")
         return self
 
 
