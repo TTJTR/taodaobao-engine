@@ -138,6 +138,11 @@ paths:
       operationId: listTenderRequirements
       parameters: [{$ref: '#/components/parameters/TenderId'}]
       responses: {'200': {$ref: '#/components/responses/TenderRequirementListResponse'}}
+  /tenders/{tender_id}/requirements/breakdown:
+    post:
+      operationId: breakdownTenderRequirements
+      parameters: [{$ref: '#/components/parameters/TenderId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses: {'201': {$ref: '#/components/responses/TenderRequirementListResponse'}}
   /tenders/{tender_id}/response-matrices:
     post:
       operationId: createResponseMatrix
@@ -439,16 +444,38 @@ components:
         experience_ids: {type: array, maxItems: 100, items: {type: string, format: uuid}}
         capability_ids: {type: array, maxItems: 100, items: {type: string, format: uuid}}
         intelligence_snapshot_id: {type: [string, 'null'], format: uuid}
+    ResponseMatrixItem:
+      type: object
+      additionalProperties: false
+      required: [id, matrix_id, requirement_id, ai_draft, current_answer, internal_exp_links, internal_cap_links, external_ctx_links, risk_flags, review_status, version]
+      properties:
+        id: {type: string, format: uuid}
+        matrix_id: {type: string, format: uuid}
+        requirement_id: {type: string, format: uuid}
+        ai_draft: {type: string}
+        current_answer: {type: string}
+        internal_exp_links: {type: array, items: {type: object, additionalProperties: true}}
+        internal_cap_links: {type: array, items: {type: object, additionalProperties: true}}
+        external_ctx_links: {type: array, items: {type: object, additionalProperties: true}}
+        risk_flags: {type: array, items: {type: string}}
+        review_status: {enum: [pending, approved, rejected, needs_evidence]}
+        reviewer_id: {type: [string, 'null'], format: uuid}
+        approved_at: {type: [string, 'null'], format: date-time}
+        version: {type: integer, minimum: 1}
     UpdateResponseItemRequest:
       type: object
+      required: [expected_version]
       properties:
         response_text: {type: [string, 'null'], maxLength: 20000}
         risks: {type: [array, 'null'], maxItems: 20, items: {type: string}}
+        expected_version: {type: integer, minimum: 1}
     ReviewResponseItemRequest:
       type: object
-      required: [action]
+      required: [action, expected_version]
       properties:
-        action: {enum: [accept, reject, needs_revision]}
+        action: {enum: [approve, edit_and_approve, reject, needs_evidence]}
+        expected_version: {type: integer, minimum: 1}
+        current_answer: {type: [string, 'null'], minLength: 1, maxLength: 20000}
         note: {type: [string, 'null'], maxLength: 1000}
     CreateRehearsalRequest:
       type: object

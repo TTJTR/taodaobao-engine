@@ -71,6 +71,26 @@ def test_intelligence_enrichment_write_requires_idempotency_key() -> None:
     }
 
 
+def test_tender_breakdown_and_review_contracts_enforce_trust_gate() -> None:
+    contract = yaml.safe_load(Path("docs/openapi-v2-incremental.yaml").read_text(encoding="utf-8"))
+    paths = contract["paths"]
+    schemas = contract["components"]["schemas"]
+    for path, method in (
+        ("/tenders/{tender_id}/requirements/breakdown", "post"),
+        ("/response-matrices/{matrix_id}/items/{item_id}/review", "post"),
+    ):
+        refs = {item.get("$ref") for item in paths[path][method]["parameters"]}
+        assert "#/components/parameters/IdempotencyKey" in refs
+    assert schemas["ReviewResponseItemRequest"]["properties"]["action"]["enum"] == [
+        "approve",
+        "edit_and_approve",
+        "reject",
+        "needs_evidence",
+    ]
+    assert "expected_version" in schemas["ReviewResponseItemRequest"]["required"]
+    assert schemas["ResponseMatrixItem"]["properties"]["ai_draft"] == {"type": "string"}
+
+
 def test_ai_workbench_frontend_uses_v2_backend_endpoints() -> None:
     frontend = Path("static/index.html").read_text(encoding="utf-8")
     assert 'apiFetch("/runtime/tasks?page=1&page_size=100")' in frontend

@@ -1545,16 +1545,32 @@ class ResponseMatrixItem(EntityMixin, WorkspaceMixin, Base):
         nullable=False,
     )
     response_text: Mapped[str] = mapped_column(Text, nullable=False)
+    ai_draft: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    current_answer: Mapped[str] = mapped_column(Text, nullable=False, default="")
     evidence_status: Mapped[ResponseEvidenceStatus] = mapped_column(
         enum_column(ResponseEvidenceStatus, "response_evidence_status"), nullable=False
     )
     evidence_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     risks: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    internal_exp_links: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    internal_cap_links: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    external_ctx_links: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    risk_flags: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     review_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     reviewer_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
     review_note: Mapped[str | None] = mapped_column(String(1000))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
 
 class RehearsalSession(EntityMixin, WorkspaceMixin, Base):

@@ -50,12 +50,20 @@ def _item(row) -> dict:
         "matrix_id": str(row.matrix_id),
         "requirement_id": str(row.requirement_id),
         "response_text": row.response_text,
+        "ai_draft": row.ai_draft,
+        "current_answer": row.current_answer,
         "evidence_status": row.evidence_status.value,
         "evidence_refs": row.evidence_refs,
         "risks": row.risks,
+        "internal_exp_links": row.internal_exp_links,
+        "internal_cap_links": row.internal_cap_links,
+        "external_ctx_links": row.external_ctx_links,
+        "risk_flags": row.risk_flags,
         "review_status": row.review_status,
         "reviewer_id": str(row.reviewer_id) if row.reviewer_id else None,
         "review_note": row.review_note,
+        "approved_at": row.approved_at.isoformat() if row.approved_at else None,
+        "version": row.version,
         "updated_at": row.updated_at.isoformat(),
     }
 
@@ -130,6 +138,23 @@ async def get_tender_requirements(
     )
 
 
+@router.post("/{tender_id}/requirements/breakdown", status_code=status.HTTP_201_CREATED)
+async def breakdown_tender_requirements(
+    tender_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    rows = await TenderService(session, workspace_id, current_user.id).breakdown_requirements(
+        tender_id
+    )
+    return success_response(
+        request, {"items": [_requirement(row) for row in rows], "total": len(rows)}
+    )
+
+
 @router.post("/{tender_id}/response-matrices", status_code=status.HTTP_201_CREATED)
 async def create_response_matrix(
     tender_id: uuid.UUID,
@@ -194,7 +219,7 @@ async def update_response_matrix_item(
     _: str = Depends(require_idempotency_key),
 ) -> dict:
     row = await TenderService(session, workspace_id, current_user.id).update_item(
-        matrix_id, item_id, payload.response_text, payload.risks
+        matrix_id, item_id, payload.response_text, payload.risks, payload.expected_version
     )
     return success_response(request, _item(row))
 
@@ -211,6 +236,11 @@ async def review_response_matrix_item(
     _: str = Depends(require_idempotency_key),
 ) -> dict:
     row = await TenderService(session, workspace_id, current_user.id).review_item(
-        matrix_id, item_id, payload.action, payload.note
+        matrix_id,
+        item_id,
+        payload.action,
+        payload.note,
+        payload.expected_version,
+        payload.current_answer,
     )
     return success_response(request, _item(row))

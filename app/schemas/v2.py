@@ -61,10 +61,13 @@ class CreateResponseMatrixRequest(BaseModel):
 class UpdateResponseItemRequest(BaseModel):
     response_text: str | None = Field(default=None, min_length=1, max_length=20_000)
     risks: list[str] | None = Field(default=None, max_length=20)
+    expected_version: int = Field(ge=1)
 
 
 class ReviewResponseItemRequest(BaseModel):
-    action: Literal["accept", "reject", "needs_revision"]
+    action: Literal["approve", "edit_and_approve", "reject", "needs_evidence"]
+    expected_version: int = Field(ge=1)
+    current_answer: str | None = Field(default=None, min_length=1, max_length=20_000)
     note: str | None = Field(default=None, max_length=1000)
 
 
