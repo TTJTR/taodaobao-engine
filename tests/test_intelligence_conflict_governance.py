@@ -27,6 +27,7 @@ from app.schemas.intelligence_provider import (
     EnrichmentJobResult,
     ProviderCitation,
 )
+from app.schemas.v2 import ManualIntelligenceSource
 from app.services.intelligence_service import IntelligenceService
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
@@ -340,6 +341,84 @@ async def test_reassess_freshness_marks_only_old_current_workspace_items() -> No
                 await IntelligenceService(session, workspace_id, user.id).create_snapshot(
                     "customer_profile", [old.id]
                 )
+    finally:
+        await engine.dispose()
+        async with admin.begin() as connection:
+            await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await admin.dispose()
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
+@pytest.mark.asyncio
+async def test_manual_source_creates_and_reuses_raw_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schema = f"intelligence_manual_artifact_{uuid.uuid4().hex}"
+    admin = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+    async with admin.begin() as connection:
+        await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    engine = create_async_engine(
+        TEST_DATABASE_URL,
+        pool_pre_ping=True,
+        connect_args={"server_settings": {"search_path": f"{schema}, public"}},
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all, checkfirst=False)
+        monkeypatch.setattr(
+            "app.services.intelligence_service.socket.getaddrinfo",
+            lambda *_: [(None, None, None, None, ("93.184.216.34", 0))],
+        )
+        async with factory() as session:
+            workspace_id = uuid.uuid4()
+            user = User(workspace_id=workspace_id, feishu_user_id=uuid.uuid4().hex, name="Reviewer")
+            session.add(user)
+            await session.flush()
+            service = IntelligenceService(session, workspace_id, user.id)
+            source = ManualIntelligenceSource(
+                title="Public notice",
+                source_url="https://example.com/notice",
+                content="Public procurement notice.",
+            )
+            first = await service.create_run(
+                query="notice", purpose="customer_profile", provider="manual", sources=[source]
+            )
+            second = await service.create_run(
+                query="notice", purpose="customer_profile", provider="manual", sources=[source]
+            )
+            artifacts = list(
+                await session.scalars(
+                    select(RawArtifact).where(
+                        RawArtifact.workspace_id == workspace_id,
+                        RawArtifact.is_deleted.is_(False),
+                    )
+                )
+            )
+            items = list(
+                await session.scalars(
+                    select(IntelligenceItem).where(
+                        IntelligenceItem.workspace_id == workspace_id,
+                        IntelligenceItem.is_deleted.is_(False),
+                    )
+                )
+            )
+            links = list(
+                await session.scalars(
+                    select(IntelligenceItemArtifactLink).where(
+                        IntelligenceItemArtifactLink.workspace_id == workspace_id,
+                        IntelligenceItemArtifactLink.is_deleted.is_(False),
+                    )
+                )
+            )
+            assert first.status == SearchRunStatus.COMPLETED
+            assert second.status == SearchRunStatus.PARTIAL
+            assert len(artifacts) == 1
+            assert artifacts[0].kind == RawArtifactKind.PASTED_TEXT
+            assert len(items) == 1
+            assert len(links) == 1
+            assert links[0].raw_artifact_id == artifacts[0].id
+            assert second.result_summary["artifacts_reused"] == 1
     finally:
         await engine.dispose()
         async with admin.begin() as connection:

@@ -24,6 +24,7 @@ from app.db.models import (
     ProfileStatus,
     ProposalStatus,
     RawArtifact,
+    RawArtifactKind,
     RawArtifactStatus,
     SearchRun,
     SearchRunStatus,
@@ -694,47 +695,91 @@ class IntelligenceService:
         await self.session.flush()
         created = 0
         duplicate = 0
+        artifacts_created = 0
+        artifacts_reused = 0
         for source in sources:
             source_url = str(source.source_url)
             domain = validate_public_source_url(source_url)
             normalized = " ".join(source.content.split())
             fingerprint = hashlib.sha256(f"{source_url}\n{normalized}".encode()).hexdigest()
-            exists = await self.session.scalar(
-                select(IntelligenceItem.id).where(
+            artifact = await self.session.scalar(
+                select(RawArtifact).where(
+                    RawArtifact.workspace_id == self.workspace_id,
+                    RawArtifact.artifact_key == fingerprint,
+                    RawArtifact.is_deleted.is_(False),
+                )
+            )
+            if artifact is None:
+                artifact = RawArtifact(
+                    workspace_id=self.workspace_id,
+                    search_run_id=run.id,
+                    artifact_key=fingerprint,
+                    kind=RawArtifactKind.PASTED_TEXT,
+                    status=RawArtifactStatus.CAPTURED,
+                    provider="manual",
+                    source_url=source_url,
+                    normalized_url=source_url,
+                    mime_type="text/plain",
+                    content_sha256=hashlib.sha256(normalized.encode()).hexdigest(),
+                    byte_size=len(source.content.encode()),
+                    text_content=source.content,
+                    published_at=source.published_at,
+                    captured_at=now,
+                    security_report={"public_url_validated": True},
+                    metadata_snapshot={"title": source.title.strip(), "input_mode": "manual"},
+                )
+                self.session.add(artifact)
+                await self.session.flush()
+                artifacts_created += 1
+            else:
+                artifacts_reused += 1
+            item = await self.session.scalar(
+                select(IntelligenceItem).where(
                     IntelligenceItem.workspace_id == self.workspace_id,
                     IntelligenceItem.fingerprint == fingerprint,
                     IntelligenceItem.is_deleted.is_(False),
                 )
             )
-            if exists:
+            if item is not None:
+                await self._link_artifacts(item, {artifact.id: artifact}, corroborating=True)
                 duplicate += 1
                 continue
             facts = _extract_facts(source.content)
-            self.session.add(
-                IntelligenceItem(
-                    workspace_id=self.workspace_id,
-                    search_run_id=run.id,
-                    title=source.title.strip(),
-                    source_url=source_url,
-                    source_domain=domain,
-                    published_at=source.published_at,
-                    captured_at=now,
-                    content=source.content,
-                    summary=(facts[0]["text"] if facts else source.content[:1000]),
-                    facts=facts,
-                    fingerprint=fingerprint,
-                    freshness=IntelligenceFreshness.CURRENT,
-                    review_status=IntelligenceReviewStatus.PENDING,
-                    metadata_snapshot={
-                        "provider": "manual",
-                        "captured_at": now.isoformat(),
-                        "content_length": len(source.content),
-                    },
-                )
+            item = IntelligenceItem(
+                workspace_id=self.workspace_id,
+                search_run_id=run.id,
+                title=source.title.strip(),
+                source_url=source_url,
+                source_domain=domain,
+                published_at=source.published_at,
+                captured_at=now,
+                content=source.content,
+                summary=(facts[0]["text"] if facts else source.content[:1000]),
+                facts=facts,
+                fingerprint=fingerprint,
+                freshness=IntelligenceFreshness.CURRENT,
+                review_status=IntelligenceReviewStatus.PENDING,
+                metadata_snapshot={
+                    "provider": "manual",
+                    "raw_artifact_id": str(artifact.id),
+                    "content_sha256": artifact.content_sha256,
+                    "captured_at": now.isoformat(),
+                    "content_length": len(source.content),
+                    "boundary": "external_public_information",
+                },
             )
+            self.session.add(item)
+            await self.session.flush()
+            await self._link_artifacts(item, {artifact.id: artifact}, corroborating=False)
             created += 1
         run.status = SearchRunStatus.COMPLETED if created else SearchRunStatus.PARTIAL
-        run.result_summary = {"created": created, "duplicates": duplicate, "provider": "manual"}
+        run.result_summary = {
+            "created": created,
+            "duplicates": duplicate,
+            "artifacts_created": artifacts_created,
+            "artifacts_reused": artifacts_reused,
+            "provider": "manual",
+        }
         run.completed_at = now
         await self.session.commit()
         await self.session.refresh(run)
