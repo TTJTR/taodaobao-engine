@@ -10,6 +10,20 @@ servers:
 security:
   - sessionCookie: []
 paths:
+  /intelligence/raw-artifacts:
+    get:
+      operationId: listRawArtifacts
+      parameters:
+        - {name: run_id, in: query, schema: {type: string, format: uuid}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: page_size, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+      responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+  /intelligence/raw-artifacts/{artifact_id}:
+    get:
+      operationId: getRawArtifact
+      parameters:
+        - {name: artifact_id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
   /intelligence/raw-artifacts/{artifact_id}/enrich:
     post:
       operationId: enrichRawArtifact

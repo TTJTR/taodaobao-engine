@@ -67,6 +67,43 @@ def _proposal(row) -> dict:
     }
 
 
+@router.get("/raw-artifacts")
+async def list_raw_artifacts(
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    run_id: uuid.UUID | None = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> dict:
+    service = IntelligenceService(session, workspace_id, current_user.id)
+    rows, total = await service.list_artifacts(page, page_size, run_id)
+    return success_response(
+        request,
+        {
+            "items": [service.serialize_artifact(row) for row in rows],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_more": page * page_size < total,
+        },
+    )
+
+
+@router.get("/raw-artifacts/{artifact_id}")
+async def get_raw_artifact(
+    artifact_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+) -> dict:
+    service = IntelligenceService(session, workspace_id, current_user.id)
+    artifact = await service.get_artifact(artifact_id)
+    return success_response(request, service.serialize_artifact(artifact, include_text=True))
+
+
 @router.post("/raw-artifacts/{artifact_id}/enrich", status_code=status.HTTP_201_CREATED)
 async def enrich_raw_artifact(
     artifact_id: uuid.UUID,

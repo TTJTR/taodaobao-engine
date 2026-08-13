@@ -831,6 +831,27 @@ class IntelligenceService:
         )
         return list(result), int(total or 0)
 
+    async def list_artifacts(
+        self, page: int, page_size: int, run_id: uuid.UUID | None
+    ) -> tuple[list[RawArtifact], int]:
+        filters = list(self._filters(RawArtifact))
+        if run_id is not None:
+            filters.append(RawArtifact.search_run_id == run_id)
+        result = await self.session.scalars(
+            select(RawArtifact)
+            .where(*filters)
+            .order_by(RawArtifact.captured_at.desc(), RawArtifact.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        total = await self.session.scalar(
+            select(func.count()).select_from(RawArtifact).where(*filters)
+        )
+        return list(result), int(total or 0)
+
+    async def get_artifact(self, artifact_id: uuid.UUID) -> RawArtifact:
+        return await self._get(RawArtifact, artifact_id)
+
     async def get_item(self, item_id: uuid.UUID) -> IntelligenceItem:
         return await self._get(IntelligenceItem, item_id)
 
@@ -1110,4 +1131,28 @@ class IntelligenceService:
         }
         if include_content:
             data["content"] = item.content
+        return data
+
+    @staticmethod
+    def serialize_artifact(artifact: RawArtifact, *, include_text: bool = False) -> dict:
+        data = {
+            "id": str(artifact.id),
+            "search_run_id": str(artifact.search_run_id) if artifact.search_run_id else None,
+            "kind": artifact.kind.value,
+            "status": artifact.status.value,
+            "provider": artifact.provider,
+            "source_url": artifact.source_url,
+            "normalized_url": artifact.normalized_url,
+            "source_filename": artifact.source_filename,
+            "mime_type": artifact.mime_type,
+            "http_status": artifact.http_status,
+            "content_sha256": artifact.content_sha256,
+            "byte_size": artifact.byte_size,
+            "published_at": artifact.published_at.isoformat() if artifact.published_at else None,
+            "captured_at": artifact.captured_at.isoformat(),
+            "error_code": artifact.error_code,
+            "error_summary": artifact.error_summary,
+        }
+        if include_text:
+            data["text_content"] = artifact.text_content
         return data

@@ -530,6 +530,65 @@ async def test_manual_source_creates_and_reuses_raw_artifact(
         await admin.dispose()
 
 
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
+@pytest.mark.asyncio
+async def test_artifact_audit_reads_filter_workspace_run_and_sensitive_fields() -> None:
+    schema = f"intelligence_artifacts_{uuid.uuid4().hex}"
+    admin = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+    async with admin.begin() as connection:
+        await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    engine = create_async_engine(
+        TEST_DATABASE_URL,
+        pool_pre_ping=True,
+        connect_args={"server_settings": {"search_path": f"{schema}, public"}},
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all, checkfirst=False)
+        async with factory() as session:
+            workspace_id = uuid.uuid4()
+            other_workspace_id = uuid.uuid4()
+            user = User(workspace_id=workspace_id, feishu_user_id=uuid.uuid4().hex, name="Reviewer")
+            other_user = User(
+                workspace_id=other_workspace_id,
+                feishu_user_id=uuid.uuid4().hex,
+                name="Other reviewer",
+            )
+            session.add_all([user, other_user])
+            await session.flush()
+            run = _run(workspace_id, user.id, "artifact-audit")
+            other_run = _run(other_workspace_id, other_user.id, "artifact-audit-other")
+            session.add_all([run, other_run])
+            await session.flush()
+            visible = _artifact(workspace_id, run.id, "https://example.com/visible", "Visible")
+            visible.storage_uri = "file:///private/artifact.txt"
+            visible.security_report = {"resolved_ips": ["93.184.216.34"]}
+            deleted = _artifact(workspace_id, run.id, "https://example.com/deleted", "Deleted")
+            deleted.is_deleted = True
+            other_workspace = _artifact(
+                other_workspace_id, other_run.id, "https://example.com/other", "Other"
+            )
+            session.add_all([visible, deleted, other_workspace])
+            await session.commit()
+
+            service = IntelligenceService(session, workspace_id, user.id)
+            rows, total = await service.list_artifacts(1, 20, run.id)
+            assert total == 1
+            assert [row.id for row in rows] == [visible.id]
+            assert await service.get_artifact(visible.id) is visible
+            serialized = service.serialize_artifact(visible, include_text=True)
+            assert serialized["text_content"] == "Visible"
+            assert "storage_uri" not in serialized
+            assert "security_report" not in serialized
+            assert "metadata_snapshot" not in serialized
+    finally:
+        await engine.dispose()
+        async with admin.begin() as connection:
+            await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await admin.dispose()
+
+
 def _artifact(workspace_id, run_id, url: str, quote: str) -> RawArtifact:
     return RawArtifact(
         workspace_id=workspace_id,
@@ -548,6 +607,20 @@ def _artifact(workspace_id, run_id, url: str, quote: str) -> RawArtifact:
         captured_at=datetime.now(UTC),
         security_report={},
         metadata_snapshot={},
+    )
+
+
+def _run(workspace_id: uuid.UUID, user_id: uuid.UUID, query: str) -> SearchRun:
+    return SearchRun(
+        workspace_id=workspace_id,
+        created_by_id=user_id,
+        query=query,
+        purpose="customer_profile",
+        provider="manual",
+        status=SearchRunStatus.COMPLETED,
+        trace_id=uuid.uuid4().hex,
+        input_snapshot={},
+        result_summary={},
     )
 
 
