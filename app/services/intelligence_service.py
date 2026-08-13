@@ -852,6 +852,26 @@ class IntelligenceService:
     async def get_artifact(self, artifact_id: uuid.UUID) -> RawArtifact:
         return await self._get(RawArtifact, artifact_id)
 
+    async def list_item_artifacts(
+        self, item_id: uuid.UUID
+    ) -> list[tuple[IntelligenceItemArtifactLink, RawArtifact]]:
+        await self.get_item(item_id)
+        result = await self.session.execute(
+            select(IntelligenceItemArtifactLink, RawArtifact)
+            .join(
+                RawArtifact,
+                (RawArtifact.id == IntelligenceItemArtifactLink.raw_artifact_id)
+                & (RawArtifact.workspace_id == self.workspace_id)
+                & RawArtifact.is_deleted.is_(False),
+            )
+            .where(
+                IntelligenceItemArtifactLink.intelligence_item_id == item_id,
+                *self._filters(IntelligenceItemArtifactLink),
+            )
+            .order_by(IntelligenceItemArtifactLink.created_at)
+        )
+        return list(result.all())
+
     async def get_item(self, item_id: uuid.UUID) -> IntelligenceItem:
         return await self._get(IntelligenceItem, item_id)
 
@@ -1156,3 +1176,13 @@ class IntelligenceService:
         if include_text:
             data["text_content"] = artifact.text_content
         return data
+
+    @classmethod
+    def serialize_item_artifact_link(
+        cls, link: IntelligenceItemArtifactLink, artifact: RawArtifact
+    ) -> dict:
+        return {
+            "relation_type": link.relation_type.value,
+            "source_snapshot": link.source_snapshot,
+            "artifact": cls.serialize_artifact(artifact),
+        }

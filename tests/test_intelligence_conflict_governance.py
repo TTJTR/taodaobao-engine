@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.errors import AppError
 from app.db.models import (
+    ArtifactRelationType,
     Base,
     CustomerProfile,
     IntelligenceFreshness,
@@ -569,7 +570,24 @@ async def test_artifact_audit_reads_filter_workspace_run_and_sensitive_fields() 
             other_workspace = _artifact(
                 other_workspace_id, other_run.id, "https://example.com/other", "Other"
             )
-            session.add_all([visible, deleted, other_workspace])
+            item = _item(workspace_id, run.id, "linked-item", datetime.now(UTC))
+            session.add_all([visible, deleted, other_workspace, item])
+            await session.flush()
+            visible_link = IntelligenceItemArtifactLink(
+                workspace_id=workspace_id,
+                intelligence_item_id=item.id,
+                raw_artifact_id=visible.id,
+                relation_type=ArtifactRelationType.PRIMARY,
+                source_snapshot={"source_url": visible.source_url},
+            )
+            deleted_link = IntelligenceItemArtifactLink(
+                workspace_id=workspace_id,
+                intelligence_item_id=item.id,
+                raw_artifact_id=deleted.id,
+                relation_type=ArtifactRelationType.CORROBORATING,
+                source_snapshot={"source_url": deleted.source_url},
+            )
+            session.add_all([visible_link, deleted_link])
             await session.commit()
 
             service = IntelligenceService(session, workspace_id, user.id)
@@ -582,6 +600,15 @@ async def test_artifact_audit_reads_filter_workspace_run_and_sensitive_fields() 
             assert "storage_uri" not in serialized
             assert "security_report" not in serialized
             assert "metadata_snapshot" not in serialized
+            linked_rows = await service.list_item_artifacts(item.id)
+            assert [(link.id, artifact.id) for link, artifact in linked_rows] == [
+                (visible_link.id, visible.id)
+            ]
+            linked_serialized = service.serialize_item_artifact_link(*linked_rows[0])
+            assert linked_serialized["relation_type"] == "primary"
+            assert linked_serialized["artifact"]["id"] == str(visible.id)
+            assert "text_content" not in linked_serialized["artifact"]
+            assert "storage_uri" not in linked_serialized["artifact"]
     finally:
         await engine.dispose()
         async with admin.begin() as connection:

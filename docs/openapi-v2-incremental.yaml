@@ -96,6 +96,11 @@ paths:
       operationId: getIntelligenceItem
       parameters: [{$ref: '#/components/parameters/ItemId'}]
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
+  /intelligence/items/{item_id}/raw-artifacts:
+    get:
+      operationId: listIntelligenceItemArtifacts
+      parameters: [{$ref: '#/components/parameters/ItemId'}]
+      responses: {'200': {$ref: '#/components/responses/ListResponse'}}
   /intelligence/items/reassess-freshness:
     post:
       operationId: reassessIntelligenceFreshness

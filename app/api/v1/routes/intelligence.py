@@ -265,6 +265,27 @@ async def get_intelligence_item(
     return success_response(request, service.serialize_item(row, include_content=True))
 
 
+@router.get("/items/{item_id}/raw-artifacts")
+async def list_intelligence_item_artifacts(
+    item_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+) -> dict:
+    service = IntelligenceService(session, workspace_id, current_user.id)
+    rows = await service.list_item_artifacts(item_id)
+    return success_response(
+        request,
+        {
+            "items": [
+                service.serialize_item_artifact_link(link, artifact) for link, artifact in rows
+            ],
+            "total": len(rows),
+        },
+    )
+
+
 @router.post("/items/reassess-freshness")
 async def reassess_intelligence_freshness(
     payload: ReassessIntelligenceFreshnessRequest,
