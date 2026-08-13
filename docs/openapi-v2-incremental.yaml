@@ -80,6 +80,16 @@ paths:
       operationId: getIntelligenceItem
       parameters: [{$ref: '#/components/parameters/ItemId'}]
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
+  /intelligence/items/reassess-freshness:
+    post:
+      operationId: reassessIntelligenceFreshness
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReassessIntelligenceFreshnessRequest'}
+      responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
   /intelligence/snapshots:
     post:
       operationId: createIntelligenceSnapshot
@@ -502,6 +512,11 @@ components:
       properties:
         purpose: {enum: [customer_profile, solution, tender]}
         item_ids: {type: array, minItems: 1, maxItems: 100, items: {type: string, format: uuid}}
+    ReassessIntelligenceFreshnessRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        stale_after_days: {type: integer, minimum: 1, maximum: 365, default: 90}
     CreateProfileProposalRequest:
       type: object
       required: [snapshot_id, proposed_patch]

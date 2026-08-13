@@ -779,6 +779,37 @@ class IntelligenceService:
     async def get_item(self, item_id: uuid.UUID) -> IntelligenceItem:
         return await self._get(IntelligenceItem, item_id)
 
+    async def reassess_freshness(self, *, stale_after_days: int = 90) -> dict:
+        assessed_at = datetime.now(UTC)
+        stale_before = assessed_at - timedelta(days=stale_after_days)
+        items = list(
+            await self.session.scalars(
+                select(IntelligenceItem).where(
+                    IntelligenceItem.workspace_id == self.workspace_id,
+                    IntelligenceItem.is_deleted.is_(False),
+                    IntelligenceItem.freshness == IntelligenceFreshness.CURRENT,
+                )
+            )
+        )
+        marked_stale = 0
+        for item in items:
+            if item.captured_at >= stale_before:
+                continue
+            metadata = dict(item.metadata_snapshot)
+            metadata["freshness_assessed_at"] = assessed_at.isoformat()
+            metadata["freshness_reason"] = "captured_at_exceeded_stale_threshold"
+            metadata["stale_after_days"] = stale_after_days
+            item.metadata_snapshot = metadata
+            item.freshness = IntelligenceFreshness.STALE
+            marked_stale += 1
+        await self.session.commit()
+        return {
+            "assessed_at": assessed_at.isoformat(),
+            "stale_after_days": stale_after_days,
+            "scanned": len(items),
+            "marked_stale": marked_stale,
+        }
+
     async def create_snapshot(
         self, purpose: str, item_ids: list[uuid.UUID]
     ) -> IntelligenceSnapshot:

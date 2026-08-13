@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import func, select, text
@@ -10,6 +10,7 @@ from app.core.errors import AppError
 from app.db.models import (
     Base,
     CustomerProfile,
+    IntelligenceFreshness,
     IntelligenceItem,
     IntelligenceItemArtifactLink,
     ProfileStatus,
@@ -274,6 +275,78 @@ async def test_shared_ai_enrichment_uses_conflict_governance() -> None:
         await admin.dispose()
 
 
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
+@pytest.mark.asyncio
+async def test_reassess_freshness_marks_only_old_current_workspace_items() -> None:
+    schema = f"intelligence_freshness_{uuid.uuid4().hex}"
+    admin = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+    async with admin.begin() as connection:
+        await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    engine = create_async_engine(
+        TEST_DATABASE_URL,
+        pool_pre_ping=True,
+        connect_args={"server_settings": {"search_path": f"{schema}, public"}},
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all, checkfirst=False)
+        async with factory() as session:
+            workspace_id = uuid.uuid4()
+            user = User(workspace_id=workspace_id, feishu_user_id=uuid.uuid4().hex, name="Reviewer")
+            session.add(user)
+            await session.flush()
+            run = SearchRun(
+                workspace_id=workspace_id,
+                created_by_id=user.id,
+                query="freshness",
+                purpose="customer_profile",
+                provider="manual",
+                status=SearchRunStatus.COMPLETED,
+                trace_id=uuid.uuid4().hex,
+                input_snapshot={},
+                result_summary={},
+            )
+            session.add(run)
+            await session.flush()
+            now = datetime.now(UTC)
+            old = _item(workspace_id, run.id, "old", now - timedelta(days=91))
+            recent = _item(workspace_id, run.id, "recent", now - timedelta(days=89))
+            unavailable = _item(
+                workspace_id,
+                run.id,
+                "unavailable",
+                now - timedelta(days=120),
+                IntelligenceFreshness.UNAVAILABLE,
+            )
+            session.add_all([old, recent, unavailable])
+            await session.commit()
+            result = await IntelligenceService(session, workspace_id, user.id).reassess_freshness(
+                stale_after_days=90
+            )
+            assert result["scanned"] == 2
+            assert result["marked_stale"] == 1
+            await session.refresh(old)
+            await session.refresh(recent)
+            await session.refresh(unavailable)
+            assert old.freshness == IntelligenceFreshness.STALE
+            assert (
+                old.metadata_snapshot["freshness_reason"]
+                == "captured_at_exceeded_stale_threshold"
+            )
+            assert recent.freshness == IntelligenceFreshness.CURRENT
+            assert unavailable.freshness == IntelligenceFreshness.UNAVAILABLE
+            with pytest.raises(AppError):
+                await IntelligenceService(session, workspace_id, user.id).create_snapshot(
+                    "customer_profile", [old.id]
+                )
+    finally:
+        await engine.dispose()
+        async with admin.begin() as connection:
+            await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await admin.dispose()
+
+
 def _artifact(workspace_id, run_id, url: str, quote: str) -> RawArtifact:
     return RawArtifact(
         workspace_id=workspace_id,
@@ -291,6 +364,30 @@ def _artifact(workspace_id, run_id, url: str, quote: str) -> RawArtifact:
         text_content=quote,
         captured_at=datetime.now(UTC),
         security_report={},
+        metadata_snapshot={},
+    )
+
+
+def _item(
+    workspace_id: uuid.UUID,
+    run_id: uuid.UUID,
+    marker: str,
+    captured_at: datetime,
+    freshness: IntelligenceFreshness = IntelligenceFreshness.CURRENT,
+) -> IntelligenceItem:
+    return IntelligenceItem(
+        workspace_id=workspace_id,
+        search_run_id=run_id,
+        title=marker,
+        source_url=f"https://example.com/{marker}",
+        source_domain="example.com",
+        captured_at=captured_at,
+        content=marker,
+        summary=marker,
+        facts=[],
+        fingerprint=hashlib_sha256(marker),
+        freshness=freshness,
+        review_status="pending",
         metadata_snapshot={},
     )
 

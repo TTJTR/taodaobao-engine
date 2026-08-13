@@ -24,6 +24,10 @@ class CreateIntelligenceSnapshotRequest(BaseModel):
     item_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
 
 
+class ReassessIntelligenceFreshnessRequest(BaseModel):
+    stale_after_days: int = Field(default=90, ge=1, le=365)
+
+
 class CreateProfileProposalRequest(BaseModel):
     snapshot_id: uuid.UUID
     proposed_patch: dict = Field(min_length=1)

@@ -14,6 +14,7 @@ from app.schemas.v2 import (
     DecideProposalRequest,
     EnrichRawArtifactRequest,
     QueueProviderEnrichmentRequest,
+    ReassessIntelligenceFreshnessRequest,
 )
 from app.services.intelligence_service import IntelligenceService
 
@@ -216,6 +217,21 @@ async def get_intelligence_item(
     service = IntelligenceService(session, workspace_id, current_user.id)
     row = await service.get_item(item_id)
     return success_response(request, service.serialize_item(row, include_content=True))
+
+
+@router.post("/items/reassess-freshness")
+async def reassess_intelligence_freshness(
+    payload: ReassessIntelligenceFreshnessRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    result = await IntelligenceService(session, workspace_id, current_user.id).reassess_freshness(
+        stale_after_days=payload.stale_after_days
+    )
+    return success_response(request, result)
 
 
 @router.post("/snapshots", status_code=status.HTTP_201_CREATED)
