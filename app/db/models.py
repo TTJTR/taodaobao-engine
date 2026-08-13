@@ -1575,6 +1575,26 @@ class ResponseMatrixItem(EntityMixin, WorkspaceMixin, Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
 
+class ResponseMatrixItemVersion(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "response_matrix_item_versions"
+    __table_args__ = (
+        UniqueConstraint("response_item_id", "version", name="uq_response_matrix_item_version"),
+        Index("ix_response_matrix_item_versions_item", "response_item_id", "version"),
+    )
+
+    response_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("response_matrix_items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    changed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    change_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    item_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
 class RehearsalSession(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "rehearsal_sessions"
     __table_args__ = (Index("ix_rehearsal_workspace_status", "workspace_id", "status"),)

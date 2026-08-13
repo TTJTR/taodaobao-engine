@@ -259,6 +259,11 @@ paths:
       operationId: getResponseMatrix
       parameters: [{$ref: '#/components/parameters/MatrixId'}]
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
+  /response-matrices/{matrix_id}/items/{item_id}/versions:
+    get:
+      operationId: listResponseMatrixItemVersions
+      parameters: [{$ref: '#/components/parameters/MatrixId'}, {$ref: '#/components/parameters/ItemId'}]
+      responses: {'200': {$ref: '#/components/responses/ListResponse'}}
   /response-matrices/{matrix_id}/items/{item_id}:
     patch:
       operationId: updateResponseMatrixItem
@@ -518,6 +523,18 @@ components:
         change_type: {enum: [created, migrated, edited, merged, split, confirmed, rejected, superseded]}
         requirement_snapshot: {type: object, additionalProperties: true}
         source_location: {$ref: '#/components/schemas/DocumentLocation'}
+    ResponseMatrixItemVersion:
+      type: object
+      additionalProperties: false
+      required: [id, response_item_id, version, change_type, item_snapshot, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        response_item_id: {type: string, format: uuid}
+        version: {type: integer, minimum: 1}
+        changed_by_id: {type: [string, 'null'], format: uuid}
+        change_type: {enum: [edited, approve, edit_and_approve, reject, needs_evidence]}
+        item_snapshot: {type: object, additionalProperties: true}
+        created_at: {type: string, format: date-time}
     ManualIntelligenceSource:
       type: object
       required: [title, source_url, content]

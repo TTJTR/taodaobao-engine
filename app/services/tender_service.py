@@ -22,6 +22,7 @@ from app.db.models import (
     ResponseEvidenceStatus,
     ResponseMatrix,
     ResponseMatrixItem,
+    ResponseMatrixItemVersion,
     ReviewStatus,
     Source,
     SourceFreshness,
@@ -652,6 +653,7 @@ class TenderService:
         if item.matrix_id != matrix_id:
             raise AppError(ErrorCode.VALIDATION_FAILED, "响应项不属于该矩阵", status_code=409)
         self._check_version(item, expected_version)
+        await self._snapshot_item(item, "edited")
         if response_text is not None:
             item.response_text = response_text
             item.current_answer = response_text
@@ -676,6 +678,7 @@ class TenderService:
             raise AppError(ErrorCode.VALIDATION_FAILED, "响应项不属于该矩阵", status_code=409)
         self._check_version(item, expected_version)
         self._validate_review_action(item, action, current_answer)
+        await self._snapshot_item(item, action)
         if current_answer is not None:
             item.current_answer = current_answer
             item.response_text = current_answer
@@ -691,6 +694,24 @@ class TenderService:
         await self.session.refresh(item)
         return item
 
+    async def list_item_versions(
+        self, matrix_id: uuid.UUID, item_id: uuid.UUID
+    ) -> list[ResponseMatrixItemVersion]:
+        await self._get(ResponseMatrix, matrix_id)
+        item = await self._locked_item(item_id)
+        if item.matrix_id != matrix_id:
+            raise AppError(ErrorCode.VALIDATION_FAILED, "响应项不属于该矩阵", status_code=409)
+        return list(
+            await self.session.scalars(
+                select(ResponseMatrixItemVersion)
+                .where(
+                    ResponseMatrixItemVersion.response_item_id == item_id,
+                    *self._filters(ResponseMatrixItemVersion),
+                )
+                .order_by(ResponseMatrixItemVersion.version.desc())
+            )
+        )
+
     async def _locked_item(self, item_id: uuid.UUID) -> ResponseMatrixItem:
         item = await self.session.scalar(
             select(ResponseMatrixItem).where(
@@ -700,6 +721,33 @@ class TenderService:
         if item is None:
             raise AppError(ErrorCode.VALIDATION_FAILED, "资源不存在", status_code=404)
         return item
+
+    async def _snapshot_item(self, item: ResponseMatrixItem, change_type: str) -> None:
+        self.session.add(
+            ResponseMatrixItemVersion(
+                workspace_id=self.workspace_id,
+                response_item_id=item.id,
+                version=item.version,
+                changed_by_id=self.user_id,
+                change_type=change_type,
+                item_snapshot={
+                    "response_text": item.response_text,
+                    "ai_draft": item.ai_draft,
+                    "current_answer": item.current_answer,
+                    "evidence_status": item.evidence_status.value,
+                    "evidence_refs": item.evidence_refs,
+                    "risks": item.risks,
+                    "internal_exp_links": item.internal_exp_links,
+                    "internal_cap_links": item.internal_cap_links,
+                    "external_ctx_links": item.external_ctx_links,
+                    "risk_flags": item.risk_flags,
+                    "review_status": item.review_status,
+                    "reviewer_id": str(item.reviewer_id) if item.reviewer_id else None,
+                    "review_note": item.review_note,
+                    "approved_at": item.approved_at.isoformat() if item.approved_at else None,
+                },
+            )
+        )
 
     @staticmethod
     def _check_version(item: ResponseMatrixItem, expected: int) -> None:

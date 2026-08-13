@@ -36,6 +36,14 @@ class _MatrixListSession:
         return self.total
 
 
+class _SnapshotSession:
+    def __init__(self) -> None:
+        self.added = []
+
+    def add(self, row) -> None:
+        self.added.append(row)
+
+
 def location(text: str) -> dict:
     return {
         "kind": "pdf_page",
@@ -121,6 +129,43 @@ def test_optimistic_lock_rejects_stale_requirement_version() -> None:
         TenderService._check_requirement_version(requirement, 3)
 
     assert caught.value.code == ErrorCode.RESPONSE_VERSION_CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_response_item_snapshot_preserves_pre_change_audit_state() -> None:
+    session = _SnapshotSession()
+    user_id = uuid.uuid4()
+    service = TenderService(session, uuid.uuid4(), user_id)
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        version=3,
+        response_text="当前回答",
+        ai_draft="不可变 AI 草稿",
+        current_answer="当前回答",
+        evidence_status=SimpleNamespace(value="supported"),
+        evidence_refs=[{"asset_id": "evidence-1"}],
+        risks=["交付待确认"],
+        internal_exp_links=[{"asset_id": "experience-1"}],
+        internal_cap_links=[{"asset_id": "capability-1"}],
+        external_ctx_links=[{"snapshot_id": "snapshot-1"}],
+        risk_flags=[],
+        review_status="pending",
+        reviewer_id=None,
+        review_note=None,
+        approved_at=None,
+    )
+
+    await service._snapshot_item(item, "edit_and_approve")
+
+    assert len(session.added) == 1
+    snapshot = session.added[0]
+    assert snapshot.response_item_id == item.id
+    assert snapshot.version == 3
+    assert snapshot.changed_by_id == user_id
+    assert snapshot.change_type == "edit_and_approve"
+    assert snapshot.item_snapshot["ai_draft"] == "不可变 AI 草稿"
+    assert snapshot.item_snapshot["current_answer"] == "当前回答"
+    assert snapshot.item_snapshot["internal_exp_links"] == [{"asset_id": "experience-1"}]
 
 
 @pytest.mark.asyncio

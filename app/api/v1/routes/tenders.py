@@ -80,6 +80,18 @@ def _item(row) -> dict:
     }
 
 
+def _item_version(row) -> dict:
+    return {
+        "id": str(row.id),
+        "response_item_id": str(row.response_item_id),
+        "version": row.version,
+        "changed_by_id": str(row.changed_by_id) if row.changed_by_id else None,
+        "change_type": row.change_type,
+        "item_snapshot": row.item_snapshot,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
 def _matrix_summary(row, item_count: int) -> dict:
     return {
         "id": str(row.id),
@@ -382,6 +394,24 @@ async def update_response_matrix_item(
         matrix_id, item_id, payload.response_text, payload.risks, payload.expected_version
     )
     return success_response(request, _item(row))
+
+
+@matrix_router.get("/{matrix_id}/items/{item_id}/versions")
+async def list_response_matrix_item_versions(
+    matrix_id: uuid.UUID,
+    item_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+) -> dict:
+    rows = await TenderService(session, workspace_id, current_user.id).list_item_versions(
+        matrix_id, item_id
+    )
+    return success_response(
+        request,
+        {"items": [_item_version(row) for row in rows], "total": len(rows)},
+    )
 
 
 @matrix_router.post("/{matrix_id}/items/{item_id}/review")
