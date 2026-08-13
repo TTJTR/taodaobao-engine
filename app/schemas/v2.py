@@ -19,6 +19,21 @@ class CreateSearchRunRequest(BaseModel):
     sources: list[ManualIntelligenceSource] = Field(min_length=1, max_length=20)
 
 
+class CreateIntelligenceSearchTemplateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    purpose: Literal["customer_profile", "solution", "tender"]
+    query_template: str = Field(min_length=1, max_length=2000)
+    keywords: list[str] = Field(default_factory=list, max_length=20)
+    allowed_fields: list[str] = Field(default_factory=list, max_length=20)
+
+
+class UpdateIntelligenceSearchTemplateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    query_template: str | None = Field(default=None, min_length=1, max_length=2000)
+    keywords: list[str] | None = Field(default=None, max_length=20)
+    allowed_fields: list[str] | None = Field(default=None, max_length=20)
+
+
 class CreateIntelligenceSnapshotRequest(BaseModel):
     purpose: Literal["customer_profile", "solution", "tender"]
     item_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)

@@ -1290,6 +1290,23 @@ class SearchRun(EntityMixin, WorkspaceMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class IntelligenceSearchTemplate(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "intelligence_search_templates"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "name", name="uq_intelligence_search_template_name"),
+        Index("ix_intelligence_search_templates_workspace_purpose", "workspace_id", "purpose"),
+    )
+
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False)
+    query_template: Mapped[str] = mapped_column(Text, nullable=False)
+    keywords: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    allowed_fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+
 class RawArtifact(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "raw_artifacts"
     __table_args__ = (

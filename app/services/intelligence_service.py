@@ -19,6 +19,7 @@ from app.db.models import (
     IntelligenceItem,
     IntelligenceItemArtifactLink,
     IntelligenceReviewStatus,
+    IntelligenceSearchTemplate,
     IntelligenceSnapshot,
     ProfileIntelligenceProposal,
     ProfileStatus,
@@ -788,6 +789,74 @@ class IntelligenceService:
     async def get_run(self, run_id: uuid.UUID) -> SearchRun:
         entity = await self._get(SearchRun, run_id)
         return entity
+
+    async def create_search_template(
+        self,
+        *,
+        name: str,
+        purpose: str,
+        query_template: str,
+        keywords: list[str],
+        allowed_fields: list[str],
+    ) -> IntelligenceSearchTemplate:
+        template = IntelligenceSearchTemplate(
+            workspace_id=self.workspace_id,
+            created_by_id=self.user_id,
+            name=name.strip(),
+            purpose=purpose,
+            query_template=query_template.strip(),
+            keywords=list(dict.fromkeys(item.strip() for item in keywords if item.strip())),
+            allowed_fields=list(
+                dict.fromkeys(item.strip() for item in allowed_fields if item.strip())
+            ),
+        )
+        self.session.add(template)
+        await self.session.commit()
+        await self.session.refresh(template)
+        return template
+
+    async def list_search_templates(
+        self, page: int, page_size: int, purpose: str | None = None
+    ) -> tuple[list[IntelligenceSearchTemplate], int]:
+        filters = [*self._filters(IntelligenceSearchTemplate)]
+        if purpose is not None:
+            filters.append(IntelligenceSearchTemplate.purpose == purpose)
+        rows = list(
+            await self.session.scalars(
+                select(IntelligenceSearchTemplate)
+                .where(*filters)
+                .order_by(IntelligenceSearchTemplate.updated_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        total = await self.session.scalar(
+            select(func.count()).select_from(IntelligenceSearchTemplate).where(*filters)
+        )
+        return rows, int(total or 0)
+
+    async def update_search_template(
+        self, template_id: uuid.UUID, **changes: object
+    ) -> IntelligenceSearchTemplate:
+        template = await self._get(IntelligenceSearchTemplate, template_id)
+        for field, value in changes.items():
+            if value is None:
+                continue
+            if field in {"name", "query_template"}:
+                value = str(value).strip()
+            elif field in {"keywords", "allowed_fields"}:
+                value = list(
+                    dict.fromkeys(str(item).strip() for item in value if str(item).strip())
+                )
+            setattr(template, field, value)
+        await self.session.commit()
+        await self.session.refresh(template)
+        return template
+
+    async def delete_search_template(self, template_id: uuid.UUID) -> None:
+        template = await self._get(IntelligenceSearchTemplate, template_id)
+        template.is_deleted = True
+        await self.session.commit()
 
     async def list_runs(self, page: int, page_size: int) -> tuple[list[SearchRun], int]:
         filters = self._filters(SearchRun)

@@ -9,6 +9,7 @@ from app.core.responses import success_response
 from app.db.models import IntelligenceFreshness
 from app.schemas.intelligence_provider import EnrichmentJobRequest
 from app.schemas.v2 import (
+    CreateIntelligenceSearchTemplateRequest,
     CreateIntelligenceSnapshotRequest,
     CreateProfileProposalRequest,
     CreateSearchRunRequest,
@@ -16,6 +17,7 @@ from app.schemas.v2 import (
     EnrichRawArtifactRequest,
     QueueProviderEnrichmentRequest,
     ReassessIntelligenceFreshnessRequest,
+    UpdateIntelligenceSearchTemplateRequest,
 )
 from app.services.intelligence_service import IntelligenceService
 
@@ -64,6 +66,19 @@ def _proposal(row) -> dict:
         "decided_at": row.decided_at.isoformat() if row.decided_at else None,
         "decision_note": row.decision_note,
         "created_at": row.created_at.isoformat(),
+    }
+
+
+def _search_template(row) -> dict:
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "purpose": row.purpose,
+        "query_template": row.query_template,
+        "keywords": row.keywords,
+        "allowed_fields": row.allowed_fields,
+        "created_at": row.created_at.isoformat(),
+        "updated_at": row.updated_at.isoformat(),
     }
 
 
@@ -183,6 +198,70 @@ async def get_search_run(
 ) -> dict:
     row = await IntelligenceService(session, workspace_id, current_user.id).get_run(run_id)
     return success_response(request, _run(row))
+
+
+@router.post("/search-templates", status_code=status.HTTP_201_CREATED)
+async def create_search_template(
+    payload: CreateIntelligenceSearchTemplateRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    row = await IntelligenceService(session, workspace_id, current_user.id).create_search_template(
+        **payload.model_dump()
+    )
+    return success_response(request, _search_template(row))
+
+
+@router.get("/search-templates")
+async def list_search_templates(
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    purpose: str | None = None,
+) -> dict:
+    service = IntelligenceService(session, workspace_id, current_user.id)
+    rows, total = await service.list_search_templates(page, page_size, purpose)
+    return success_response(
+        request,
+        {"items": [_search_template(row) for row in rows], "page": page, "page_size": page_size,
+         "total": total, "has_more": page * page_size < total},
+    )
+
+
+@router.patch("/search-templates/{template_id}")
+async def update_search_template(
+    template_id: uuid.UUID,
+    payload: UpdateIntelligenceSearchTemplateRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    row = await IntelligenceService(session, workspace_id, current_user.id).update_search_template(
+        template_id, **payload.model_dump(exclude_unset=True)
+    )
+    return success_response(request, _search_template(row))
+
+
+@router.delete("/search-templates/{template_id}")
+async def delete_search_template(
+    template_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    service = IntelligenceService(session, workspace_id, current_user.id)
+    await service.delete_search_template(template_id)
+    return success_response(request, {"deleted": True, "id": str(template_id)})
 
 
 @router.post("/search-runs/{run_id}/enrichment-jobs", status_code=status.HTTP_202_ACCEPTED)
