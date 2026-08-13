@@ -354,6 +354,8 @@ components:
         title: {type: [string, 'null'], maxLength: 200}
         question: {type: string, minLength: 1, maxLength: 10000}
         completion_conditions: {type: array, maxItems: 8, items: {type: string}}
+        intelligence_snapshot_id: {type: [string, 'null'], format: uuid}
+        response_matrix_id: {type: [string, 'null'], format: uuid}
     ResearchTask:
       type: object
       required: [id, customer_profile_id, title, question, status, stage, progress, trace_id]

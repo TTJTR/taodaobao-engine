@@ -49,6 +49,8 @@ async def create_research_task(
         title=payload.title,
         question=payload.question,
         completion_conditions=payload.completion_conditions,
+        intelligence_snapshot_id=payload.intelligence_snapshot_id,
+        response_matrix_id=payload.response_matrix_id,
     )
     background_tasks.add_task(
         run_research_pipeline,

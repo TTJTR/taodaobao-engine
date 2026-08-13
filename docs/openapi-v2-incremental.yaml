@@ -686,6 +686,14 @@ components:
         focus_areas: {type: array, maxItems: 8, items: {type: string}}
         max_turns: {type: integer, minimum: 3, maximum: 10, default: 5}
       anyOf: [{required: [solution_run_id]}, {required: [research_task_id]}]
+    CreateQuickSolutionTurnRequest:
+      type: object
+      required: [content, mode]
+      properties:
+        content: {type: string, minLength: 1, maxLength: 10000}
+        mode: {const: quick}
+        intelligence_snapshot_id: {type: [string, 'null'], format: uuid}
+        response_matrix_id: {type: [string, 'null'], format: uuid}
     SuccessEnvelope:
       type: object
       required: [request_id, data]

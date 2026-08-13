@@ -17,6 +17,8 @@ class CreateResearchTaskRequest(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     question: str = Field(min_length=1, max_length=10_000)
     completion_conditions: list[str] = Field(default_factory=list, max_length=8)
+    intelligence_snapshot_id: uuid.UUID | None = None
+    response_matrix_id: uuid.UUID | None = None
 
 
 class CancelResearchTaskRequest(BaseModel):

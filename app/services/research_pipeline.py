@@ -57,8 +57,11 @@ async def run_research_pipeline(
                 for item in await steps.list_for_task(task.id)
                 if item.status == ProcessStatus.COMPLETED
             }
-            if task.evidence_snapshot is None:
+            if task.evidence_snapshot is None or "experiences" not in task.evidence_snapshot:
+                external_context = (task.evidence_snapshot or {}).get("external_context")
                 retrieval_context = build_solution_context(task.question, task.profile_snapshot)
+                if external_context:
+                    retrieval_context["external_context"] = external_context
                 raw_snapshot = await RetrievalService(session, workspace_id).retrieve(
                     task.question,
                     context=retrieval_context,
@@ -74,6 +77,8 @@ async def run_research_pipeline(
                     input_summary={"stage": "search_intent"},
                 )
                 task.evidence_snapshot = normalize_retrieval_snapshot(raw_snapshot)
+                if external_context:
+                    task.evidence_snapshot["external_context"] = external_context
                 await session.commit()
 
             if "fact_audit" in completed and task.status == ResearchTaskStatus.RESEARCHING:
@@ -170,6 +175,7 @@ async def _run_stage(session, task, steps, stage, ai_engine, expert_answers) -> 
             "prior_findings": task.findings,
             "expert_answers": expert_answers,
             "conversation_history": task.conversation_snapshot[-20:],
+            "external_context": (task.evidence_snapshot or {}).get("external_context"),
         }
     )
     result = await ai_engine.generate_solution(context, task.evidence_snapshot)

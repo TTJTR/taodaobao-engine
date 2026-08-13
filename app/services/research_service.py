@@ -19,6 +19,7 @@ from app.db.repositories import (
     ResearchTaskRepository,
     SessionRepository,
 )
+from app.services.external_context_service import ExternalContextService
 
 
 class ResearchTaskService:
@@ -46,6 +47,8 @@ class ResearchTaskService:
         title: str | None,
         question: str,
         completion_conditions: list[str],
+        intelligence_snapshot_id: uuid.UUID | None = None,
+        response_matrix_id: uuid.UUID | None = None,
     ) -> ResearchTask:
         profile = await self.profiles.get(customer_profile_id)
         if profile is None:
@@ -70,6 +73,11 @@ class ResearchTaskService:
                 for item in await self.messages.list_for_session(session_id)
             ]
         normalized_question = question.strip()
+        external_context = await ExternalContextService(self.session, self.workspace_id).freeze(
+            profile_id=profile.id,
+            intelligence_snapshot_id=intelligence_snapshot_id,
+            response_matrix_id=response_matrix_id,
+        )
         task = await self.tasks.create(
             customer_profile_id=profile.id,
             session_id=session_id,
@@ -94,6 +102,7 @@ class ResearchTaskService:
             knowledge_gaps=[],
             expert_questions=[],
             retry_count=0,
+            evidence_snapshot={"external_context": external_context} if external_context else None,
         )
         await self.session.commit()
         await self.session.refresh(task)

@@ -15,6 +15,8 @@ class CreateSessionRequest(BaseModel):
 class CreateTurnRequest(BaseModel):
     content: str = Field(min_length=1, max_length=10_000)
     mode: Literal["quick"]
+    intelligence_snapshot_id: uuid.UUID | None = None
+    response_matrix_id: uuid.UUID | None = None
 
 
 class SessionRead(BaseModel):
@@ -49,6 +51,7 @@ class SolutionRunRead(BaseModel):
     request_message_id: uuid.UUID
     status: ProcessStatus
     retrieval_snapshot: dict | None
+    external_context: dict | None = None
     result: dict | None
     error_code: str | None
     retryable: bool

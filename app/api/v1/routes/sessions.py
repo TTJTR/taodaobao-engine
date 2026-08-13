@@ -89,7 +89,10 @@ async def create_turn(
     _: str = Depends(require_idempotency_key),
 ) -> dict[str, object]:
     message, run = await SessionService(session, workspace_id, current_user.id).create_turn(
-        session_id, payload.content
+        session_id,
+        payload.content,
+        intelligence_snapshot_id=payload.intelligence_snapshot_id,
+        response_matrix_id=payload.response_matrix_id,
     )
     return success_response(
         request,
