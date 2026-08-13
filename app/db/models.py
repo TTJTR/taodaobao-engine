@@ -1331,6 +1331,7 @@ class IntelligenceItem(EntityMixin, WorkspaceMixin, Base):
     __table_args__ = (
         UniqueConstraint("workspace_id", "fingerprint", name="uq_intelligence_item_fingerprint"),
         Index("ix_intelligence_items_run_created", "search_run_id", "created_at"),
+        Index("ix_intelligence_items_conflict_group", "conflict_group_id"),
     )
 
     search_run_id: Mapped[uuid.UUID] = mapped_column(
@@ -1345,6 +1346,7 @@ class IntelligenceItem(EntityMixin, WorkspaceMixin, Base):
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     facts: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    conflict_group_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     freshness: Mapped[IntelligenceFreshness] = mapped_column(
         enum_column(IntelligenceFreshness, "intelligence_freshness"), nullable=False
     )

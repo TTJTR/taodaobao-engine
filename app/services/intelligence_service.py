@@ -1,11 +1,12 @@
 import hashlib
 import ipaddress
+import json
 import socket
 import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.contracts.ai import AIEngine
@@ -125,6 +126,44 @@ def _profile_diff(profile_data: dict, ai_output: dict) -> dict:
     return patch
 
 
+def _normalize_governance_value(value) -> str:
+    bounded = _bounded_json_value(value)
+    if isinstance(bounded, str):
+        normalized = " ".join(bounded.split()).casefold()
+        return json.dumps(normalized, ensure_ascii=False)
+    if isinstance(bounded, list):
+        normalized = sorted(
+            (_normalize_governance_value(item) for item in bounded),
+            key=str.casefold,
+        )
+        return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(bounded, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _reinforced_confidence(current: float, incoming: float) -> float:
+    current = min(1.0, max(0.0, current))
+    incoming = min(1.0, max(0.0, incoming))
+    return round(1 - (1 - current) * (1 - incoming), 6)
+
+
+def _conflict_patch(items: list[IntelligenceItem]) -> dict:
+    items = sorted(items, key=lambda item: (item.created_at, str(item.id)))
+    group_id = next((item.conflict_group_id for item in items if item.conflict_group_id), None)
+    return {
+        "resolution_required": True,
+        "conflict_group_id": str(group_id) if group_id else None,
+        "candidates": [
+            {
+                "intelligence_item_id": str(item.id),
+                "value": item.facts[0].get("value") if item.facts else None,
+                "confidence": item.metadata_snapshot.get("confidence"),
+                "latest_captured_at": item.metadata_snapshot.get("latest_captured_at"),
+            }
+            for item in items
+        ],
+    }
+
+
 def _apply_profile_patch(current: dict, patch: dict) -> dict:
     updated = dict(current)
     for field, change in patch.items():
@@ -226,6 +265,9 @@ def _verify_provider_facts(
                 }
             )
             linked_artifacts[artifact.id] = artifact
+        fact_artifact_ids = list(
+            dict.fromkeys(citation["raw_artifact_id"] for citation in citations)
+        )
         verified_facts.append(
             {
                 "field": fact.field,
@@ -235,6 +277,7 @@ def _verify_provider_facts(
                 "provider_confidence": fact.provider_confidence,
                 "citation_status": "verified",
                 "citations": citations,
+                "raw_artifact_ids": fact_artifact_ids,
             }
         )
         proposed_values[fact.field] = _bounded_json_value(fact.value)
@@ -372,68 +415,30 @@ class IntelligenceService:
         verified_facts, linked_artifacts, proposed_values = _verify_provider_facts(
             request, result, artifacts
         )
-        fingerprint = hashlib.sha256(
-            repr((result.provider_job_id, verified_facts)).encode()
-        ).hexdigest()
-        item = await self.session.scalar(
-            select(IntelligenceItem).where(
-                IntelligenceItem.workspace_id == self.workspace_id,
-                IntelligenceItem.fingerprint == fingerprint,
-                IntelligenceItem.is_deleted.is_(False),
+        items: list[IntelligenceItem] = []
+        conflicts: dict[str, dict] = {}
+        for fact in verified_facts:
+            fact_artifacts = {
+                uuid.UUID(artifact_id): linked_artifacts[uuid.UUID(artifact_id)]
+                for artifact_id in fact["raw_artifact_ids"]
+            }
+            item, conflict = await self._govern_provider_fact(
+                run=run,
+                profile=profile,
+                request=request,
+                result=result,
+                fact=fact,
+                linked_artifacts=fact_artifacts,
             )
-        )
-        if item is None:
-            primary = next(iter(linked_artifacts.values()))
-            item = IntelligenceItem(
-                workspace_id=self.workspace_id,
-                search_run_id=run.id,
-                title=f"{request.company_name} 公开情报",
-                source_url=primary.source_url or str(request.website_url),
-                source_domain=urlparse(primary.source_url or str(request.website_url)).hostname
-                or "unknown",
-                published_at=primary.published_at,
-                captured_at=max(row.captured_at for row in linked_artifacts.values()),
-                content="\n\n".join(
-                    citation["quote"]
-                    for fact in verified_facts
-                    for citation in fact["citations"]
-                ),
-                summary=f"Open Enrich 返回 {len(verified_facts)} 条经原文验证的候选事实。",
-                facts=verified_facts,
-                fingerprint=fingerprint,
-                freshness=IntelligenceFreshness.CURRENT,
-                review_status=IntelligenceReviewStatus.PENDING,
-                metadata_snapshot={
-                    "provider": "open_enrich",
-                    "provider_job_id": result.provider_job_id,
-                    "provider_status": result.status,
-                    "tool_calls_used": result.tool_calls_used,
-                    "cost_usd": result.cost_usd,
-                    "boundary": "external_public_information",
-                },
-            )
-            self.session.add(item)
-            await self.session.flush()
-            for index, artifact in enumerate(linked_artifacts.values()):
-                self.session.add(
-                    IntelligenceItemArtifactLink(
-                        workspace_id=self.workspace_id,
-                        intelligence_item_id=item.id,
-                        raw_artifact_id=artifact.id,
-                        relation_type=(
-                            ArtifactRelationType.PRIMARY
-                            if index == 0
-                            else ArtifactRelationType.CORROBORATING
-                        ),
-                        source_snapshot={
-                            "source_url": artifact.source_url,
-                            "content_sha256": artifact.content_sha256,
-                            "captured_at": artifact.captured_at.isoformat(),
-                        },
-                    )
-                )
-        snapshot = await self._create_snapshot_uncommitted("customer_profile", [item])
+            if item not in items:
+                items.append(item)
+            if conflict:
+                conflicts[fact["field"]] = conflict
+        snapshot = await self._create_snapshot_uncommitted("customer_profile", items)
         patch = _profile_diff(profile.profile, proposed_values)
+        for field, conflict in conflicts.items():
+            if field in patch:
+                patch[field] = {**patch[field], **conflict}
         proposal = None
         if patch:
             proposal = ProfileIntelligenceProposal(
@@ -446,11 +451,167 @@ class IntelligenceService:
             )
             self.session.add(proposal)
         await self.session.commit()
-        await self.session.refresh(item)
+        for item in items:
+            await self.session.refresh(item)
         await self.session.refresh(snapshot)
         if proposal:
             await self.session.refresh(proposal)
-        return item, snapshot, proposal
+        return items[0], snapshot, proposal
+
+    async def _govern_provider_fact(
+        self,
+        *,
+        run: SearchRun,
+        profile: CustomerProfile,
+        request: EnrichmentJobRequest,
+        result: EnrichmentJobResult,
+        fact: dict,
+        linked_artifacts: dict[uuid.UUID, RawArtifact],
+    ) -> tuple[IntelligenceItem, dict | None]:
+        field_name = str(fact["field"])
+        normalized_value = _normalize_governance_value(fact["value"])
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {
+                "key": (
+                    f"{self.workspace_id}:intelligence-governance:"
+                    f"{profile.id}:{field_name}"
+                )
+            },
+        )
+        candidates = list(
+            await self.session.scalars(
+                select(IntelligenceItem)
+                .where(
+                    IntelligenceItem.workspace_id == self.workspace_id,
+                    IntelligenceItem.is_deleted.is_(False),
+                    IntelligenceItem.metadata_snapshot["profile_id"].astext == str(profile.id),
+                    IntelligenceItem.metadata_snapshot["field_name"].astext == field_name,
+                )
+                .with_for_update()
+            )
+        )
+        exact = next(
+            (
+                row
+                for row in candidates
+                if row.metadata_snapshot.get("normalized_value") == normalized_value
+            ),
+            None,
+        )
+        captured_at = max(row.captured_at for row in linked_artifacts.values())
+        if exact is not None:
+            await self._link_artifacts(exact, linked_artifacts, corroborating=True)
+            exact.captured_at = max(exact.captured_at, captured_at)
+            metadata = dict(exact.metadata_snapshot)
+            metadata["latest_captured_at"] = exact.captured_at.isoformat()
+            metadata["confidence"] = _reinforced_confidence(
+                float(metadata.get("confidence", 0)),
+                float(fact["provider_confidence"]),
+            )
+            metadata["source_count"] = await self._artifact_link_count(exact.id)
+            exact.metadata_snapshot = metadata
+            group = [row for row in candidates if row.conflict_group_id == exact.conflict_group_id]
+            return exact, _conflict_patch(group) if exact.conflict_group_id else None
+
+        primary = next(iter(linked_artifacts.values()))
+        fingerprint = hashlib.sha256(
+            f"{profile.id}\n{field_name}\n{normalized_value}".encode()
+        ).hexdigest()
+        item = IntelligenceItem(
+            workspace_id=self.workspace_id,
+            search_run_id=run.id,
+            title=f"{request.company_name} - {field_name}",
+            source_url=primary.source_url or str(request.website_url),
+            source_domain=urlparse(primary.source_url or str(request.website_url)).hostname
+            or "unknown",
+            published_at=primary.published_at,
+            captured_at=captured_at,
+            content="\n\n".join(citation["quote"] for citation in fact["citations"]),
+            summary=f"Open Enrich verified candidate fact: {field_name}",
+            facts=[fact],
+            fingerprint=fingerprint,
+            freshness=IntelligenceFreshness.CURRENT,
+            review_status=IntelligenceReviewStatus.PENDING,
+            metadata_snapshot={
+                "provider": "open_enrich",
+                "provider_job_id": result.provider_job_id,
+                "provider_status": result.status,
+                "profile_id": str(profile.id),
+                "field_name": field_name,
+                "normalized_value": normalized_value,
+                "latest_captured_at": captured_at.isoformat(),
+                "confidence": fact["provider_confidence"],
+                "source_count": len(linked_artifacts),
+                "tool_calls_used": result.tool_calls_used,
+                "cost_usd": result.cost_usd,
+                "boundary": "external_public_information",
+            },
+        )
+        if candidates:
+            group_id = next(
+                (row.conflict_group_id for row in candidates if row.conflict_group_id),
+                uuid.uuid4(),
+            )
+            item.conflict_group_id = group_id
+            for row in candidates:
+                row.conflict_group_id = group_id
+        self.session.add(item)
+        await self.session.flush()
+        await self._link_artifacts(item, linked_artifacts, corroborating=False)
+        return item, _conflict_patch([*candidates, item]) if candidates else None
+
+    async def _link_artifacts(
+        self,
+        item: IntelligenceItem,
+        artifacts: dict[uuid.UUID, RawArtifact],
+        *,
+        corroborating: bool,
+    ) -> None:
+        existing_ids = set(
+            await self.session.scalars(
+                select(IntelligenceItemArtifactLink.raw_artifact_id).where(
+                    IntelligenceItemArtifactLink.workspace_id == self.workspace_id,
+                    IntelligenceItemArtifactLink.intelligence_item_id == item.id,
+                    IntelligenceItemArtifactLink.is_deleted.is_(False),
+                )
+            )
+        )
+        for index, artifact in enumerate(artifacts.values()):
+            if artifact.id in existing_ids:
+                continue
+            self.session.add(
+                IntelligenceItemArtifactLink(
+                    workspace_id=self.workspace_id,
+                    intelligence_item_id=item.id,
+                    raw_artifact_id=artifact.id,
+                    relation_type=(
+                        ArtifactRelationType.CORROBORATING
+                        if corroborating or index > 0
+                        else ArtifactRelationType.PRIMARY
+                    ),
+                    source_snapshot={
+                        "source_url": artifact.source_url,
+                        "content_sha256": artifact.content_sha256,
+                        "captured_at": artifact.captured_at.isoformat(),
+                    },
+                )
+            )
+        await self.session.flush()
+
+    async def _artifact_link_count(self, item_id: uuid.UUID) -> int:
+        return int(
+            await self.session.scalar(
+                select(func.count())
+                .select_from(IntelligenceItemArtifactLink)
+                .where(
+                    IntelligenceItemArtifactLink.workspace_id == self.workspace_id,
+                    IntelligenceItemArtifactLink.intelligence_item_id == item_id,
+                    IntelligenceItemArtifactLink.is_deleted.is_(False),
+                )
+            )
+            or 0
+        )
 
     async def queue_provider_enrichment(
         self,
@@ -715,6 +876,15 @@ class IntelligenceService:
         if proposal.status != ProposalStatus.PENDING_CONFIRMATION:
             raise AppError(ErrorCode.PROPOSAL_ALREADY_DECIDED, "该画像提案已处理", status_code=409)
         if accept:
+            if any(
+                isinstance(change, dict) and change.get("resolution_required") is True
+                for change in proposal.proposed_patch.values()
+            ):
+                raise AppError(
+                    ErrorCode.VALIDATION_FAILED,
+                    "冲突画像提议必须先显式选择候选值",
+                    status_code=409,
+                )
             profile = await self.session.scalar(
                 select(CustomerProfile)
                 .where(
@@ -797,6 +967,9 @@ class IntelligenceService:
             "summary": item.summary,
             "facts": item.facts,
             "fingerprint": item.fingerprint,
+            "conflict_group_id": (
+                str(item.conflict_group_id) if item.conflict_group_id else None
+            ),
             "freshness": item.freshness.value,
             "review_status": item.review_status.value,
             "metadata_snapshot": item.metadata_snapshot,
