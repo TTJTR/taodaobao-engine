@@ -82,6 +82,7 @@ class ResearchTaskService:
             customer_profile_id=profile.id,
             session_id=session_id,
             created_by_id=self.user_id,
+            intelligence_snapshot_id=intelligence_snapshot_id,
             title=(title or normalized_question[:80]).strip(),
             question=normalized_question,
             completion_conditions=list(dict.fromkeys(completion_conditions)),

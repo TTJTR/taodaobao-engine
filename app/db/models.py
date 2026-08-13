@@ -542,6 +542,11 @@ class SolutionRun(EntityMixin, WorkspaceMixin, Base):
     request_message_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("messages.id", ondelete="RESTRICT"), nullable=False
     )
+    intelligence_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("intelligence_snapshots.id", ondelete="RESTRICT"),
+        index=True,
+    )
     profile_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     retrieval_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
@@ -1112,6 +1117,11 @@ class ResearchTask(EntityMixin, WorkspaceMixin, Base):
     created_by_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
+    intelligence_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("intelligence_snapshots.id", ondelete="RESTRICT"),
+        index=True,
+    )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     question: Mapped[str] = mapped_column(Text, nullable=False)
     completion_conditions: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
@@ -1507,7 +1517,11 @@ class TenderRequirement(EntityMixin, WorkspaceMixin, Base):
     mandatory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     acceptance_condition: Mapped[str | None] = mapped_column(Text)
     constraints: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    metrics: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     ambiguities: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    recommended_action: Mapped[str | None] = mapped_column(Text)
     source_location: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     status: Mapped[TenderRequirementStatus] = mapped_column(
         enum_column(TenderRequirementStatus, "tender_requirement_status"), nullable=False

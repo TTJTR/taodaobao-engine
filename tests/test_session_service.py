@@ -101,8 +101,10 @@ async def test_create_turn_freezes_explicit_external_context(
     monkeypatch.setattr(module.ExternalContextService, "freeze", AsyncMock(return_value=context))
     db = SimpleNamespace(add=Mock(), commit=AsyncMock(), refresh=AsyncMock(), execute=AsyncMock())
 
+    snapshot_id = uuid.uuid4()
     _, run = await module.SessionService(db, workspace_id, uuid.uuid4()).create_turn(
-        chat.id, "need a plan", intelligence_snapshot_id=uuid.uuid4()
+        chat.id, "need a plan", intelligence_snapshot_id=snapshot_id
     )
 
     assert run.retrieval_snapshot == {"external_context": context}
+    assert run.intelligence_snapshot_id == snapshot_id

@@ -46,6 +46,7 @@ class ResearchTaskRead(BaseModel):
     id: uuid.UUID
     customer_profile_id: uuid.UUID
     session_id: uuid.UUID | None
+    intelligence_snapshot_id: uuid.UUID | None
     title: str
     question: str
     completion_conditions: list[str]

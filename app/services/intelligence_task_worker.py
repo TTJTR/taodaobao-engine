@@ -1,3 +1,4 @@
+import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -77,6 +78,8 @@ async def _run_task(
             summary = exc.message if isinstance(exc, AppError) else str(exc)
             _fail(task, run, code, summary)
             await session.commit()
+        if task.status in {WorkflowTaskStatus.COMPLETED, WorkflowTaskStatus.FAILED}:
+            _log_terminal_task(task)
 
 
 async def _poll_once(session, task, run, request, profile_id, user_id, provider) -> None:
@@ -95,9 +98,10 @@ async def _poll_once(session, task, run, request, profile_id, user_id, provider)
         "cost_usd": status.cost_usd,
         "tool_calls_used": status.tool_calls_used,
     }
-    if _over_quota(request, status.cost_usd, status.tool_calls_used):
+    limit_error = _limit_error(request, status.cost_usd, status.tool_calls_used)
+    if limit_error:
         await _cancel_quietly(provider, provider_job_id)
-        _fail(task, run, ErrorCode.QUOTA_EXCEEDED.value, "Provider quota exceeded")
+        _fail(task, run, limit_error, "Provider execution limit reached")
         return
     if status.status in {"queued", "processing"}:
         run.status = SearchRunStatus.RUNNING
@@ -119,9 +123,10 @@ async def _poll_once(session, task, run, request, profile_id, user_id, provider)
             status_code=502,
             retryable=True,
         )
-    if _over_quota(request, result.cost_usd, result.tool_calls_used):
+    limit_error = _limit_error(request, result.cost_usd, result.tool_calls_used)
+    if limit_error:
         await _cancel_quietly(provider, provider_job_id)
-        _fail(task, run, ErrorCode.QUOTA_EXCEEDED.value, "Provider quota exceeded")
+        _fail(task, run, limit_error, "Provider execution limit reached")
         return
     # This service commits the verified intelligence records atomically.
     item, snapshot, proposal = await IntelligenceService(
@@ -195,8 +200,14 @@ def _context(payload):
         raise AppError(ErrorCode.VALIDATION_FAILED, "Invalid Open Enrich task payload") from exc
 
 
-def _over_quota(request: EnrichmentJobRequest, cost_usd: float, tool_calls: int) -> bool:
-    return cost_usd > request.max_cost_usd or tool_calls > request.max_tool_calls
+def _limit_error(
+    request: EnrichmentJobRequest, cost_usd: float, tool_calls: int
+) -> str | None:
+    if tool_calls >= request.max_tool_calls:
+        return "TOOL_CALL_LIMIT_EXCEEDED"
+    if cost_usd >= request.max_cost_usd:
+        return ErrorCode.QUOTA_EXCEEDED.value
+    return None
 
 
 async def _cancel_quietly(provider, provider_job_id) -> None:
@@ -205,7 +216,10 @@ async def _cancel_quietly(provider, provider_job_id) -> None:
     try:
         await provider.cancel_job(str(provider_job_id))
     except Exception:
-        logger.warning("Open Enrich cancellation failed for %s", provider_job_id, exc_info=True)
+        logger.warning(
+            "Open Enrich cancellation failed",
+            extra={"provider_job_id": str(provider_job_id)},
+        )
 
 
 def _requeue(task, stage: str) -> None:
@@ -232,3 +246,23 @@ def _fail(task, run, code: str, summary: str) -> None:
     run.error_code = code[:64]
     run.error_summary = summary[:1000]
     run.completed_at = now
+
+
+def _log_terminal_task(task) -> None:
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    started_at = getattr(task, "created_at", None)
+    finished_at = task.finished_at or datetime.now(UTC)
+    duration_ms = None
+    if started_at is not None:
+        duration_ms = max(0, int((finished_at - started_at).total_seconds() * 1000))
+    event = {
+        "event": "open_enrich_task_terminal",
+        "task_id": str(task.id),
+        "provider_job_id": str(payload.get("provider_job_id") or ""),
+        "status": task.status.value,
+        "error_code": task.error_code,
+        "cost_usd": float(payload.get("cost_usd") or 0),
+        "tool_calls": int(payload.get("tool_calls_used") or 0),
+        "duration_ms": duration_ms,
+    }
+    logger.info(json.dumps(event, separators=(",", ":"), ensure_ascii=True))

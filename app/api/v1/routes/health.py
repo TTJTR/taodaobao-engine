@@ -2,6 +2,7 @@ import os
 from typing import Any
 
 import asyncpg
+import httpx
 from fastapi import APIRouter, Request
 from sqlalchemy.engine import make_url
 
@@ -11,9 +12,34 @@ from app.core.responses import success_response
 router = APIRouter()
 
 
+def _sidecar_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(2.0, connect=1.0),
+        follow_redirects=False,
+        trust_env=False,
+    )
+
+
+async def probe_open_enrich_sidecar() -> str:
+    if not settings.open_enrich_svc_url:
+        return "not_configured"
+    try:
+        async with _sidecar_client() as client:
+            response = await client.get(
+                f"{settings.open_enrich_svc_url.rstrip('/')}/healthz"
+            )
+            if response.status_code != 200:
+                return "unreachable"
+            payload = response.json()
+            return "ok" if payload == {"status": "ok"} else "unreachable"
+    except (httpx.HTTPError, ValueError):
+        return "unreachable"
+
+
 @router.get("/health", summary="服务健康检查")
 async def health_check(request: Request) -> dict[str, Any]:
     database_status = "not_configured"
+    sidecar_status = await probe_open_enrich_sidecar()
     workflow_queue: dict[str, int] | None = None
     if settings.database_url:
         connection = None
@@ -91,6 +117,7 @@ async def health_check(request: Request) -> dict[str, Any]:
             "feishu_mode": settings.feishu_mode,
             "presentation": presentation_status,
             "presentation_mode": settings.presentation_mode,
+            "sidecar_status": sidecar_status,
             "workflow_queue": workflow_queue,
         },
     )

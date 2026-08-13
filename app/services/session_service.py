@@ -112,6 +112,7 @@ class SessionService:
         run = await self.runs.create(
             session_id=session_id,
             request_message_id=message.id,
+            intelligence_snapshot_id=intelligence_snapshot_id,
             profile_snapshot={
                 "id": str(profile.id),
                 "customer_name": profile.customer_name,

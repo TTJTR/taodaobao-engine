@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -25,7 +26,12 @@ from app.db.models import (
 )
 from app.integrations.http_open_enrich_adapter import HttpOpenEnrichAdapter
 from app.schemas.intelligence_provider import EnrichmentJobRequest, EnrichmentJobStatus
-from app.services.intelligence_task_worker import _poll_once, run_open_enrich_task
+from app.services.intelligence_task_worker import (
+    _limit_error,
+    _log_terminal_task,
+    _poll_once,
+    run_open_enrich_task,
+)
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 
@@ -103,13 +109,60 @@ async def test_second_poll_exceeding_cost_cancels_and_fails_task() -> None:
     assert run.status == SearchRunStatus.FAILED
 
 
+def test_limits_trip_at_the_exact_boundary_and_report_the_cause() -> None:
+    request = enrichment_request(max_cost_usd=2, max_tool_calls=10)
+
+    assert _limit_error(request, 1.99, 9) is None
+    assert _limit_error(request, 1.99, 10) == "TOOL_CALL_LIMIT_EXCEEDED"
+    assert _limit_error(request, 2, 9) == ErrorCode.QUOTA_EXCEEDED.value
+
+
+def test_terminal_log_has_fixed_observability_fields(caplog) -> None:
+    now = datetime.now(UTC)
+    task = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=WorkflowTaskStatus.FAILED,
+        error_code="QUOTA_EXCEEDED",
+        created_at=now - timedelta(seconds=2),
+        finished_at=now,
+        payload={
+            "provider_job_id": "provider-job-safe-id",
+            "cost_usd": 0.1,
+            "tool_calls_used": 3,
+            "Authorization": "Bearer secret-must-not-appear",
+        },
+    )
+
+    with caplog.at_level("INFO"):
+        _log_terminal_task(task)
+
+    event = json.loads(caplog.records[-1].message)
+    assert event == {
+        "event": "open_enrich_task_terminal",
+        "task_id": str(task.id),
+        "provider_job_id": "provider-job-safe-id",
+        "status": "failed",
+        "error_code": "QUOTA_EXCEEDED",
+        "cost_usd": 0.1,
+        "tool_calls": 3,
+        "duration_ms": 2000,
+    }
+    assert "secret-must-not-appear" not in caplog.text
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["500", "timeout"])
-async def test_http_adapter_translates_transport_failures(failure: str) -> None:
+@pytest.mark.parametrize(
+    ("failure", "retryable"), [("500", True), ("400", False), ("timeout", True)]
+)
+async def test_http_adapter_translates_transport_failures(
+    failure: str, retryable: bool
+) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         if failure == "timeout":
             raise httpx.ReadTimeout("timed out", request=request)
-        return httpx.Response(500, request=request, json={"error": "secret upstream detail"})
+        return httpx.Response(
+            int(failure), request=request, json={"error": "secret upstream detail"}
+        )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     adapter = HttpOpenEnrichAdapter("http://open-enrich.internal", client=client)
@@ -117,8 +170,33 @@ async def test_http_adapter_translates_transport_failures(failure: str) -> None:
         with pytest.raises(AppError) as caught:
             await adapter.submit_job(enrichment_request())
         assert caught.value.code == ErrorCode.PROVIDER_UNAVAILABLE
-        assert caught.value.retryable is True
+        assert caught.value.retryable is retryable
         assert "secret upstream detail" not in caught.value.message
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_http_adapter_sends_internal_bearer_token() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["authorization"] == "Bearer internal-test-token"
+        return httpx.Response(
+            202,
+            request=request,
+            json={
+                "provider_job_id": "provider-job",
+                "status": "queued",
+                "accepted_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = HttpOpenEnrichAdapter(
+        "http://open-enrich.internal", token="internal-test-token", client=client
+    )
+    try:
+        accepted = await adapter.submit_job(enrichment_request())
+        assert accepted.provider_job_id == "provider-job"
     finally:
         await client.aclose()
 

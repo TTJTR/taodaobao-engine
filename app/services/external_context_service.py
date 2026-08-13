@@ -54,6 +54,9 @@ class ExternalContextService:
             "intelligence_snapshot": {
                 "id": str(intelligence.id),
                 "snapshot_data": intelligence.snapshot_data,
+                "model_context": self._intelligence_model_context(
+                    intelligence.snapshot_data
+                ),
             } if intelligence else None,
             "response_matrix": {
                 "id": str(matrix.id),
@@ -72,3 +75,48 @@ class ExternalContextService:
         if entity is None:
             raise AppError(ErrorCode.VALIDATION_FAILED, "资源不存在", status_code=404)
         return entity
+
+    @staticmethod
+    def _intelligence_model_context(snapshot_data: dict[str, Any]) -> dict[str, Any]:
+        items = snapshot_data.get("items", [])
+        facts = []
+        conflict_groups: dict[str, list[dict[str, Any]]] = {}
+        needs_review = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata_snapshot") or {}
+            field_name = metadata.get("field_name") or "unknown_field"
+            entry = {
+                "item_id": item.get("id"),
+                "field": field_name,
+                "facts": item.get("facts") or [],
+                "summary": item.get("summary"),
+                "freshness": item.get("freshness"),
+                "review_status": item.get("review_status"),
+                "conflict_group_id": item.get("conflict_group_id"),
+            }
+            facts.append(entry)
+            if entry["conflict_group_id"]:
+                conflict_groups.setdefault(str(entry["conflict_group_id"]), []).append(entry)
+            if entry["review_status"] in {"needs_review", "pending_review"}:
+                needs_review.append(entry)
+        conflicts = [
+            {
+                "conflict_group_id": group_id,
+                "field": candidates[0]["field"],
+                "message": (
+                    f"Multiple conflicting sources exist for {candidates[0]['field']}; "
+                    "treat every candidate as unconfirmed."
+                ),
+                "candidates": candidates,
+            }
+            for group_id, candidates in sorted(conflict_groups.items())
+            if len(candidates) > 1
+        ]
+        return {
+            "boundary": "external background only; never internal capability evidence",
+            "facts": facts,
+            "conflicts": conflicts,
+            "needs_review": needs_review,
+        }

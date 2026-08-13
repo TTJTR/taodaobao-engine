@@ -93,7 +93,9 @@ class UpdateTenderRequirementRequest(BaseModel):
     mandatory: bool | None = None
     acceptance_condition: str | None = Field(default=None, max_length=20_000)
     constraints: dict | None = None
+    metrics: list[dict] | None = Field(default=None, max_length=100)
     ambiguities: list[str] | None = Field(default=None, max_length=100)
+    recommended_action: str | None = Field(default=None, max_length=20_000)
     expected_version: int = Field(ge=1)
 
 
@@ -111,6 +113,10 @@ class SplitTenderRequirementItem(BaseModel):
     requirement_text: str = Field(min_length=1, max_length=20_000)
     category: str | None = Field(default=None, min_length=1, max_length=64)
     mandatory: bool | None = None
+    acceptance_condition: str | None = Field(default=None, max_length=20_000)
+    metrics: list[dict] | None = Field(default=None, max_length=100)
+    ambiguities: list[str] | None = Field(default=None, max_length=100)
+    recommended_action: str | None = Field(default=None, max_length=20_000)
 
 
 class SplitTenderRequirementRequest(BaseModel):
@@ -134,6 +140,13 @@ class ReviewResponseItemRequest(BaseModel):
     action: Literal["approve", "edit_and_approve", "reject", "needs_evidence"]
     expected_version: int = Field(ge=1)
     current_answer: str | None = Field(default=None, min_length=1, max_length=20_000)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class BatchReviewResponseItemsRequest(BaseModel):
+    item_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+    action: Literal["approve", "reject", "needs_evidence"]
+    expected_versions: dict[str, int] = Field(min_length=1, max_length=100)
     note: str | None = Field(default=None, max_length=1000)
 
 

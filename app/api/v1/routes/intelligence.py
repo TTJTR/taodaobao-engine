@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from app.api.deps import AIEngineDependency, CurrentUser, DatabaseSession, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
-from app.db.models import IntelligenceFreshness
+from app.db.models import IntelligenceFreshness, ProposalStatus
 from app.schemas.intelligence_provider import EnrichmentJobRequest
 from app.schemas.v2 import (
     CreateIntelligenceSearchTemplateRequest,
@@ -229,8 +229,13 @@ async def list_search_templates(
     rows, total = await service.list_search_templates(page, page_size, purpose)
     return success_response(
         request,
-        {"items": [_search_template(row) for row in rows], "page": page, "page_size": page_size,
-         "total": total, "has_more": page * page_size < total},
+        {
+            "items": [_search_template(row) for row in rows],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_more": page * page_size < total,
+        },
     )
 
 
@@ -423,6 +428,32 @@ async def create_profile_proposal(
         profile_id, payload.snapshot_id, payload.proposed_patch
     )
     return success_response(request, _proposal(row))
+
+
+@profile_router.get("/{profile_id}/intelligence-proposals")
+async def list_profile_proposals(
+    profile_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    proposal_status: Annotated[ProposalStatus | None, Query(alias="status")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> dict:
+    rows, total = await IntelligenceService(
+        session, workspace_id, current_user.id
+    ).list_profile_proposals(profile_id, page, page_size, proposal_status)
+    return success_response(
+        request,
+        {
+            "items": [_proposal(row) for row in rows],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_more": page * page_size < total,
+        },
+    )
 
 
 @profile_router.post("/{profile_id}/intelligence-proposals/{proposal_id}/confirm")

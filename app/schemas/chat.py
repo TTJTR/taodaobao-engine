@@ -49,6 +49,7 @@ class SolutionRunRead(BaseModel):
     id: uuid.UUID
     session_id: uuid.UUID
     request_message_id: uuid.UUID
+    intelligence_snapshot_id: uuid.UUID | None
     status: ProcessStatus
     retrieval_snapshot: dict | None
     external_context: dict | None = None

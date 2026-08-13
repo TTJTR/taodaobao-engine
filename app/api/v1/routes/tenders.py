@@ -9,6 +9,7 @@ from app.api.deps import CurrentUser, DatabaseSession, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.schemas.v2 import (
+    BatchReviewResponseItemsRequest,
     CreateResponseMatrixRequest,
     CreateTenderRequest,
     MergeTenderRequirementsRequest,
@@ -47,12 +48,15 @@ def _requirement(row) -> dict:
         "requirement_text": row.requirement_text,
         "category": row.category,
         "mandatory": row.mandatory,
+        "is_mandatory": row.mandatory,
         "source_location": row.source_location,
         "version": row.version,
         "status": row.status.value,
         "acceptance_condition": row.acceptance_condition,
         "constraints": row.constraints,
+        "metrics": row.metrics,
         "ambiguities": row.ambiguities,
+        "recommended_action": row.recommended_action,
         "confirmed_by_id": str(row.confirmed_by_id) if row.confirmed_by_id else None,
         "confirmed_at": row.confirmed_at.isoformat() if row.confirmed_at else None,
     }
@@ -108,6 +112,45 @@ def _matrix_summary(row, item_count: int) -> dict:
 
 def _links_text(links: list[dict]) -> str:
     return "; ".join(str(item.get("asset_id") or item.get("snapshot_id") or "") for item in links)
+
+
+def _matrix_csv(rows) -> str:
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream)
+    writer.writerow(
+        [
+            "requirement",
+            "category",
+            "mandatory",
+            "source_location",
+            "ai_draft",
+            "current_answer",
+            "internal_experience_ids",
+            "internal_capability_ids",
+            "external_context_ids",
+            "risk_flags",
+            "evidence_status",
+            "review_status",
+        ]
+    )
+    for item, requirement in rows:
+        writer.writerow(
+            [
+                requirement.requirement_text,
+                requirement.category,
+                requirement.mandatory,
+                str(requirement.source_location),
+                item.ai_draft,
+                item.current_answer,
+                _links_text(item.internal_exp_links),
+                _links_text(item.internal_cap_links),
+                _links_text(item.external_ctx_links),
+                "; ".join(item.risk_flags),
+                item.evidence_status.value,
+                item.review_status,
+            ]
+        )
+    return "\ufeff" + stream.getvalue()
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -469,25 +512,44 @@ async def export_response_matrix_csv(
         review_status=review_status,
         risk_flag=risk_flag,
     )
-    stream = io.StringIO(newline="")
-    writer = csv.writer(stream)
-    writer.writerow([
-        "requirement", "category", "source_location", "internal_experience_ids",
-        "internal_capability_ids", "external_context_ids", "ai_draft", "current_answer",
-        "evidence_status", "risk_flags", "review_status",
-    ])
-    for item, requirement in rows:
-        writer.writerow([
-            requirement.requirement_text, requirement.category, str(requirement.source_location),
-            _links_text(item.internal_exp_links), _links_text(item.internal_cap_links),
-            _links_text(item.external_ctx_links), item.ai_draft, item.current_answer,
-            item.evidence_status.value, "; ".join(item.risk_flags), item.review_status,
-        ])
     return Response(
-        content="\ufeff" + stream.getvalue(),
+        content=_matrix_csv(rows),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="response-matrix-{matrix_id}.csv"'},
     )
+
+
+@matrix_router.get("/{matrix_id}/export")
+async def export_response_matrix(
+    matrix_id: uuid.UUID,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+) -> Response:
+    _, rows = await TenderService(session, workspace_id, current_user.id).list_matrix_items(
+        matrix_id
+    )
+    return Response(
+        content=_matrix_csv(rows),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="response-matrix-{matrix_id}.csv"'},
+    )
+
+
+@matrix_router.post("/{matrix_id}/batch-review")
+async def batch_review_response_matrix_items(
+    matrix_id: uuid.UUID,
+    payload: BatchReviewResponseItemsRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    rows = await TenderService(session, workspace_id, current_user.id).batch_review_items(
+        matrix_id, payload.item_ids, payload.action, payload.expected_versions, payload.note
+    )
+    return success_response(request, {"items": [_item(row) for row in rows], "total": len(rows)})
 
 
 @matrix_router.post("/{matrix_id}/items/{item_id}/review")

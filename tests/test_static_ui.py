@@ -26,7 +26,7 @@ def test_static_index_is_served_at_root() -> None:
     assert "邀请码无效、已使用或已过期" in response.text
     assert "function createIdempotencyKey()" in response.text
     assert 'headers["Idempotency-Key"]=createIdempotencyKey()' in response.text
-    assert 'apiFetch(`/feishu/resources?${query}`)' in response.text
+    assert "apiFetch(`/feishu/resources?${query}`)" in response.text
     assert 'AI ${s.runtime.ai_mode==="live"?"真实":"模拟"}' in response.text
     assert '飞书 ${s.runtime.feishu_mode==="live"?"真实":"模拟"}' in response.text
     assert 'source.is_demo?"（演示数据）"' in response.text
@@ -41,7 +41,7 @@ def test_static_index_is_served_at_root() -> None:
     assert "function renderPresentations()" in response.text
     assert "function renderRuntime()" in response.text
     assert "function renderModels()" in response.text
-    assert 'apiFetch(`/style-profiles/${id}`)' in response.text
+    assert "apiFetch(`/style-profiles/${id}`)" in response.text
     assert "V1.0 规划能力，不进入当前MVP主流程" not in response.text
 
 
@@ -49,10 +49,42 @@ def test_static_mount_does_not_shadow_api_routes() -> None:
     response = TestClient(app).get("/api/v1/health")
 
     assert response.status_code == 200
-    assert response.json()["data"]["status"] == "ok"
+    assert response.json()["data"]["status"] in {"ok", "degraded"}
 
 
 def test_style_profile_polling_route_is_registered() -> None:
     schema = app.openapi()
 
     assert "get" in schema["paths"]["/api/v1/style-profiles/{profile_id}"]
+
+
+def test_v2_business_workbenches_are_served_with_real_api_contracts() -> None:
+    client = TestClient(app)
+
+    intelligence = client.get("/v2_intelligence.html")
+    tender = client.get("/v2_tender.html")
+    adapter = client.get("/v2-workbench.js")
+    index = client.get("/")
+
+    assert intelligence.status_code == 200
+    assert "情报工作台" in intelligence.text
+    assert "/intelligence/items" in intelligence.text
+    assert "intelligence-proposals" in intelligence.text
+    assert tender.status_code == 200
+    assert "招标工作台" in tender.text
+    assert "/response-matrices/" in tender.text
+    assert "/review" in tender.text
+    assert "/batch-review" in tender.text
+    assert "/export" in tender.text
+    assert "批量补充证据" in tender.text
+    assert 'headers["Idempotency-Key"]' in adapter.text
+    assert "/v2_intelligence.html" in index.text
+    assert "/v2_tender.html" in index.text
+
+
+def test_profile_intelligence_proposals_have_a_read_route() -> None:
+    schema = app.openapi()
+    path = "/api/v1/customer-profiles/{profile_id}/intelligence-proposals"
+
+    assert "get" in schema["paths"][path]
+    assert "post" in schema["paths"][path]

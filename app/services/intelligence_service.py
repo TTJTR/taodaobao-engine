@@ -185,8 +185,7 @@ def _bounded_json_value(value):
         return [_bounded_json_value(item) for item in value[:100]]
     if isinstance(value, dict):
         return {
-            str(key)[:128]: _bounded_json_value(item)
-            for key, item in list(value.items())[:100]
+            str(key)[:128]: _bounded_json_value(item) for key, item in list(value.items())[:100]
         }
     if isinstance(value, (int, float, bool)) or value is None:
         return value
@@ -223,8 +222,7 @@ def _verify_provider_facts(
     artifacts_by_url = {
         _canonical_url(source_url): artifact
         for artifact in artifacts
-        if (source_url := artifact.normalized_url or artifact.source_url)
-        and artifact.text_content
+        if (source_url := artifact.normalized_url or artifact.source_url) and artifact.text_content
     }
     verified_facts: list[dict] = []
     linked_artifacts: dict[uuid.UUID, RawArtifact] = {}
@@ -473,12 +471,7 @@ class IntelligenceService:
         normalized_value = _normalize_governance_value(fact["value"])
         await self.session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
-            {
-                "key": (
-                    f"{self.workspace_id}:intelligence-governance:"
-                    f"{profile.id}:{field_name}"
-                )
-            },
+            {"key": (f"{self.workspace_id}:intelligence-governance:{profile.id}:{field_name}")},
         )
         candidates = list(
             await self.session.scalars(
@@ -1138,6 +1131,32 @@ class IntelligenceService:
         await self.session.refresh(proposal)
         return proposal
 
+    async def list_profile_proposals(
+        self,
+        profile_id: uuid.UUID,
+        page: int,
+        page_size: int,
+        status: ProposalStatus | None = None,
+    ) -> tuple[list[ProfileIntelligenceProposal], int]:
+        await self._get(CustomerProfile, profile_id)
+        filters = [
+            *self._filters(ProfileIntelligenceProposal),
+            ProfileIntelligenceProposal.profile_id == profile_id,
+        ]
+        if status is not None:
+            filters.append(ProfileIntelligenceProposal.status == status)
+        rows = await self.session.scalars(
+            select(ProfileIntelligenceProposal)
+            .where(*filters)
+            .order_by(ProfileIntelligenceProposal.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        total = await self.session.scalar(
+            select(func.count()).select_from(ProfileIntelligenceProposal).where(*filters)
+        )
+        return list(rows), int(total or 0)
+
     @staticmethod
     def _resolve_conflict_candidates(
         proposed_patch: dict, selected_candidates: dict[str, uuid.UUID]
@@ -1211,9 +1230,7 @@ class IntelligenceService:
             "summary": item.summary,
             "facts": item.facts,
             "fingerprint": item.fingerprint,
-            "conflict_group_id": (
-                str(item.conflict_group_id) if item.conflict_group_id else None
-            ),
+            "conflict_group_id": (str(item.conflict_group_id) if item.conflict_group_id else None),
             "freshness": item.freshness.value,
             "review_status": item.review_status.value,
             "metadata_snapshot": item.metadata_snapshot,
