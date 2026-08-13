@@ -4,9 +4,11 @@ import yaml
 
 
 def test_style_template_candidate_routes_are_idempotent_and_uuid_typed() -> None:
-    contract = yaml.safe_load(Path("openapi.yaml").read_text(encoding="utf-8"))
+    contract = yaml.safe_load(
+        Path("docs/openapi-presentation-v1.1-incremental.yaml").read_text(encoding="utf-8")
+    )
     paths = contract["paths"]
-    base = "/style-profiles/{style_profile_id}/template-candidates"
+    base = "/api/v1/style-profiles/{style_profile_id}/template-candidates"
     regenerate = f"{base}/regenerate-preview"
     confirm = f"{base}/{{candidate_id}}/confirm"
 
@@ -17,6 +19,8 @@ def test_style_template_candidate_routes_are_idempotent_and_uuid_typed() -> None
         ]
         assert "#/components/parameters/IdempotencyKey" in parameters
     candidate_parameter = next(
-        item for item in paths[confirm]["parameters"] if item.get("name") == "candidate_id"
+        item
+        for item in paths[confirm]["post"]["parameters"]
+        if item.get("name") == "candidate_id"
     )
     assert candidate_parameter["schema"]["format"] == "uuid"

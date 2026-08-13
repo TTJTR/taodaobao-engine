@@ -361,7 +361,9 @@ def _num_attr(element: ElementTree.Element | None, name: str) -> float:
 
 def _shape_xfrm(shape: ElementTree.Element) -> tuple[float, float, float, float] | None:
     properties = _find_child(shape, "spPr")
-    transform = _find_child(properties, "xfrm") or _find_child(shape, "xfrm")
+    transform = _find_child(properties, "xfrm")
+    if transform is None:
+        transform = _find_child(shape, "xfrm")
     if transform is None:
         return None
     offset = _find_child(transform, "off")

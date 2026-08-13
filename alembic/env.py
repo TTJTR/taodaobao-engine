@@ -55,6 +55,7 @@ ENUM_CHECK_CONSTRAINTS = {
     "source_status",
     "source_type",
     "style_profile_status",
+    "style_template_status",
     "tender_parse_status",
     "tender_requirement_status",
     "trust_decision_action",
