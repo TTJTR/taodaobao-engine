@@ -1,12 +1,15 @@
+import csv
+import io
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.api.deps import CurrentUser, DatabaseSession, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.schemas.v2 import (
+    BatchReviewResponseItemsRequest,
     CreateResponseMatrixRequest,
     CreateTenderRequest,
     MergeTenderRequirementsRequest,
@@ -45,12 +48,15 @@ def _requirement(row) -> dict:
         "requirement_text": row.requirement_text,
         "category": row.category,
         "mandatory": row.mandatory,
+        "is_mandatory": row.mandatory,
         "source_location": row.source_location,
         "version": row.version,
         "status": row.status.value,
         "acceptance_condition": row.acceptance_condition,
         "constraints": row.constraints,
+        "metrics": row.metrics,
         "ambiguities": row.ambiguities,
+        "recommended_action": row.recommended_action,
         "confirmed_by_id": str(row.confirmed_by_id) if row.confirmed_by_id else None,
         "confirmed_at": row.confirmed_at.isoformat() if row.confirmed_at else None,
     }
@@ -78,6 +84,73 @@ def _item(row) -> dict:
         "version": row.version,
         "updated_at": row.updated_at.isoformat(),
     }
+
+
+def _item_version(row) -> dict:
+    return {
+        "id": str(row.id),
+        "response_item_id": str(row.response_item_id),
+        "version": row.version,
+        "changed_by_id": str(row.changed_by_id) if row.changed_by_id else None,
+        "change_type": row.change_type,
+        "item_snapshot": row.item_snapshot,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+def _matrix_summary(row, item_count: int) -> dict:
+    return {
+        "id": str(row.id),
+        "tender_id": str(row.tender_id),
+        "version": row.version,
+        "status": row.status,
+        "item_count": item_count,
+        "created_at": row.created_at.isoformat(),
+        "updated_at": row.updated_at.isoformat(),
+    }
+
+
+def _links_text(links: list[dict]) -> str:
+    return "; ".join(str(item.get("asset_id") or item.get("snapshot_id") or "") for item in links)
+
+
+def _matrix_csv(rows) -> str:
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream)
+    writer.writerow(
+        [
+            "requirement",
+            "category",
+            "mandatory",
+            "source_location",
+            "ai_draft",
+            "current_answer",
+            "internal_experience_ids",
+            "internal_capability_ids",
+            "external_context_ids",
+            "risk_flags",
+            "evidence_status",
+            "review_status",
+        ]
+    )
+    for item, requirement in rows:
+        writer.writerow(
+            [
+                requirement.requirement_text,
+                requirement.category,
+                requirement.mandatory,
+                str(requirement.source_location),
+                item.ai_draft,
+                item.current_answer,
+                _links_text(item.internal_exp_links),
+                _links_text(item.internal_cap_links),
+                _links_text(item.external_ctx_links),
+                "; ".join(item.risk_flags),
+                item.evidence_status.value,
+                item.review_status,
+            ]
+        )
+    return "\ufeff" + stream.getvalue()
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -306,6 +379,31 @@ async def create_response_matrix(
     )
 
 
+@router.get("/{tender_id}/response-matrices")
+async def list_response_matrices(
+    tender_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> dict:
+    rows, total = await TenderService(session, workspace_id, current_user.id).list_matrices(
+        tender_id, page, page_size
+    )
+    return success_response(
+        request,
+        {
+            "items": [_matrix_summary(row, item_count) for row, item_count in rows],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_more": page * page_size < total,
+        },
+    )
+
+
 @matrix_router.get("/{matrix_id}")
 async def get_response_matrix(
     matrix_id: uuid.UUID,
@@ -345,6 +443,113 @@ async def update_response_matrix_item(
         matrix_id, item_id, payload.response_text, payload.risks, payload.expected_version
     )
     return success_response(request, _item(row))
+
+
+@matrix_router.get("/{matrix_id}/items/{item_id}/versions")
+async def list_response_matrix_item_versions(
+    matrix_id: uuid.UUID,
+    item_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+) -> dict:
+    rows = await TenderService(session, workspace_id, current_user.id).list_item_versions(
+        matrix_id, item_id
+    )
+    return success_response(
+        request,
+        {"items": [_item_version(row) for row in rows], "total": len(rows)},
+    )
+
+
+@matrix_router.get("/{matrix_id}/items")
+async def list_response_matrix_items(
+    matrix_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    category: str | None = None,
+    evidence_status: str | None = None,
+    review_status: str | None = None,
+    risk_flag: str | None = None,
+) -> dict:
+    _, rows = await TenderService(session, workspace_id, current_user.id).list_matrix_items(
+        matrix_id,
+        category=category,
+        evidence_status=evidence_status,
+        review_status=review_status,
+        risk_flag=risk_flag,
+    )
+    return success_response(
+        request,
+        {
+            "items": [
+                {**_item(item), "requirement": _requirement(requirement)}
+                for item, requirement in rows
+            ],
+            "total": len(rows),
+        },
+    )
+
+
+@matrix_router.get("/{matrix_id}/export.csv")
+async def export_response_matrix_csv(
+    matrix_id: uuid.UUID,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    category: str | None = None,
+    evidence_status: str | None = None,
+    review_status: str | None = None,
+    risk_flag: str | None = None,
+) -> Response:
+    _, rows = await TenderService(session, workspace_id, current_user.id).list_matrix_items(
+        matrix_id,
+        category=category,
+        evidence_status=evidence_status,
+        review_status=review_status,
+        risk_flag=risk_flag,
+    )
+    return Response(
+        content=_matrix_csv(rows),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="response-matrix-{matrix_id}.csv"'},
+    )
+
+
+@matrix_router.get("/{matrix_id}/export")
+async def export_response_matrix(
+    matrix_id: uuid.UUID,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+) -> Response:
+    _, rows = await TenderService(session, workspace_id, current_user.id).list_matrix_items(
+        matrix_id
+    )
+    return Response(
+        content=_matrix_csv(rows),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="response-matrix-{matrix_id}.csv"'},
+    )
+
+
+@matrix_router.post("/{matrix_id}/batch-review")
+async def batch_review_response_matrix_items(
+    matrix_id: uuid.UUID,
+    payload: BatchReviewResponseItemsRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    rows = await TenderService(session, workspace_id, current_user.id).batch_review_items(
+        matrix_id, payload.item_ids, payload.action, payload.expected_versions, payload.note
+    )
+    return success_response(request, {"items": [_item(row) for row in rows], "total": len(rows)})
 
 
 @matrix_router.post("/{matrix_id}/items/{item_id}/review")

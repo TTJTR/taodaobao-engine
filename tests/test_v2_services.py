@@ -4,12 +4,15 @@ import uuid
 import zipfile
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db.models import (
     CustomerProfile,
+    IntelligenceItemArtifactLink,
     ProfileStatus,
+    RawArtifact,
+    RawArtifactKind,
     ResearchTask,
     ResearchTaskStatus,
     ResponseEvidenceStatus,
@@ -127,6 +130,24 @@ async def test_v2_intelligence_tender_rehearsal_and_runtime_end_to_end() -> None
         )
         items, total = await intelligence.list_items(1, 20, search_run.id)
         assert total == 1
+        artifact = await session.scalar(
+            select(RawArtifact).where(
+                RawArtifact.workspace_id == workspace_id,
+                RawArtifact.search_run_id == search_run.id,
+                RawArtifact.is_deleted.is_(False),
+            )
+        )
+        assert artifact is not None
+        assert artifact.kind == RawArtifactKind.PASTED_TEXT
+        link = await session.scalar(
+            select(IntelligenceItemArtifactLink).where(
+                IntelligenceItemArtifactLink.workspace_id == workspace_id,
+                IntelligenceItemArtifactLink.intelligence_item_id == items[0].id,
+                IntelligenceItemArtifactLink.raw_artifact_id == artifact.id,
+                IntelligenceItemArtifactLink.is_deleted.is_(False),
+            )
+        )
+        assert link is not None
         snapshot = await intelligence.create_snapshot("customer_profile", [items[0].id])
         proposal = await intelligence.create_profile_proposal(
             profile.id,

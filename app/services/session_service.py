@@ -21,6 +21,7 @@ from app.db.repositories import (
     SessionRepository,
     SolutionRunRepository,
 )
+from app.services.external_context_service import ExternalContextService
 
 
 class SessionService:
@@ -74,7 +75,14 @@ class SessionService:
         )
         return items, await self.sessions.count_filtered(profile_id=profile_id)
 
-    async def create_turn(self, session_id: uuid.UUID, content: str) -> tuple[Message, SolutionRun]:
+    async def create_turn(
+        self,
+        session_id: uuid.UUID,
+        content: str,
+        *,
+        intelligence_snapshot_id: uuid.UUID | None = None,
+        response_matrix_id: uuid.UUID | None = None,
+    ) -> tuple[Message, SolutionRun]:
         chat = await self.get(session_id)
         profile = await self.profiles.get(chat.customer_profile_id)
         if profile is None:
@@ -85,6 +93,11 @@ class SessionService:
                 "快速方案只能使用已确认客户画像",
                 status_code=409,
             )
+        external_context = await ExternalContextService(self.session, self.workspace_id).freeze(
+            profile_id=profile.id,
+            intelligence_snapshot_id=intelligence_snapshot_id,
+            response_matrix_id=response_matrix_id,
+        )
         await self.session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
             {"key": f"{self.workspace_id}:session-sequence:{session_id}"},
@@ -99,12 +112,14 @@ class SessionService:
         run = await self.runs.create(
             session_id=session_id,
             request_message_id=message.id,
+            intelligence_snapshot_id=intelligence_snapshot_id,
             profile_snapshot={
                 "id": str(profile.id),
                 "customer_name": profile.customer_name,
                 "profile": profile.profile,
                 "status": profile.status.value,
             },
+            retrieval_snapshot={"external_context": external_context} if external_context else None,
             status=ProcessStatus.PENDING,
             retryable=False,
             stage="queued",

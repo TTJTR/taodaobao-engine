@@ -22,6 +22,7 @@ class HttpOpenEnrichAdapter:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         headers = {"Authorization": f"Bearer {token}"} if token else {}
+        self._headers = headers
         self._owns_client = client is None
         self.client = client or httpx.AsyncClient(
             headers=headers,
@@ -55,16 +56,30 @@ class HttpOpenEnrichAdapter:
 
     async def _request(self, method: str, path: str, **kwargs) -> dict:
         try:
-            response = await self.client.request(method, f"{self.base_url}{path}", **kwargs)
+            request_headers = {**self._headers, **kwargs.pop("headers", {})}
+            response = await self.client.request(
+                method,
+                f"{self.base_url}{path}",
+                headers=request_headers,
+                **kwargs,
+            )
             response.raise_for_status()
             data = response.json()
             if not isinstance(data, dict):
                 raise ValueError("provider returned non-object JSON")
             return data
-        except (httpx.RequestError, httpx.HTTPStatusError, ValueError) as exc:
+        except httpx.HTTPStatusError as exc:
+            retryable = exc.response.status_code >= 500
             raise AppError(
                 ErrorCode.PROVIDER_UNAVAILABLE,
-                "Open Enrich 内部服务暂时不可用",
+                "Open Enrich internal service rejected the request",
+                status_code=503 if retryable else 502,
+                retryable=retryable,
+            ) from exc
+        except (httpx.RequestError, ValueError) as exc:
+            raise AppError(
+                ErrorCode.PROVIDER_UNAVAILABLE,
+                "Open Enrich internal service is temporarily unavailable",
                 status_code=503,
                 retryable=True,
             ) from exc
@@ -76,7 +91,7 @@ class HttpOpenEnrichAdapter:
         except ValidationError as exc:
             raise AppError(
                 ErrorCode.PROVIDER_UNAVAILABLE,
-                "Open Enrich 返回了无效协议数据",
+                "Open Enrich returned invalid protocol data",
                 status_code=502,
-                retryable=True,
+                retryable=False,
             ) from exc

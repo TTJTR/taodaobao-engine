@@ -5,9 +5,12 @@ import json
 import re
 import uuid
 import zipfile
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from defusedxml import ElementTree
+from pydantic import BaseModel, ConfigDict, Field
 from pypdf import PdfReader
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +25,7 @@ from app.db.models import (
     ResponseEvidenceStatus,
     ResponseMatrix,
     ResponseMatrixItem,
+    ResponseMatrixItemVersion,
     ReviewStatus,
     Source,
     SourceFreshness,
@@ -45,6 +49,112 @@ SUPPORTED_MIME = {
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
     "text/plain": "txt",
 }
+
+
+class RequirementCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requirement_text: str = Field(min_length=8, max_length=20_000)
+    category: str = Field(min_length=1, max_length=64)
+    is_mandatory: bool
+    acceptance_condition: str | None = Field(default=None, max_length=20_000)
+    metrics: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    ambiguities: list[str] = Field(default_factory=list, max_length=100)
+    recommended_action: str | None = Field(default=None, max_length=20_000)
+    source_location: dict[str, Any]
+
+
+def extract_requirement_candidate(node: dict[str, Any]) -> RequirementCandidate | None:
+    text_value = str(node.get("text", "")).strip()
+    if node.get("node_type") == "heading" or len(text_value) < 8:
+        return None
+    source_location = deepcopy(node.get("location"))
+    _validate_document_location(source_location)
+    category = _requirement_category(text_value)
+    mandatory = bool(
+        re.search(r"(?:^|\s)[★*]\s*|必须|应当|不得|须|否则拒绝|废标|shall|must", text_value, re.I)
+    )
+    metrics = _extract_requirement_metrics(text_value)
+    acceptance = _acceptance_condition(text_value)
+    ambiguities = _requirement_ambiguities(text_value)
+    action = _recommended_action(category, mandatory, ambiguities)
+    return RequirementCandidate(
+        requirement_text=text_value,
+        category=category,
+        is_mandatory=mandatory,
+        acceptance_condition=acceptance,
+        metrics=metrics,
+        ambiguities=ambiguities,
+        recommended_action=action,
+        source_location=source_location,
+    )
+
+
+def _requirement_category(text_value: str) -> str:
+    categories = (
+        ("compliance", r"合规|法律|法规|保密|等保|审计|数据安全"),
+        ("qualification", r"资质|证书|认证|注册资本"),
+        ("case_study", r"案例|业绩|成功项目|合同证明"),
+        ("delivery", r"交付|工期|上线|实施|培训|售后|质保"),
+        ("commercial", r"报价|价格|万元|付款|发票|商务"),
+        ("technical", r"技术|系统|接口|并发|性能|响应时间|吞吐"),
+    )
+    return next(
+        (category for category, pattern in categories if re.search(pattern, text_value)),
+        "general",
+    )
+
+
+def _extract_requirement_metrics(text_value: str) -> list[dict[str, str]]:
+    patterns = (
+        ("date", r"\d{4}[年/-]\d{1,2}(?:[月/-]\d{1,2}日?)?"),
+        ("duration", r"\d+(?:\.\d+)?\s*(?:个?工作日|日内|天|周|个月|月|年)"),
+        ("amount", r"\d+(?:\.\d+)?\s*(?:万元|亿元|元)"),
+        ("percentage", r"\d+(?:\.\d+)?\s*%"),
+        ("performance", r"\d+(?:\.\d+)?\s*(?:万)?(?:并发|QPS|TPS|ms|毫秒|秒)"),
+    )
+    metrics = []
+    seen = set()
+    for metric_type, pattern in patterns:
+        for match in re.finditer(pattern, text_value, re.I):
+            value = match.group(0).strip()
+            key = (metric_type, value)
+            if key not in seen:
+                metrics.append({"type": metric_type, "value": value})
+                seen.add(key)
+    return metrics
+
+
+def _acceptance_condition(text_value: str) -> str | None:
+    match = re.search(
+        r"(?:验收|通过标准|应达到|不低于|不少于|不超过|至少)[：:]?([^。；;]+)",
+        text_value,
+    )
+    return match.group(0).strip() if match else None
+
+
+def _requirement_ambiguities(text_value: str) -> list[str]:
+    ambiguities = []
+    if re.search(r"适当|相关|必要时|原则上|等(?:要求|内容|功能)?(?:[。；;]|$)", text_value):
+        ambiguities.append("范围或判定标准不明确，需要招标方澄清")
+    if re.search(r"行业领先|先进|成熟|友好|高性能", text_value) and not re.search(
+        r"\d", text_value
+    ):
+        ambiguities.append("存在主观描述但缺少可量化验收指标")
+    return ambiguities
+
+
+def _recommended_action(category: str, mandatory: bool, ambiguities: list[str]) -> str | None:
+    actions = []
+    if category == "compliance":
+        actions.append("需法务或合规负责人复核")
+    if category in {"qualification", "case_study"}:
+        actions.append("需准备可核验的资质或案例证明")
+    if mandatory:
+        actions.append("纳入强制条款逐项响应检查")
+    if ambiguities:
+        actions.append("投标前提交澄清问题")
+    return "；".join(actions) or None
 
 
 def extract_tender_text(
@@ -288,13 +398,18 @@ class TenderService:
         self._check_requirement_version(row, expected_version)
         await self._ensure_requirement_snapshot(row)
         for field, value in changes.items():
-            if field in {
-                "requirement_text",
-                "category",
-                "mandatory",
-                "constraints",
-                "ambiguities",
-            } and value is None:
+            if (
+                field
+                in {
+                    "requirement_text",
+                    "category",
+                    "mandatory",
+                    "constraints",
+                    "metrics",
+                    "ambiguities",
+                }
+                and value is None
+            ):
                 raise AppError(ErrorCode.VALIDATION_FAILED, "要求必填字段不能为空", status_code=422)
             setattr(row, field, value)
         row.status = TenderRequirementStatus.EDITED
@@ -333,12 +448,18 @@ class TenderService:
         ids = list(dict.fromkeys(requirement_ids))
         if len(ids) < 2:
             raise AppError(ErrorCode.VALIDATION_FAILED, "至少选择两条不同要求", status_code=422)
-        rows = list(await self.session.scalars(
-            select(TenderRequirement).where(
-                TenderRequirement.id.in_(ids), TenderRequirement.tender_id == tender_id,
-                *self._filters(TenderRequirement),
-            ).order_by(TenderRequirement.sequence).with_for_update()
-        ))
+        rows = list(
+            await self.session.scalars(
+                select(TenderRequirement)
+                .where(
+                    TenderRequirement.id.in_(ids),
+                    TenderRequirement.tender_id == tender_id,
+                    *self._filters(TenderRequirement),
+                )
+                .order_by(TenderRequirement.sequence)
+                .with_for_update()
+            )
+        )
         if len(rows) != len(ids):
             raise AppError(ErrorCode.VALIDATION_FAILED, "要求不存在或跨工作区", status_code=404)
         await self._ensure_requirement_unused(ids)
@@ -369,21 +490,45 @@ class TenderService:
         self._check_requirement_version(parent, expected_version)
         await self._ensure_requirement_unused([parent.id])
         await self._ensure_requirement_snapshot(parent)
-        sequence = int(await self.session.scalar(select(func.max(TenderRequirement.sequence)).where(
-            TenderRequirement.tender_id == tender_id,
-            TenderRequirement.workspace_id == self.workspace_id,
-        )) or 0) + 1
+        sequence = (
+            int(
+                await self.session.scalar(
+                    select(func.max(TenderRequirement.sequence)).where(
+                        TenderRequirement.tender_id == tender_id,
+                        TenderRequirement.workspace_id == self.workspace_id,
+                    )
+                )
+                or 0
+            )
+            + 1
+        )
         created = []
         for item in items:
             row = TenderRequirement(
-                workspace_id=self.workspace_id, tender_id=tender_id,
-                parse_version_id=parent.parse_version_id, sequence=sequence, version=1,
+                workspace_id=self.workspace_id,
+                tender_id=tender_id,
+                parse_version_id=parent.parse_version_id,
+                sequence=sequence,
+                version=1,
                 requirement_text=item.requirement_text,
                 category=item.category or parent.category,
                 mandatory=parent.mandatory if item.mandatory is None else item.mandatory,
-                acceptance_condition=parent.acceptance_condition,
+                acceptance_condition=(
+                    parent.acceptance_condition
+                    if item.acceptance_condition is None
+                    else item.acceptance_condition
+                ),
                 constraints={**parent.constraints, "split_from_requirement_id": str(parent.id)},
-                ambiguities=list(parent.ambiguities), source_location=dict(parent.source_location),
+                metrics=list(parent.metrics) if item.metrics is None else item.metrics,
+                ambiguities=(
+                    list(parent.ambiguities) if item.ambiguities is None else item.ambiguities
+                ),
+                recommended_action=(
+                    parent.recommended_action
+                    if item.recommended_action is None
+                    else item.recommended_action
+                ),
+                source_location=deepcopy(parent.source_location),
                 status=TenderRequirementStatus.EDITED,
             )
             self.session.add(row)
@@ -400,10 +545,15 @@ class TenderService:
 
     async def _locked_requirement(self, tender_id, requirement_id):
         await self.get_tender(tender_id)
-        row = await self.session.scalar(select(TenderRequirement).where(
-            TenderRequirement.id == requirement_id, TenderRequirement.tender_id == tender_id,
-            *self._filters(TenderRequirement),
-        ).with_for_update())
+        row = await self.session.scalar(
+            select(TenderRequirement)
+            .where(
+                TenderRequirement.id == requirement_id,
+                TenderRequirement.tender_id == tender_id,
+                *self._filters(TenderRequirement),
+            )
+            .with_for_update()
+        )
         if row is None:
             raise AppError(ErrorCode.VALIDATION_FAILED, "招标要求不存在", status_code=404)
         return row
@@ -429,21 +579,34 @@ class TenderService:
             await self._snapshot_requirement(row, "created")
 
     async def _snapshot_requirement(self, row, change_type):
-        self.session.add(TenderRequirementVersion(
-            workspace_id=self.workspace_id, requirement_id=row.id, version=row.version,
-            changed_by_id=self.user_id, change_type=change_type,
-            requirement_snapshot={
-                "requirement_text": row.requirement_text, "category": row.category,
-                "mandatory": row.mandatory, "acceptance_condition": row.acceptance_condition,
-                "constraints": row.constraints, "ambiguities": row.ambiguities,
-                "status": row.status.value,
-            }, source_location=dict(row.source_location),
-        ))
+        self.session.add(
+            TenderRequirementVersion(
+                workspace_id=self.workspace_id,
+                requirement_id=row.id,
+                version=row.version,
+                changed_by_id=self.user_id,
+                change_type=change_type,
+                requirement_snapshot={
+                    "requirement_text": row.requirement_text,
+                    "category": row.category,
+                    "mandatory": row.mandatory,
+                    "acceptance_condition": row.acceptance_condition,
+                    "constraints": row.constraints,
+                    "metrics": row.metrics,
+                    "ambiguities": row.ambiguities,
+                    "recommended_action": row.recommended_action,
+                    "status": row.status.value,
+                },
+                source_location=dict(row.source_location),
+            )
+        )
 
     async def _ensure_requirement_unused(self, ids):
-        used = await self.session.scalar(select(ResponseMatrixItem.id).where(
-            ResponseMatrixItem.requirement_id.in_(ids), *self._filters(ResponseMatrixItem)
-        ).limit(1))
+        used = await self.session.scalar(
+            select(ResponseMatrixItem.id)
+            .where(ResponseMatrixItem.requirement_id.in_(ids), *self._filters(ResponseMatrixItem))
+            .limit(1)
+        )
         if used:
             raise AppError(
                 ErrorCode.VALIDATION_FAILED,
@@ -473,36 +636,47 @@ class TenderService:
         existing = await self.list_requirements(tender_id)
         for row in existing:
             row.is_deleted = True
-        next_sequence = int(
-            await self.session.scalar(
-                select(func.max(TenderRequirement.sequence)).where(
-                    TenderRequirement.tender_id == tender_id,
-                    TenderRequirement.workspace_id == self.workspace_id,
+        next_sequence = (
+            int(
+                await self.session.scalar(
+                    select(func.max(TenderRequirement.sequence)).where(
+                        TenderRequirement.tender_id == tender_id,
+                        TenderRequirement.workspace_id == self.workspace_id,
+                    )
                 )
+                or 0
             )
-            or 0
-        ) + 1
+            + 1
+        )
         created = []
         for node in parsed.document_ir.get("nodes", []):
-            text_value = str(node.get("text", "")).strip()
-            location = node.get("location")
-            if node.get("node_type") == "heading" or len(text_value) < 8:
+            candidate = extract_requirement_candidate(node)
+            if candidate is None:
                 continue
-            _validate_document_location(location)
+            original_location = deepcopy(node.get("location"))
             row = TenderRequirement(
                 workspace_id=self.workspace_id,
                 tender_id=tender_id,
                 parse_version_id=parsed.id,
                 sequence=next_sequence,
                 version=1,
-                requirement_text=text_value,
-                category="general",
-                mandatory=bool(re.search(r"必须|应当|不得|须|shall|must", text_value, re.I)),
+                requirement_text=candidate.requirement_text,
+                category=candidate.category,
+                mandatory=candidate.is_mandatory,
+                acceptance_condition=candidate.acceptance_condition,
                 constraints={},
-                ambiguities=[],
-                source_location=location,
+                metrics=candidate.metrics,
+                ambiguities=candidate.ambiguities,
+                recommended_action=candidate.recommended_action,
+                source_location=candidate.source_location,
                 status="ai_draft",
             )
+            if row.source_location != original_location:
+                raise AppError(
+                    ErrorCode.EVIDENCE_LOCATION_INVALID,
+                    "Requirement extraction changed DocumentLocation",
+                    status_code=500,
+                )
             self.session.add(row)
             created.append(row)
             next_sequence += 1
@@ -546,9 +720,9 @@ class TenderService:
             retrieved = await RetrievalService(self.session, self.workspace_id).retrieve(
                 requirement.requirement_text
             )
-            automatic = [
-                {"type": "experience", **item} for item in retrieved["experiences"]
-            ] + [{"type": "capability", **item} for item in retrieved["capabilities"]]
+            automatic = [{"type": "experience", **item} for item in retrieved["experiences"]] + [
+                {"type": "capability", **item} for item in retrieved["capabilities"]
+            ]
             matched = self._match_evidence(requirement.requirement_text, [*evidence, *automatic])
             exp_links = [_evidence_link(row) for row in matched if row["type"] == "experience"]
             cap_links = [_evidence_link(row) for row in matched if row["type"] == "capability"]
@@ -607,6 +781,77 @@ class TenderService:
         )
         return matrix, items
 
+    async def list_matrix_items(
+        self,
+        matrix_id: uuid.UUID,
+        *,
+        category: str | None = None,
+        evidence_status: str | None = None,
+        review_status: str | None = None,
+        risk_flag: str | None = None,
+    ) -> tuple[ResponseMatrix, list[tuple[ResponseMatrixItem, TenderRequirement]]]:
+        matrix = await self._get(ResponseMatrix, matrix_id)
+        filters = [
+            ResponseMatrixItem.matrix_id == matrix_id,
+            *self._filters(ResponseMatrixItem),
+            TenderRequirement.workspace_id == self.workspace_id,
+            TenderRequirement.is_deleted.is_(False),
+        ]
+        if category is not None:
+            filters.append(TenderRequirement.category == category)
+        if evidence_status is not None:
+            filters.append(ResponseMatrixItem.evidence_status == evidence_status)
+        if review_status is not None:
+            filters.append(ResponseMatrixItem.review_status == review_status)
+        if risk_flag is not None:
+            filters.append(ResponseMatrixItem.risk_flags.contains([risk_flag]))
+        rows = list(
+            (
+                await self.session.execute(
+                    select(ResponseMatrixItem, TenderRequirement)
+                    .join(
+                        TenderRequirement,
+                        TenderRequirement.id == ResponseMatrixItem.requirement_id,
+                    )
+                    .where(*filters)
+                    .order_by(TenderRequirement.sequence, ResponseMatrixItem.created_at)
+                )
+            ).all()
+        )
+        return matrix, rows
+
+    async def list_matrices(
+        self, tender_id: uuid.UUID, page: int, page_size: int
+    ) -> tuple[list[tuple[ResponseMatrix, int]], int]:
+        await self.get_tender(tender_id)
+        matrix_filters = (
+            ResponseMatrix.tender_id == tender_id,
+            *self._filters(ResponseMatrix),
+        )
+        item_count = func.count(ResponseMatrixItem.id).label("item_count")
+        rows = list(
+            (
+                await self.session.execute(
+                    select(ResponseMatrix, item_count)
+                    .outerjoin(
+                        ResponseMatrixItem,
+                        (ResponseMatrixItem.matrix_id == ResponseMatrix.id)
+                        & (ResponseMatrixItem.workspace_id == self.workspace_id)
+                        & ResponseMatrixItem.is_deleted.is_(False),
+                    )
+                    .where(*matrix_filters)
+                    .group_by(ResponseMatrix.id)
+                    .order_by(ResponseMatrix.created_at.desc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            ).all()
+        )
+        total = await self.session.scalar(
+            select(func.count()).select_from(ResponseMatrix).where(*matrix_filters)
+        )
+        return [(matrix, int(count)) for matrix, count in rows], int(total or 0)
+
     async def update_item(
         self,
         matrix_id: uuid.UUID,
@@ -620,6 +865,7 @@ class TenderService:
         if item.matrix_id != matrix_id:
             raise AppError(ErrorCode.VALIDATION_FAILED, "响应项不属于该矩阵", status_code=409)
         self._check_version(item, expected_version)
+        await self._snapshot_item(item, "edited")
         if response_text is not None:
             item.response_text = response_text
             item.current_answer = response_text
@@ -635,8 +881,13 @@ class TenderService:
         return item
 
     async def review_item(
-        self, matrix_id: uuid.UUID, item_id: uuid.UUID, action: str, note: str | None,
-        expected_version: int, current_answer: str | None,
+        self,
+        matrix_id: uuid.UUID,
+        item_id: uuid.UUID,
+        action: str,
+        note: str | None,
+        expected_version: int,
+        current_answer: str | None,
     ) -> ResponseMatrixItem:
         await self._get(ResponseMatrix, matrix_id)
         item = await self._locked_item(item_id)
@@ -644,12 +895,15 @@ class TenderService:
             raise AppError(ErrorCode.VALIDATION_FAILED, "响应项不属于该矩阵", status_code=409)
         self._check_version(item, expected_version)
         self._validate_review_action(item, action, current_answer)
+        await self._snapshot_item(item, action)
         if current_answer is not None:
             item.current_answer = current_answer
             item.response_text = current_answer
         item.review_status = {
-            "approve": "approved", "edit_and_approve": "approved",
-            "reject": "rejected", "needs_evidence": "needs_evidence",
+            "approve": "approved",
+            "edit_and_approve": "approved",
+            "reject": "rejected",
+            "needs_evidence": "needs_evidence",
         }[action]
         item.reviewer_id = self.user_id
         item.review_note = note
@@ -659,15 +913,113 @@ class TenderService:
         await self.session.refresh(item)
         return item
 
+    async def batch_review_items(
+        self,
+        matrix_id: uuid.UUID,
+        item_ids: list[uuid.UUID],
+        action: str,
+        expected_versions: dict[str, int],
+        note: str | None,
+    ) -> list[ResponseMatrixItem]:
+        await self._get(ResponseMatrix, matrix_id)
+        unique_ids = sorted(set(item_ids), key=str)
+        if len(unique_ids) != len(item_ids):
+            raise AppError(ErrorCode.VALIDATION_FAILED, "响应项不能重复", status_code=422)
+        if set(expected_versions) != {str(item_id) for item_id in unique_ids}:
+            raise AppError(ErrorCode.VALIDATION_FAILED, "批量版本映射不完整", status_code=422)
+        items = list(
+            await self.session.scalars(
+                select(ResponseMatrixItem)
+                .where(
+                    ResponseMatrixItem.id.in_(unique_ids),
+                    *self._filters(ResponseMatrixItem),
+                )
+                .order_by(ResponseMatrixItem.id)
+                .with_for_update()
+            )
+        )
+        if len(items) != len(unique_ids) or any(item.matrix_id != matrix_id for item in items):
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED, "响应项不存在或不属于该矩阵", status_code=404
+            )
+        try:
+            for item in items:
+                self._check_version(item, expected_versions[str(item.id)])
+                self._validate_review_action(item, action, None)
+        except AppError:
+            await self.session.rollback()
+            raise
+        now = datetime.now(UTC)
+        for item in items:
+            await self._snapshot_item(item, f"batch_{action}")
+            item.review_status = {
+                "approve": "approved",
+                "reject": "rejected",
+                "needs_evidence": "needs_evidence",
+            }[action]
+            item.reviewer_id = self.user_id
+            item.review_note = note
+            item.approved_at = now if item.review_status == "approved" else None
+            item.version += 1
+        await self.session.commit()
+        for item in items:
+            await self.session.refresh(item)
+        return items
+
+    async def list_item_versions(
+        self, matrix_id: uuid.UUID, item_id: uuid.UUID
+    ) -> list[ResponseMatrixItemVersion]:
+        await self._get(ResponseMatrix, matrix_id)
+        item = await self._locked_item(item_id)
+        if item.matrix_id != matrix_id:
+            raise AppError(ErrorCode.VALIDATION_FAILED, "响应项不属于该矩阵", status_code=409)
+        return list(
+            await self.session.scalars(
+                select(ResponseMatrixItemVersion)
+                .where(
+                    ResponseMatrixItemVersion.response_item_id == item_id,
+                    *self._filters(ResponseMatrixItemVersion),
+                )
+                .order_by(ResponseMatrixItemVersion.version.desc())
+            )
+        )
+
     async def _locked_item(self, item_id: uuid.UUID) -> ResponseMatrixItem:
         item = await self.session.scalar(
-            select(ResponseMatrixItem).where(
-                ResponseMatrixItem.id == item_id, *self._filters(ResponseMatrixItem)
-            ).with_for_update()
+            select(ResponseMatrixItem)
+            .where(ResponseMatrixItem.id == item_id, *self._filters(ResponseMatrixItem))
+            .with_for_update()
         )
         if item is None:
             raise AppError(ErrorCode.VALIDATION_FAILED, "资源不存在", status_code=404)
         return item
+
+    async def _snapshot_item(self, item: ResponseMatrixItem, change_type: str) -> None:
+        self.session.add(
+            ResponseMatrixItemVersion(
+                workspace_id=self.workspace_id,
+                response_item_id=item.id,
+                version=item.version,
+                changed_by_id=self.user_id,
+                change_type=change_type,
+                item_snapshot={
+                    "response_text": item.response_text,
+                    "ai_draft": item.ai_draft,
+                    "current_answer": item.current_answer,
+                    "evidence_status": item.evidence_status.value,
+                    "evidence_refs": item.evidence_refs,
+                    "risks": item.risks,
+                    "internal_exp_links": item.internal_exp_links,
+                    "internal_cap_links": item.internal_cap_links,
+                    "external_ctx_links": item.external_ctx_links,
+                    "risk_flags": item.risk_flags,
+                    "review_status": item.review_status,
+                    "reviewer_id": str(item.reviewer_id) if item.reviewer_id else None,
+                    "review_note": item.review_note,
+                    "approved_at": item.approved_at.isoformat() if item.approved_at else None,
+                },
+            )
+        )
 
     @staticmethod
     def _check_version(item: ResponseMatrixItem, expected: int) -> None:

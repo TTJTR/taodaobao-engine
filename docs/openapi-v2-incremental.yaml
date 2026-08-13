@@ -10,6 +10,20 @@ servers:
 security:
   - sessionCookie: []
 paths:
+  /intelligence/raw-artifacts:
+    get:
+      operationId: listRawArtifacts
+      parameters:
+        - {name: run_id, in: query, schema: {type: string, format: uuid}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: page_size, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+      responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+  /intelligence/raw-artifacts/{artifact_id}:
+    get:
+      operationId: getRawArtifact
+      parameters:
+        - {name: artifact_id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
   /intelligence/raw-artifacts/{artifact_id}/enrich:
     post:
       operationId: enrichRawArtifact
@@ -74,11 +88,79 @@ paths:
       operationId: listIntelligenceItems
       parameters:
         - {name: run_id, in: query, schema: {type: string, format: uuid}}
+        - {name: freshness, in: query, schema: {type: string, enum: [current, stale, unavailable, deleted]}}
+        - {name: conflict_group_id, in: query, schema: {type: string, format: uuid}}
       responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+  /response-matrices/{matrix_id}/items:
+    get:
+      operationId: listResponseMatrixItems
+      parameters:
+        - {$ref: '#/components/parameters/MatrixId'}
+        - {name: category, in: query, schema: {type: string}}
+        - {name: evidence_status, in: query, schema: {enum: [supported, partially_supported, missing_evidence, conflicted, stale, pending_confirmation]}}
+        - {name: review_status, in: query, schema: {enum: [pending, approved, rejected, needs_evidence]}}
+        - {name: risk_flag, in: query, schema: {type: string}}
+      responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+  /response-matrices/{matrix_id}/export.csv:
+    get:
+      operationId: exportResponseMatrixCsv
+      parameters:
+        - {$ref: '#/components/parameters/MatrixId'}
+        - {name: category, in: query, schema: {type: string}}
+        - {name: evidence_status, in: query, schema: {type: string}}
+        - {name: review_status, in: query, schema: {type: string}}
+        - {name: risk_flag, in: query, schema: {type: string}}
+      responses: {'200': {description: UTF-8 CSV response matrix export}}
   /intelligence/items/{item_id}:
     get:
       operationId: getIntelligenceItem
       parameters: [{$ref: '#/components/parameters/ItemId'}]
+      responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
+  /intelligence/search-templates:
+    post:
+      operationId: createIntelligenceSearchTemplate
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateIntelligenceSearchTemplateRequest'}
+      responses: {'201': {$ref: '#/components/responses/ItemResponse'}}
+    get:
+      operationId: listIntelligenceSearchTemplates
+      parameters:
+        - {name: purpose, in: query, schema: {enum: [customer_profile, solution, tender]}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: page_size, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+      responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+  /intelligence/search-templates/{template_id}:
+    patch:
+      operationId: updateIntelligenceSearchTemplate
+      parameters: [{$ref: '#/components/parameters/TemplateId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateIntelligenceSearchTemplateRequest'}
+      responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
+    delete:
+      operationId: deleteIntelligenceSearchTemplate
+      parameters: [{$ref: '#/components/parameters/TemplateId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
+  /intelligence/items/{item_id}/raw-artifacts:
+    get:
+      operationId: listIntelligenceItemArtifacts
+      parameters: [{$ref: '#/components/parameters/ItemId'}]
+      responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+  /intelligence/items/reassess-freshness:
+    post:
+      operationId: reassessIntelligenceFreshness
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReassessIntelligenceFreshnessRequest'}
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
   /intelligence/snapshots:
     post:
@@ -109,11 +191,21 @@ paths:
     post:
       operationId: confirmProfileIntelligenceProposal
       parameters: [{$ref: '#/components/parameters/ProfileId'}, {$ref: '#/components/parameters/ProposalId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DecideProposalRequest'}
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
   /customer-profiles/{profile_id}/intelligence-proposals/{proposal_id}/reject:
     post:
       operationId: rejectProfileIntelligenceProposal
       parameters: [{$ref: '#/components/parameters/ProfileId'}, {$ref: '#/components/parameters/ProposalId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DecideProposalRequest'}
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
   /tenders:
     post:
@@ -197,6 +289,13 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SplitTenderRequirementRequest'}}}}
       responses: {'201': {$ref: '#/components/responses/TenderRequirementListResponse'}}
   /tenders/{tender_id}/response-matrices:
+    get:
+      operationId: listResponseMatrices
+      parameters:
+        - {$ref: '#/components/parameters/TenderId'}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: page_size, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+      responses: {'200': {$ref: '#/components/responses/ListResponse'}}
     post:
       operationId: createResponseMatrix
       parameters: [{$ref: '#/components/parameters/TenderId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
@@ -211,6 +310,11 @@ paths:
       operationId: getResponseMatrix
       parameters: [{$ref: '#/components/parameters/MatrixId'}]
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
+  /response-matrices/{matrix_id}/items/{item_id}/versions:
+    get:
+      operationId: listResponseMatrixItemVersions
+      parameters: [{$ref: '#/components/parameters/MatrixId'}, {$ref: '#/components/parameters/ItemId'}]
+      responses: {'200': {$ref: '#/components/responses/ListResponse'}}
   /response-matrices/{matrix_id}/items/{item_id}:
     patch:
       operationId: updateResponseMatrixItem
@@ -286,6 +390,7 @@ components:
     RunId: {name: run_id, in: path, required: true, schema: {type: string, format: uuid}}
     ItemId: {name: item_id, in: path, required: true, schema: {type: string, format: uuid}}
     SnapshotId: {name: snapshot_id, in: path, required: true, schema: {type: string, format: uuid}}
+    TemplateId: {name: template_id, in: path, required: true, schema: {type: string, format: uuid}}
     ProfileId: {name: profile_id, in: path, required: true, schema: {type: string, format: uuid}}
     ProposalId: {name: proposal_id, in: path, required: true, schema: {type: string, format: uuid}}
     TenderId: {name: tender_id, in: path, required: true, schema: {type: string, format: uuid}}
@@ -470,6 +575,18 @@ components:
         change_type: {enum: [created, migrated, edited, merged, split, confirmed, rejected, superseded]}
         requirement_snapshot: {type: object, additionalProperties: true}
         source_location: {$ref: '#/components/schemas/DocumentLocation'}
+    ResponseMatrixItemVersion:
+      type: object
+      additionalProperties: false
+      required: [id, response_item_id, version, change_type, item_snapshot, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        response_item_id: {type: string, format: uuid}
+        version: {type: integer, minimum: 1}
+        changed_by_id: {type: [string, 'null'], format: uuid}
+        change_type: {enum: [edited, approve, edit_and_approve, reject, needs_evidence]}
+        item_snapshot: {type: object, additionalProperties: true}
+        created_at: {type: string, format: date-time}
     ManualIntelligenceSource:
       type: object
       required: [title, source_url, content]
@@ -486,18 +603,49 @@ components:
         purpose: {enum: [customer_profile, solution, tender]}
         provider: {const: manual, default: manual}
         sources: {type: array, minItems: 1, maxItems: 20, items: {$ref: '#/components/schemas/ManualIntelligenceSource'}}
+    CreateIntelligenceSearchTemplateRequest:
+      type: object
+      required: [name, purpose, query_template]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 200}
+        purpose: {enum: [customer_profile, solution, tender]}
+        query_template: {type: string, minLength: 1, maxLength: 2000}
+        keywords: {type: array, maxItems: 20, items: {type: string}}
+        allowed_fields: {type: array, maxItems: 20, items: {type: string}}
+    UpdateIntelligenceSearchTemplateRequest:
+      type: object
+      minProperties: 1
+      properties:
+        name: {type: string, minLength: 1, maxLength: 200}
+        query_template: {type: string, minLength: 1, maxLength: 2000}
+        keywords: {type: array, maxItems: 20, items: {type: string}}
+        allowed_fields: {type: array, maxItems: 20, items: {type: string}}
     CreateIntelligenceSnapshotRequest:
       type: object
       required: [purpose, item_ids]
       properties:
         purpose: {enum: [customer_profile, solution, tender]}
         item_ids: {type: array, minItems: 1, maxItems: 100, items: {type: string, format: uuid}}
+    ReassessIntelligenceFreshnessRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        stale_after_days: {type: integer, minimum: 1, maximum: 365, default: 90}
     CreateProfileProposalRequest:
       type: object
       required: [snapshot_id, proposed_patch]
       properties:
         snapshot_id: {type: string, format: uuid}
         proposed_patch: {type: object, minProperties: 1}
+    DecideProposalRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        note: {type: [string, 'null'], maxLength: 1000}
+        selected_candidates:
+          type: object
+          maxProperties: 50
+          additionalProperties: {type: string, format: uuid}
     CreateTenderRequest:
       type: object
       required: [title]
@@ -607,6 +755,14 @@ components:
         focus_areas: {type: array, maxItems: 8, items: {type: string}}
         max_turns: {type: integer, minimum: 3, maximum: 10, default: 5}
       anyOf: [{required: [solution_run_id]}, {required: [research_task_id]}]
+    CreateQuickSolutionTurnRequest:
+      type: object
+      required: [content, mode]
+      properties:
+        content: {type: string, minLength: 1, maxLength: 10000}
+        mode: {const: quick}
+        intelligence_snapshot_id: {type: [string, 'null'], format: uuid}
+        response_matrix_id: {type: [string, 'null'], format: uuid}
     SuccessEnvelope:
       type: object
       required: [request_id, data]

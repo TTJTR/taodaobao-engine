@@ -63,6 +63,9 @@ async def run_solution_pipeline(
                 raise RuntimeError("request message is missing")
 
             solution_context = build_solution_context(request_message.content, run.profile_snapshot)
+            external_context = (run.retrieval_snapshot or {}).get("external_context")
+            if external_context:
+                solution_context["external_context"] = external_context
             solution_context.update(
                 {
                     "schema_version": "solution-v2",
@@ -93,6 +96,8 @@ async def run_solution_pipeline(
                 trace_id=run.trace_id,
             )
             ai_snapshot = normalize_retrieval_snapshot(raw_snapshot)
+            if external_context:
+                ai_snapshot["external_context"] = external_context
             run.retrieval_snapshot = ai_snapshot
             session.add(
                 RetrievalSnapshotRecord(

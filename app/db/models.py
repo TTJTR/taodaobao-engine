@@ -542,6 +542,11 @@ class SolutionRun(EntityMixin, WorkspaceMixin, Base):
     request_message_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("messages.id", ondelete="RESTRICT"), nullable=False
     )
+    intelligence_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("intelligence_snapshots.id", ondelete="RESTRICT"),
+        index=True,
+    )
     profile_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     retrieval_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
@@ -1112,6 +1117,11 @@ class ResearchTask(EntityMixin, WorkspaceMixin, Base):
     created_by_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
+    intelligence_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("intelligence_snapshots.id", ondelete="RESTRICT"),
+        index=True,
+    )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     question: Mapped[str] = mapped_column(Text, nullable=False)
     completion_conditions: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
@@ -1290,6 +1300,23 @@ class SearchRun(EntityMixin, WorkspaceMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class IntelligenceSearchTemplate(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "intelligence_search_templates"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "name", name="uq_intelligence_search_template_name"),
+        Index("ix_intelligence_search_templates_workspace_purpose", "workspace_id", "purpose"),
+    )
+
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False)
+    query_template: Mapped[str] = mapped_column(Text, nullable=False)
+    keywords: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    allowed_fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+
 class RawArtifact(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "raw_artifacts"
     __table_args__ = (
@@ -1331,6 +1358,7 @@ class IntelligenceItem(EntityMixin, WorkspaceMixin, Base):
     __table_args__ = (
         UniqueConstraint("workspace_id", "fingerprint", name="uq_intelligence_item_fingerprint"),
         Index("ix_intelligence_items_run_created", "search_run_id", "created_at"),
+        Index("ix_intelligence_items_conflict_group", "conflict_group_id"),
     )
 
     search_run_id: Mapped[uuid.UUID] = mapped_column(
@@ -1345,6 +1373,7 @@ class IntelligenceItem(EntityMixin, WorkspaceMixin, Base):
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     facts: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    conflict_group_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     freshness: Mapped[IntelligenceFreshness] = mapped_column(
         enum_column(IntelligenceFreshness, "intelligence_freshness"), nullable=False
     )
@@ -1488,7 +1517,11 @@ class TenderRequirement(EntityMixin, WorkspaceMixin, Base):
     mandatory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     acceptance_condition: Mapped[str | None] = mapped_column(Text)
     constraints: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    metrics: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     ambiguities: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    recommended_action: Mapped[str | None] = mapped_column(Text)
     source_location: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     status: Mapped[TenderRequirementStatus] = mapped_column(
         enum_column(TenderRequirementStatus, "tender_requirement_status"), nullable=False
@@ -1571,6 +1604,26 @@ class ResponseMatrixItem(EntityMixin, WorkspaceMixin, Base):
     review_note: Mapped[str | None] = mapped_column(String(1000))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
+
+class ResponseMatrixItemVersion(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "response_matrix_item_versions"
+    __table_args__ = (
+        UniqueConstraint("response_item_id", "version", name="uq_response_matrix_item_version"),
+        Index("ix_response_matrix_item_versions_item", "response_item_id", "version"),
+    )
+
+    response_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("response_matrix_items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    changed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    change_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    item_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
 
 class RehearsalSession(EntityMixin, WorkspaceMixin, Base):

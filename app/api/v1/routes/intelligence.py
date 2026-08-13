@@ -6,14 +6,18 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from app.api.deps import AIEngineDependency, CurrentUser, DatabaseSession, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
+from app.db.models import IntelligenceFreshness, ProposalStatus
 from app.schemas.intelligence_provider import EnrichmentJobRequest
 from app.schemas.v2 import (
+    CreateIntelligenceSearchTemplateRequest,
     CreateIntelligenceSnapshotRequest,
     CreateProfileProposalRequest,
     CreateSearchRunRequest,
     DecideProposalRequest,
     EnrichRawArtifactRequest,
     QueueProviderEnrichmentRequest,
+    ReassessIntelligenceFreshnessRequest,
+    UpdateIntelligenceSearchTemplateRequest,
 )
 from app.services.intelligence_service import IntelligenceService
 
@@ -63,6 +67,56 @@ def _proposal(row) -> dict:
         "decision_note": row.decision_note,
         "created_at": row.created_at.isoformat(),
     }
+
+
+def _search_template(row) -> dict:
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "purpose": row.purpose,
+        "query_template": row.query_template,
+        "keywords": row.keywords,
+        "allowed_fields": row.allowed_fields,
+        "created_at": row.created_at.isoformat(),
+        "updated_at": row.updated_at.isoformat(),
+    }
+
+
+@router.get("/raw-artifacts")
+async def list_raw_artifacts(
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    run_id: uuid.UUID | None = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> dict:
+    service = IntelligenceService(session, workspace_id, current_user.id)
+    rows, total = await service.list_artifacts(page, page_size, run_id)
+    return success_response(
+        request,
+        {
+            "items": [service.serialize_artifact(row) for row in rows],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_more": page * page_size < total,
+        },
+    )
+
+
+@router.get("/raw-artifacts/{artifact_id}")
+async def get_raw_artifact(
+    artifact_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+) -> dict:
+    service = IntelligenceService(session, workspace_id, current_user.id)
+    artifact = await service.get_artifact(artifact_id)
+    return success_response(request, service.serialize_artifact(artifact, include_text=True))
 
 
 @router.post("/raw-artifacts/{artifact_id}/enrich", status_code=status.HTTP_201_CREATED)
@@ -146,6 +200,75 @@ async def get_search_run(
     return success_response(request, _run(row))
 
 
+@router.post("/search-templates", status_code=status.HTTP_201_CREATED)
+async def create_search_template(
+    payload: CreateIntelligenceSearchTemplateRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    row = await IntelligenceService(session, workspace_id, current_user.id).create_search_template(
+        **payload.model_dump()
+    )
+    return success_response(request, _search_template(row))
+
+
+@router.get("/search-templates")
+async def list_search_templates(
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    purpose: str | None = None,
+) -> dict:
+    service = IntelligenceService(session, workspace_id, current_user.id)
+    rows, total = await service.list_search_templates(page, page_size, purpose)
+    return success_response(
+        request,
+        {
+            "items": [_search_template(row) for row in rows],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_more": page * page_size < total,
+        },
+    )
+
+
+@router.patch("/search-templates/{template_id}")
+async def update_search_template(
+    template_id: uuid.UUID,
+    payload: UpdateIntelligenceSearchTemplateRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    row = await IntelligenceService(session, workspace_id, current_user.id).update_search_template(
+        template_id, **payload.model_dump(exclude_unset=True)
+    )
+    return success_response(request, _search_template(row))
+
+
+@router.delete("/search-templates/{template_id}")
+async def delete_search_template(
+    template_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    service = IntelligenceService(session, workspace_id, current_user.id)
+    await service.delete_search_template(template_id)
+    return success_response(request, {"deleted": True, "id": str(template_id)})
+
+
 @router.post("/search-runs/{run_id}/enrichment-jobs", status_code=status.HTTP_202_ACCEPTED)
 async def queue_provider_enrichment(
     run_id: uuid.UUID,
@@ -188,11 +311,19 @@ async def list_intelligence_items(
     current_user: CurrentUser,
     workspace_id: WorkspaceId,
     run_id: uuid.UUID | None = None,
+    freshness: IntelligenceFreshness | None = None,
+    conflict_group_id: uuid.UUID | None = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> dict:
     service = IntelligenceService(session, workspace_id, current_user.id)
-    rows, total = await service.list_items(page, page_size, run_id)
+    rows, total = await service.list_items(
+        page,
+        page_size,
+        run_id,
+        freshness=freshness,
+        conflict_group_id=conflict_group_id,
+    )
     return success_response(
         request,
         {
@@ -216,6 +347,42 @@ async def get_intelligence_item(
     service = IntelligenceService(session, workspace_id, current_user.id)
     row = await service.get_item(item_id)
     return success_response(request, service.serialize_item(row, include_content=True))
+
+
+@router.get("/items/{item_id}/raw-artifacts")
+async def list_intelligence_item_artifacts(
+    item_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+) -> dict:
+    service = IntelligenceService(session, workspace_id, current_user.id)
+    rows = await service.list_item_artifacts(item_id)
+    return success_response(
+        request,
+        {
+            "items": [
+                service.serialize_item_artifact_link(link, artifact) for link, artifact in rows
+            ],
+            "total": len(rows),
+        },
+    )
+
+
+@router.post("/items/reassess-freshness")
+async def reassess_intelligence_freshness(
+    payload: ReassessIntelligenceFreshnessRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    result = await IntelligenceService(session, workspace_id, current_user.id).reassess_freshness(
+        stale_after_days=payload.stale_after_days
+    )
+    return success_response(request, result)
 
 
 @router.post("/snapshots", status_code=status.HTTP_201_CREATED)
@@ -263,6 +430,32 @@ async def create_profile_proposal(
     return success_response(request, _proposal(row))
 
 
+@profile_router.get("/{profile_id}/intelligence-proposals")
+async def list_profile_proposals(
+    profile_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    proposal_status: Annotated[ProposalStatus | None, Query(alias="status")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> dict:
+    rows, total = await IntelligenceService(
+        session, workspace_id, current_user.id
+    ).list_profile_proposals(profile_id, page, page_size, proposal_status)
+    return success_response(
+        request,
+        {
+            "items": [_proposal(row) for row in rows],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_more": page * page_size < total,
+        },
+    )
+
+
 @profile_router.post("/{profile_id}/intelligence-proposals/{proposal_id}/confirm")
 async def confirm_profile_proposal(
     profile_id: uuid.UUID,
@@ -275,7 +468,11 @@ async def confirm_profile_proposal(
     _: str = Depends(require_idempotency_key),
 ) -> dict:
     row = await IntelligenceService(session, workspace_id, current_user.id).decide_proposal(
-        profile_id, proposal_id, accept=True, note=payload.note
+        profile_id,
+        proposal_id,
+        accept=True,
+        note=payload.note,
+        selected_candidates=payload.selected_candidates,
     )
     return success_response(request, _proposal(row))
 

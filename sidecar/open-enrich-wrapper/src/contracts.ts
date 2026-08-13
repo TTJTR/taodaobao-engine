@@ -59,6 +59,9 @@ export interface JobRecord {
   toolCallsUsed: number;
   costUsd: number;
   result?: JobResult;
-  controller: AbortController;
   createdAt: string;
+}
+
+export interface RuntimeJob extends JobRecord {
+  controller: AbortController;
 }

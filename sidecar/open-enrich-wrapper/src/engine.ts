@@ -1,4 +1,4 @@
-import type { EnrichmentRequest, Fact, FactCategory, JobRecord } from "./contracts.js";
+import type { EnrichmentRequest, Fact, FactCategory, RuntimeJob } from "./contracts.js";
 
 interface Source { url: string; snippet: string; confidence: number }
 interface Enrichment {
@@ -10,7 +10,7 @@ interface Enrichment {
 }
 interface RowResult { status: string; error?: string; enrichments: Record<string, Enrichment> }
 interface Cost { totalCost: number; toolCalls: number }
-type EngineEvent =
+export type EngineEvent =
   | { type: "session"; sessionId: string }
   | { type: "pending"; rowIndex: number; totalRows: number }
   | { type: "processing"; rowIndex: number; totalRows: number }
@@ -20,15 +20,20 @@ type EngineEvent =
   | { type: "error"; error: string }
   | { type: "complete"; successCount: number; totalRows: number };
 type RunEnrichment = (options: Record<string, unknown>) => AsyncIterable<EngineEvent>;
+export interface ExecuteJobOptions {
+  runEnrichment?: RunEnrichment;
+  credentials?: Record<string, string>;
+  onUpdate?: (job: RuntimeJob) => Promise<void>;
+}
 
-export async function executeJob(job: JobRecord): Promise<void> {
-  const credentials = credentialsFromEnvironment();
-  const moduleName = process.env.OPEN_ENRICH_CORE_MODULE ?? "@brightdata/enrich-core";
-  const core = await import(moduleName) as { runEnrichment?: RunEnrichment };
-  if (!core.runEnrichment) throw providerError("ENGINE_UNAVAILABLE", "runEnrichment is unavailable");
+export async function executeJob(job: RuntimeJob, options: ExecuteJobOptions = {}): Promise<void> {
+  const credentials = options.credentials ?? credentialsFromEnvironment();
+  const runEnrichment = options.runEnrichment ?? await loadRunEnrichment();
 
+  if (isTerminal(job.status)) return;
   job.status = "processing";
   job.stage = "discovery";
+  await options.onUpdate?.(job);
   let rowResult: RowResult | undefined;
   const fields = job.request.allowed_fields.map((field) => ({
     name: field,
@@ -43,7 +48,7 @@ export async function executeJob(job: JobRecord): Promise<void> {
     companywebsite: job.request.website_url ?? "",
   }];
 
-  for await (const event of core.runEnrichment({
+  for await (const event of runEnrichment({
     rows,
     fields,
     identifierColumn: job.request.website_url ? "companywebsite" : "companyname",
@@ -53,12 +58,29 @@ export async function executeJob(job: JobRecord): Promise<void> {
     maxFields: job.request.allowed_fields.length,
     signal: job.controller.signal,
   })) {
-    if (job.controller.signal.aborted) throw providerError("CANCELLED", "Job was cancelled");
-    if (event.type === "agent_progress") job.stage = event.step;
-    if (event.type === "cost_update") updateCost(job, event.cost);
+    if (isTerminal(job.status) || job.controller.signal.aborted) return;
+    if (event.type === "agent_progress") {
+      job.stage = event.step;
+      await options.onUpdate?.(job);
+    }
+    if (event.type === "cost_update") {
+      updateCost(job, event.cost);
+      if (enforceLimits(job)) {
+        await options.onUpdate?.(job);
+        return;
+      }
+      await options.onUpdate?.(job);
+    }
     if (event.type === "result") {
       rowResult = event.result;
-      if (event.cost) updateCost(job, event.cost);
+      if (event.cost) {
+        updateCost(job, event.cost);
+        if (enforceLimits(job)) {
+          await options.onUpdate?.(job);
+          return;
+        }
+        await options.onUpdate?.(job);
+      }
     }
     if (event.type === "error") throw providerError(classifyError(event.error), safeSummary(event.error));
   }
@@ -77,8 +99,15 @@ export async function executeJob(job: JobRecord): Promise<void> {
     cost_usd: job.costUsd,
     provider_metadata: { engine: "open-enrich", language: job.request.language },
   };
-  job.status = "completed";
-  job.stage = "completed";
+  transitionTerminal(job, "completed", "completed");
+  await options.onUpdate?.(job);
+}
+
+async function loadRunEnrichment(): Promise<RunEnrichment> {
+  const moduleName = process.env.OPEN_ENRICH_CORE_MODULE ?? "@brightdata/enrich-core";
+  const core = await import(moduleName) as { runEnrichment?: RunEnrichment };
+  if (!core.runEnrichment) throw providerError("ENGINE_UNAVAILABLE", "runEnrichment is unavailable");
+  return core.runEnrichment;
 }
 
 function toFact(item: Enrichment): Fact[] {
@@ -113,9 +142,40 @@ function credentialsFromEnvironment() {
   return credentials as Record<string, string>;
 }
 
-function updateCost(job: JobRecord, cost: Cost): void {
+function updateCost(job: RuntimeJob, cost: Cost): void {
   job.costUsd = Math.max(job.costUsd, cost.totalCost);
   job.toolCallsUsed = Math.max(job.toolCallsUsed, cost.toolCalls);
+}
+
+function enforceLimits(job: RuntimeJob): boolean {
+  let errorCode: string | undefined;
+  if (job.toolCallsUsed >= job.request.max_tool_calls) errorCode = "TOOL_CALL_LIMIT_EXCEEDED";
+  else if (job.costUsd >= job.request.max_cost_usd) errorCode = "QUOTA_EXCEEDED";
+  if (!errorCode) return false;
+
+  if (transitionTerminal(job, "failed", "failed", errorCode, "Provider execution limit reached")) {
+    job.controller.abort();
+  }
+  return true;
+}
+
+export function isTerminal(status: RuntimeJob["status"]): boolean {
+  return status === "completed" || status === "partial" || status === "failed";
+}
+
+export function transitionTerminal(
+  job: RuntimeJob,
+  status: "completed" | "partial" | "failed",
+  stage: string,
+  errorCode?: string,
+  errorSummary?: string,
+): boolean {
+  if (isTerminal(job.status)) return false;
+  job.status = status;
+  job.stage = stage;
+  job.errorCode = errorCode;
+  job.errorSummary = errorSummary;
+  return true;
 }
 
 function categoryFor(field: string): FactCategory {
@@ -136,7 +196,13 @@ function classifyError(message: string): string {
 }
 
 export function safeSummary(message: string): string {
-  return message.replace(/(?:sk-|brd_)[A-Za-z0-9_-]{8,}/g, "[REDACTED]").slice(0, 1000);
+  let sanitized = message
+    .replace(/(?:authorization\s*[:=]\s*)?bearer\s+[^\s,;]+/gi, "Authorization: [REDACTED]")
+    .replace(/(?:sk-|brd_)[A-Za-z0-9_-]{8,}/g, "[REDACTED]");
+  for (const secret of [process.env.BRIGHT_DATA_API_KEY, process.env.OPENROUTER_API_KEY]) {
+    if (secret) sanitized = sanitized.replaceAll(secret, "[REDACTED]");
+  }
+  return sanitized.slice(0, 1000);
 }
 
 function clamp(value: number): number { return Math.max(0, Math.min(1, value)); }

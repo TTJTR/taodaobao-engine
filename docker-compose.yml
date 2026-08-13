@@ -17,6 +17,19 @@ services:
       retries: 12
       start_period: 10s
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
   app:
     build:
       context: .
@@ -34,8 +47,12 @@ services:
       APP_FRONTEND_REDIRECT_URL: https://${DOMAIN:-localhost}/
       APP_COOKIE_SECURE: "true"
       APP_SESSION_SECRET: ${APP_SESSION_SECRET:?APP_SESSION_SECRET is required}
+      APP_OPEN_ENRICH_SVC_URL: http://open-enrich-sidecar:8090
+      APP_OPEN_ENRICH_SVC_TOKEN: ${APP_OPEN_ENRICH_SVC_TOKEN:?APP_OPEN_ENRICH_SVC_TOKEN is required}
     depends_on:
       db:
+        condition: service_healthy
+      open-enrich-sidecar:
         condition: service_healthy
     expose:
       - "8000"
@@ -70,11 +87,48 @@ services:
       APP_FRONTEND_REDIRECT_URL: https://${DOMAIN:-localhost}/
       APP_COOKIE_SECURE: "true"
       APP_SESSION_SECRET: ${APP_SESSION_SECRET:?APP_SESSION_SECRET is required}
+      APP_OPEN_ENRICH_SVC_URL: http://open-enrich-sidecar:8090
+      APP_OPEN_ENRICH_SVC_TOKEN: ${APP_OPEN_ENRICH_SVC_TOKEN:?APP_OPEN_ENRICH_SVC_TOKEN is required}
     depends_on:
       db:
         condition: service_healthy
       app:
         condition: service_healthy
+      open-enrich-sidecar:
+        condition: service_healthy
+
+  open-enrich-sidecar:
+    build:
+      context: ./sidecar/open-enrich-wrapper
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      BRIGHT_DATA_API_KEY: ${BRIGHT_DATA_API_KEY:?BRIGHT_DATA_API_KEY is required}
+      BRIGHT_DATA_SERP_ZONE: ${BRIGHT_DATA_SERP_ZONE:?BRIGHT_DATA_SERP_ZONE is required}
+      BRIGHT_DATA_UNLOCKER_ZONE: ${BRIGHT_DATA_UNLOCKER_ZONE:?BRIGHT_DATA_UNLOCKER_ZONE is required}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY is required}
+      OPEN_ENRICH_MODEL: ${OPEN_ENRICH_MODEL:-qwen/qwen-plus}
+      APP_OPEN_ENRICH_SVC_TOKEN: ${APP_OPEN_ENRICH_SVC_TOKEN:?APP_OPEN_ENRICH_SVC_TOKEN is required}
+      REDIS_URL: redis://redis:6379/0
+      JOB_TTL_SECONDS: ${OPEN_ENRICH_JOB_TTL_SECONDS:-86400}
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "8090"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:8090/healthz').then(r => {
+            if (!r.ok) process.exit(1)
+          }).catch(() => process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   caddy:
     image: caddy:2-alpine
@@ -95,5 +149,6 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
   caddy_data:
   caddy_config:

@@ -36,6 +36,7 @@ from app.db.models import (
     ReferenceDeck,
     ResearchStep,
     ResearchTask,
+    ResponseMatrixItemVersion,
     RetrievalSnapshotRecord,
     ReviewRecord,
     Session,
@@ -88,6 +89,7 @@ MODELS = [
     TenderParseVersion,
     TenderRequirement,
     TenderRequirementVersion,
+    ResponseMatrixItemVersion,
 ]
 
 
@@ -186,6 +188,7 @@ def test_metadata_contains_core_and_idempotency_tables() -> None:
         "html_artifacts",
         "export_artifacts",
         "search_runs",
+        "intelligence_search_templates",
         "raw_artifacts",
         "intelligence_items",
         "intelligence_item_artifact_links",
@@ -197,6 +200,7 @@ def test_metadata_contains_core_and_idempotency_tables() -> None:
         "tender_requirement_versions",
         "response_matrices",
         "response_matrix_items",
+        "response_matrix_item_versions",
         "rehearsal_sessions",
         "rehearsal_turns",
         "rehearsal_reports",
@@ -209,7 +213,7 @@ def test_all_tables_compile_to_postgresql_ddl() -> None:
         for table in Base.metadata.sorted_tables
     ]
 
-    assert len(statements) == 49
+    assert len(statements) == 51
     assert all("UUID" in statement for statement in statements)
 
 

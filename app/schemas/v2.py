@@ -19,9 +19,28 @@ class CreateSearchRunRequest(BaseModel):
     sources: list[ManualIntelligenceSource] = Field(min_length=1, max_length=20)
 
 
+class CreateIntelligenceSearchTemplateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    purpose: Literal["customer_profile", "solution", "tender"]
+    query_template: str = Field(min_length=1, max_length=2000)
+    keywords: list[str] = Field(default_factory=list, max_length=20)
+    allowed_fields: list[str] = Field(default_factory=list, max_length=20)
+
+
+class UpdateIntelligenceSearchTemplateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    query_template: str | None = Field(default=None, min_length=1, max_length=2000)
+    keywords: list[str] | None = Field(default=None, max_length=20)
+    allowed_fields: list[str] | None = Field(default=None, max_length=20)
+
+
 class CreateIntelligenceSnapshotRequest(BaseModel):
     purpose: Literal["customer_profile", "solution", "tender"]
     item_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+
+
+class ReassessIntelligenceFreshnessRequest(BaseModel):
+    stale_after_days: int = Field(default=90, ge=1, le=365)
 
 
 class CreateProfileProposalRequest(BaseModel):
@@ -46,6 +65,7 @@ class QueueProviderEnrichmentRequest(BaseModel):
 
 class DecideProposalRequest(BaseModel):
     note: str | None = Field(default=None, max_length=1000)
+    selected_candidates: dict[str, uuid.UUID] = Field(default_factory=dict, max_length=50)
 
 
 class CreateTenderRequest(BaseModel):
@@ -73,7 +93,9 @@ class UpdateTenderRequirementRequest(BaseModel):
     mandatory: bool | None = None
     acceptance_condition: str | None = Field(default=None, max_length=20_000)
     constraints: dict | None = None
+    metrics: list[dict] | None = Field(default=None, max_length=100)
     ambiguities: list[str] | None = Field(default=None, max_length=100)
+    recommended_action: str | None = Field(default=None, max_length=20_000)
     expected_version: int = Field(ge=1)
 
 
@@ -91,6 +113,10 @@ class SplitTenderRequirementItem(BaseModel):
     requirement_text: str = Field(min_length=1, max_length=20_000)
     category: str | None = Field(default=None, min_length=1, max_length=64)
     mandatory: bool | None = None
+    acceptance_condition: str | None = Field(default=None, max_length=20_000)
+    metrics: list[dict] | None = Field(default=None, max_length=100)
+    ambiguities: list[str] | None = Field(default=None, max_length=100)
+    recommended_action: str | None = Field(default=None, max_length=20_000)
 
 
 class SplitTenderRequirementRequest(BaseModel):
@@ -114,6 +140,13 @@ class ReviewResponseItemRequest(BaseModel):
     action: Literal["approve", "edit_and_approve", "reject", "needs_evidence"]
     expected_version: int = Field(ge=1)
     current_answer: str | None = Field(default=None, min_length=1, max_length=20_000)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class BatchReviewResponseItemsRequest(BaseModel):
+    item_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+    action: Literal["approve", "reject", "needs_evidence"]
+    expected_versions: dict[str, int] = Field(min_length=1, max_length=100)
     note: str | None = Field(default=None, max_length=1000)
 
 
