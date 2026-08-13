@@ -49,6 +49,7 @@ services:
       APP_SESSION_SECRET: ${APP_SESSION_SECRET:?APP_SESSION_SECRET is required}
       APP_OPEN_ENRICH_SVC_URL: http://open-enrich-sidecar:8090
       APP_OPEN_ENRICH_SVC_TOKEN: ${APP_OPEN_ENRICH_SVC_TOKEN:?APP_OPEN_ENRICH_SVC_TOKEN is required}
+      APP_PRESENTATION_EXPORT_DIR: /app/exports
     depends_on:
       db:
         condition: service_healthy
@@ -56,6 +57,8 @@ services:
         condition: service_healthy
     expose:
       - "8000"
+    volumes:
+      - presentation_exports:/app/exports
     healthcheck:
       test:
         - CMD
@@ -89,6 +92,7 @@ services:
       APP_SESSION_SECRET: ${APP_SESSION_SECRET:?APP_SESSION_SECRET is required}
       APP_OPEN_ENRICH_SVC_URL: http://open-enrich-sidecar:8090
       APP_OPEN_ENRICH_SVC_TOKEN: ${APP_OPEN_ENRICH_SVC_TOKEN:?APP_OPEN_ENRICH_SVC_TOKEN is required}
+      APP_PRESENTATION_EXPORT_DIR: /app/exports
     depends_on:
       db:
         condition: service_healthy
@@ -96,6 +100,8 @@ services:
         condition: service_healthy
       open-enrich-sidecar:
         condition: service_healthy
+    volumes:
+      - presentation_exports:/app/exports
 
   open-enrich-sidecar:
     build:
@@ -152,3 +158,4 @@ volumes:
   redis_data:
   caddy_data:
   caddy_config:
+  presentation_exports:

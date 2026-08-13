@@ -153,6 +153,16 @@ class StyleProfileStatus(StrEnum):
     CONFIRMED = "confirmed"
 
 
+class StyleTemplateStatus(StrEnum):
+    DRAFT = "draft"
+    PREVIEWING = "previewing"
+    NEEDS_REVIEW = "needs_review"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+    SUPERSEDED = "superseded"
+    FAILED = "failed"
+
+
 class PresentationStatus(StrEnum):
     DRAFT = "draft"
     QUEUED = "queued"
@@ -877,6 +887,60 @@ class VisualStyleProfile(EntityMixin, WorkspaceMixin, Base):
         back_populates="visual_style_profiles"
     )
     presentations: Mapped[list["Presentation"]] = relationship(back_populates="style_profile")
+    template_versions: Mapped[list["StyleTemplateVersion"]] = relationship(
+        back_populates="style_profile", cascade="all, delete-orphan"
+    )
+
+
+class StyleTemplateVersion(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "style_template_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "style_profile_id",
+            "candidate_id",
+            "version",
+            name="uq_style_template_profile_candidate_version",
+        ),
+        Index(
+            "ix_style_template_profile_version_status",
+            "style_profile_id",
+            "version",
+            "status",
+        ),
+    )
+
+    style_profile_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("style_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[StyleTemplateStatus] = mapped_column(
+        enum_column(StyleTemplateStatus, "style_template_status"), nullable=False
+    )
+    archetype_token: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_deck_hashes: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    feature_set_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    compiled_template_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    compiler_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    compiled_template_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    confidence_report: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    validation_report: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    preview_artifacts: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    confirmed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    style_profile: Mapped["VisualStyleProfile"] = relationship(
+        back_populates="template_versions"
+    )
+    confirmed_by: Mapped["User | None"] = relationship(foreign_keys=[confirmed_by_id])
 
 
 class Presentation(EntityMixin, WorkspaceMixin, Base):
@@ -918,6 +982,9 @@ class Presentation(EntityMixin, WorkspaceMixin, Base):
     html_artifacts: Mapped[list["HtmlArtifact"]] = relationship(
         back_populates="presentation", cascade="all, delete-orphan"
     )
+    render_snapshots: Mapped[list["PresentationRenderSnapshot"]] = relationship(
+        back_populates="presentation", cascade="all, delete-orphan"
+    )
 
 
 class PresentationInputSnapshot(EntityMixin, WorkspaceMixin, Base):
@@ -936,6 +1003,36 @@ class PresentationInputSnapshot(EntityMixin, WorkspaceMixin, Base):
     snapshot_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
     presentation: Mapped["Presentation"] = relationship(back_populates="input_snapshots")
+
+
+class PresentationRenderSnapshot(EntityMixin, WorkspaceMixin, Base):
+    __tablename__ = "presentation_render_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "presentation_id", "version", name="uq_presentation_render_snapshot_version"
+        ),
+        Index("ix_presentation_render_snapshot_hash", "render_ir_hash"),
+    )
+
+    presentation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("presentation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="presentation-render-snapshot-v1"
+    )
+    fact_ledger_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    positioned_spec_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    compiled_style_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    render_ir_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    fact_ledger_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    render_ir_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    renderer_versions: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False)
+    diagnostics: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    presentation: Mapped["Presentation"] = relationship(back_populates="render_snapshots")
 
 
 class HtmlArtifact(EntityMixin, WorkspaceMixin, Base):

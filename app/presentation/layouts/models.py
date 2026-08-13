@@ -4,7 +4,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.presentation import ComponentGeometry, LayoutToken
 
-ComponentType = Literal["title", "key_message", "evidence_card"]
+ComponentType = Literal[
+    "title",
+    "key_message",
+    "evidence_card",
+    "metric",
+    "comparison",
+    "timeline",
+    "process",
+    "source_list",
+]
 
 
 class LayoutModel(BaseModel):

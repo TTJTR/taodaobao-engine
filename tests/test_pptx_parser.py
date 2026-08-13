@@ -147,6 +147,20 @@ def test_sanitized_visual_extracts_patterns_without_leaking_business_data() -> N
         assert secret not in serialized
 
 
+def test_parser_builds_strongly_typed_sanitized_feature_set() -> None:
+    features = SafePPTXParser().extract_features(_pptx(), mode="sanitized_visual")
+    serialized = features.model_dump_json()
+
+    assert features.schema_version == "style-feature-set-v1"
+    assert features.canvas.aspect_ratio == pytest.approx(16 / 9)
+    assert len(features.page_samples) == 2
+    assert features.page_samples[0].column_count == 2
+    assert features.master_layouts[0].name == "Title and Content"
+    assert features.master_layouts[0].placeholders[0].role == "body"
+    for secret in ("缁濆瘑瀹㈡埛鍚嶇О", "987654321", "88888888", "OLE_SECRET"):
+        assert secret not in serialized
+
+
 def test_sanitized_visual_rejects_xml_entity_expansion() -> None:
     stream = _pptx()
     malicious = b'<!DOCTYPE x [<!ENTITY secret "LEAK">]><p:sld xmlns:p="p">&secret;</p:sld>'

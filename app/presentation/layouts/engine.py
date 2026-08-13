@@ -55,12 +55,23 @@ class LayoutEngine:
 
     @staticmethod
     def _validate_capacity(component: SemanticComponent, slot: Slot) -> None:
-        text = " ".join(
-            value
-            for field in ("text", "heading", "body")
-            if isinstance((value := getattr(component, field, None)), str)
-        )
+        text = " ".join(LayoutEngine._display_text(component.model_dump(mode="python")))
         if len(text) > slot.capacity.max_characters:
             raise ValueError(
                 f"component {component.component_id} exceeds slot {slot.name} character capacity"
             )
+
+    @staticmethod
+    def _display_text(value: object) -> list[str]:
+        fields = {"text", "heading", "body", "label", "value"}
+        if isinstance(value, dict):
+            result: list[str] = []
+            for key, item in value.items():
+                if key in fields and isinstance(item, str):
+                    result.append(item)
+                elif isinstance(item, dict | list | tuple):
+                    result.extend(LayoutEngine._display_text(item))
+            return result
+        if isinstance(value, list | tuple):
+            return [text for item in value for text in LayoutEngine._display_text(item)]
+        return []

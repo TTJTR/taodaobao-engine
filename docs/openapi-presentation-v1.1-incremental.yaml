@@ -1,0 +1,69 @@
+openapi: 3.1.0
+info:
+  title: 淘到宝引擎 V1.1 演示渲染增量契约
+  version: 1.1.0
+  description: >-
+    本文件仅描述冻结 openapi.yaml 之外的演示渲染增量能力。基础路径、鉴权、
+    Idempotency-Key、统一成功/错误信封以及既有字段语义继续引用冻结主契约。
+paths:
+  /api/v1/style-profiles/{style_profile_id}/template-candidates:
+    get:
+      summary: 查询脱敏模板候选及容量校验结果
+      parameters:
+        - $ref: '#/components/parameters/StyleProfileId'
+      responses:
+        '200':
+          description: 候选模板列表，使用统一成功信封
+  /api/v1/style-profiles/{style_profile_id}/template-candidates/regenerate-preview:
+    post:
+      summary: 重新生成脱敏候选预览
+      parameters:
+        - $ref: '#/components/parameters/StyleProfileId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_profile_version]
+              properties:
+                expected_profile_version: {type: integer, minimum: 1}
+      responses:
+        '200': {description: 新一代候选模板，使用统一成功信封}
+  /api/v1/style-profiles/{style_profile_id}/template-candidates/{candidate_id}/confirm:
+    post:
+      summary: 人工确认候选模板并冻结编译快照
+      parameters:
+        - $ref: '#/components/parameters/StyleProfileId'
+        - name: candidate_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_profile_version, expected_candidate_version]
+              properties:
+                expected_profile_version: {type: integer, minimum: 1}
+                expected_candidate_version: {type: integer, minimum: 1}
+      responses:
+        '200': {description: 已确认模板，使用统一成功信封}
+components:
+  parameters:
+    StyleProfileId:
+      name: style_profile_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 16, maxLength: 128}

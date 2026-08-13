@@ -247,7 +247,7 @@ def _remaining_seconds(deadline_at: datetime) -> float:
 
 
 def _classify_error(exc: Exception, stage: str) -> tuple[ErrorCode, bool]:
-    if isinstance(exc, (ValidationError, ValueError)):
+    if isinstance(exc, ValidationError | ValueError):
         return ErrorCode.AI_OUTPUT_INVALID, False
     if isinstance(exc, TimeoutError):
         return (

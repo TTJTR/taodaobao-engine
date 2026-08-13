@@ -18,6 +18,7 @@ from app.db.models import (
     Job,
     Message,
     PresentationInputSnapshot,
+    PresentationRenderSnapshot,
     PresentationRun,
     QualityAttemptRecord,
     RawArtifact,
@@ -30,6 +31,7 @@ from app.db.models import (
     SolutionRun,
     Source,
     StyleProfile,
+    StyleTemplateVersion,
     TenderDocument,
     TenderParseVersion,
     TenderRequirement,
@@ -447,6 +449,10 @@ class StyleProfileRepository(BaseRepository[StyleProfile]):
     model = StyleProfile
 
 
+class StyleTemplateVersionRepository(BaseRepository[StyleTemplateVersion]):
+    model = StyleTemplateVersion
+
+
 class PresentationRunRepository(BaseRepository[PresentationRun]):
     model = PresentationRun
 
@@ -459,6 +465,45 @@ class PresentationRunRepository(BaseRepository[PresentationRun]):
 
 class PresentationInputSnapshotRepository(BaseRepository[PresentationInputSnapshot]):
     model = PresentationInputSnapshot
+
+
+class PresentationRenderSnapshotRepository(BaseRepository[PresentationRenderSnapshot]):
+    model = PresentationRenderSnapshot
+
+    async def get_for_version(
+        self, presentation_id, version: int
+    ) -> PresentationRenderSnapshot | None:
+        statement = select(PresentationRenderSnapshot).where(
+            PresentationRenderSnapshot.presentation_id == presentation_id,
+            PresentationRenderSnapshot.version == version,
+            *self._active_filters(),
+        )
+        return await self.session.scalar(statement)
+
+    async def create_or_verify(self, **values) -> PresentationRenderSnapshot:
+        existing = await self.get_for_version(values["presentation_id"], values["version"])
+        if existing is None:
+            return await self.create(**values)
+        immutable_fields = (
+            "schema_version",
+            "fact_ledger_hash",
+            "positioned_spec_hash",
+            "compiled_style_hash",
+            "render_ir_hash",
+            "fact_ledger_json",
+            "render_ir_json",
+            "renderer_versions",
+            "diagnostics",
+        )
+        if any(getattr(existing, field) != values[field] for field in immutable_fields):
+            raise ValueError("render snapshot version already exists with different content")
+        return existing
+
+    async def update(self, entity, **values):
+        raise TypeError("presentation render snapshots are immutable")
+
+    async def soft_delete(self, entity) -> None:
+        raise TypeError("presentation render snapshots cannot be soft deleted")
 
 
 class HtmlArtifactRepository(BaseRepository[HtmlArtifact]):

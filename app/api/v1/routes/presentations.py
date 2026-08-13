@@ -7,14 +7,17 @@ from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.schemas.presentations import (
     ConfirmStyleProfileRequest,
+    ConfirmTemplateCandidateRequest,
     CreateReferenceDeckRequest,
     ExportPresentationRequest,
     GenerateStyleProfileRequest,
     RegeneratePresentationRequest,
+    RegenerateTemplateCandidatesRequest,
     UpdatePresentationBlockRequest,
     UpdateStyleProfileRequest,
 )
 from app.services.presentation_service import PresentationService
+from app.services.style_template_review_service import StyleTemplateReviewService
 
 references_router = APIRouter(route_class=IdempotencyRoute)
 styles_router = APIRouter(route_class=IdempotencyRoute)
@@ -107,6 +110,59 @@ async def confirm_style_profile(
         profile_id, payload.expected_version
     )
     return success_response(request, _style_data(profile))
+
+
+@styles_router.get("/{profile_id}/template-candidates")
+async def list_style_template_candidates(
+    profile_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    workspace_id: WorkspaceId,
+    current_user: CurrentUser,
+) -> dict[str, object]:
+    profile, rows = await StyleTemplateReviewService(
+        session, workspace_id, current_user.id
+    ).list_candidates(profile_id)
+    return success_response(
+        request,
+        {"items": [_candidate_data(row) for row in rows], "profile_version": profile.version},
+    )
+
+
+@styles_router.post("/{profile_id}/template-candidates/regenerate-preview")
+async def regenerate_style_template_previews(
+    profile_id: uuid.UUID,
+    payload: RegenerateTemplateCandidatesRequest,
+    request: Request,
+    session: DatabaseSession,
+    workspace_id: WorkspaceId,
+    current_user: CurrentUser,
+    _: str = Depends(require_idempotency_key),
+) -> dict[str, object]:
+    profile, rows = await StyleTemplateReviewService(
+        session, workspace_id, current_user.id
+    ).regenerate(profile_id, payload)
+    return success_response(
+        request,
+        {"items": [_candidate_data(row) for row in rows], "profile_version": profile.version},
+    )
+
+
+@styles_router.post("/{profile_id}/template-candidates/{candidate_id}/confirm")
+async def confirm_style_template_candidate(
+    profile_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    payload: ConfirmTemplateCandidateRequest,
+    request: Request,
+    session: DatabaseSession,
+    workspace_id: WorkspaceId,
+    current_user: CurrentUser,
+    _: str = Depends(require_idempotency_key),
+) -> dict[str, object]:
+    _, row = await StyleTemplateReviewService(
+        session, workspace_id, current_user.id
+    ).confirm(profile_id, candidate_id, payload)
+    return success_response(request, _candidate_data(row))
 
 
 @presentations_router.get("/{presentation_id}")
@@ -218,4 +274,22 @@ def _style_data(profile) -> dict:
         "conflict_notes": profile.conflict_notes,
         "confirmed_by_id": str(profile.confirmed_by_id) if profile.confirmed_by_id else None,
         "confirmed_at": profile.confirmed_at.isoformat() if profile.confirmed_at else None,
+    }
+
+
+def _candidate_data(row) -> dict:
+    return {
+        "id": str(row.id),
+        "candidate_id": str(row.candidate_id),
+        "style_profile_id": str(row.style_profile_id),
+        "version": row.version,
+        "status": row.status.value,
+        "archetype_token": row.archetype_token,
+        "compiled_template_hash": row.compiled_template_hash,
+        "compiler_version": row.compiler_version,
+        "confidence_report": row.confidence_report,
+        "validation_report": row.validation_report,
+        "preview_artifacts": row.preview_artifacts,
+        "confirmed_by_id": str(row.confirmed_by_id) if row.confirmed_by_id else None,
+        "confirmed_at": row.confirmed_at.isoformat() if row.confirmed_at else None,
     }

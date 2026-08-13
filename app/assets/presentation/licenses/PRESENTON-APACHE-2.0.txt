@@ -1,0 +1,8 @@
+Presenton is licensed under the Apache License, Version 2.0.
+
+Upstream: https://github.com/presenton/presenton
+Pinned revision: b940f7b4a51d473af830d96d441276af3540dae6
+Full license: https://www.apache.org/licenses/LICENSE-2.0
+
+The complete upstream license is also retained in THIRD_PARTY_NOTICES.md and in
+the pinned local review checkout used to build this catalog.

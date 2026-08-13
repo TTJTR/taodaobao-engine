@@ -30,6 +30,7 @@ from app.db.models import (
     NarrativeProfile,
     Presentation,
     PresentationInputSnapshot,
+    PresentationRenderSnapshot,
     PresentationRun,
     QualityAttemptRecord,
     RawArtifact,
@@ -43,6 +44,7 @@ from app.db.models import (
     SolutionRun,
     Source,
     StyleProfile,
+    StyleTemplateVersion,
     TenderParseVersion,
     TenderRequirement,
     TenderRequirementVersion,
@@ -80,8 +82,10 @@ MODELS = [
     ReferenceDeck,
     NarrativeProfile,
     StyleProfile,
+    StyleTemplateVersion,
     PresentationRun,
     PresentationInputSnapshot,
+    PresentationRenderSnapshot,
     HtmlArtifact,
     ExportArtifact,
     RawArtifact,
@@ -115,7 +119,10 @@ def test_dynamic_fields_use_postgresql_jsonb() -> None:
     assert isinstance(VisualStyleProfile.__table__.c.palette.type, JSONB)
     assert isinstance(VisualStyleProfile.__table__.c.typography.type, JSONB)
     assert isinstance(VisualStyleProfile.__table__.c.layout_grammar.type, JSONB)
+    assert isinstance(StyleTemplateVersion.__table__.c.compiled_template_json.type, JSONB)
     assert isinstance(Presentation.__table__.c.spec.type, JSONB)
+    assert isinstance(PresentationRenderSnapshot.__table__.c.fact_ledger_json.type, JSONB)
+    assert isinstance(PresentationRenderSnapshot.__table__.c.render_ir_json.type, JSONB)
     assert isinstance(HtmlArtifact.__table__.c.artifact_paths.type, JSONB)
 
 
@@ -138,10 +145,10 @@ def test_expected_relationships_configure_without_ambiguity() -> None:
     assert {"request_message", "response_messages"}.issubset(
         inspect(SolutionRun).relationships.keys()
     )
-    assert {"narrative_profile", "presentations"}.issubset(
+    assert {"narrative_profile", "presentations", "template_versions"}.issubset(
         inspect(VisualStyleProfile).relationships.keys()
     )
-    assert {"solution_run", "style_profile", "html_artifacts"}.issubset(
+    assert {"solution_run", "style_profile", "html_artifacts", "render_snapshots"}.issubset(
         inspect(Presentation).relationships.keys()
     )
 
@@ -183,8 +190,10 @@ def test_metadata_contains_core_and_idempotency_tables() -> None:
         "reference_decks",
         "narrative_profiles",
         "style_profiles",
+        "style_template_versions",
         "presentation_runs",
         "presentation_input_snapshots",
+        "presentation_render_snapshots",
         "html_artifacts",
         "export_artifacts",
         "search_runs",
@@ -213,7 +222,7 @@ def test_all_tables_compile_to_postgresql_ddl() -> None:
         for table in Base.metadata.sorted_tables
     ]
 
-    assert len(statements) == 51
+    assert len(statements) == len(Base.metadata.tables)
     assert all("UUID" in statement for statement in statements)
 
 

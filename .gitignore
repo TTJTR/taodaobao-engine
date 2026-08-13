@@ -21,6 +21,7 @@ Thumbs.db
 # Build and runtime artifacts
 dist/
 build/
+node_modules/
 *.log
 examples/**/result.json
 evals/latest_report.json

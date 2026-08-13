@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'self'">
+  <title>企业方案演示稿</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; overflow-x: hidden; background: #151719; }
+    html { scroll-snap-type: y mandatory; }
+    .presentation { margin: 0; }
+    .slide-frame { width: 100vw; height: 100vh; height: 100dvh; overflow: hidden;
+      scroll-snap-align: start; display: grid; place-items: center; }
+    .slide { display: block; width: min(100vw, calc(100dvh * 16 / 9));
+      height: min(100dvh, calc(100vw * 9 / 16)); overflow: hidden;
+      box-shadow: 0 18px 60px rgba(0, 0, 0, .32); }
+    @media (max-height: 700px) { .slide { box-shadow: 0 8px 28px rgba(0, 0, 0, .28); } }
+    @media (max-height: 600px) { .slide { box-shadow: none; } }
+    @media (max-height: 500px) { .slide-frame { background: #111; } }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  </style>
+</head>
+<body>
+  <main class="presentation" data-presentation-id="{{ render_ir.presentation_id }}"
+        data-render-ir-version="{{ render_ir.schema_version }}">
+    {% for slide in render_ir.slides %}
+      {% set slide_index = loop.index %}
+      {% include "slide.svg.html" %}
+    {% endfor %}
+  </main>
+</body>
+</html>

@@ -109,7 +109,7 @@ def _items(document: Any) -> Iterable[Any]:
         return
     for name in ("body", "texts", "tables", "items"):
         value = _value(document, name)
-        if isinstance(value, Iterable) and not isinstance(value, (str, bytes, dict)):
+        if isinstance(value, Iterable) and not isinstance(value, str | bytes | dict):
             yield from value
 
 
@@ -195,7 +195,7 @@ def _bounding_box(value: Any) -> list[float] | None:
         _value(value, "b", _value(value, "y1")),
     ]
     if any(coordinate is None for coordinate in coordinates):
-        if isinstance(value, (list, tuple)) and len(value) == 4:
+        if isinstance(value, list | tuple) and len(value) == 4:
             coordinates = list(value)
         else:
             return None
@@ -210,7 +210,7 @@ def _value(value: Any, name: str, default: Any = None) -> Any:
 
 
 def _first(value: Any) -> Any:
-    if isinstance(value, (list, tuple)) and value:
+    if isinstance(value, list | tuple) and value:
         return value[0]
     return value
 

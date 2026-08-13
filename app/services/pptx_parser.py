@@ -10,6 +10,17 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Literal
 from xml.etree import ElementTree
 
+from app.presentation.style.features import (
+    CanvasFeature,
+    ColorSample,
+    FontSample,
+    MasterLayoutFeature,
+    MasterPlaceholder,
+    NormalizedGeometry,
+    PageSample,
+    ShapeSample,
+    StyleFeatureSet,
+)
 from app.schemas.presentation import (
     Palette,
     SpacingGrid,
@@ -553,6 +564,116 @@ def _presentation_size(archive: zipfile.ZipFile, max_part_bytes: int) -> tuple[f
     return (width or 12_192_000, height or 6_858_000)
 
 
+def _normalized_geometry(
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    canvas_width: float,
+    canvas_height: float,
+) -> NormalizedGeometry | None:
+    if width <= 0 or height <= 0 or canvas_width <= 0 or canvas_height <= 0:
+        return None
+    left = max(0, min(10_000, round(x / canvas_width * 10_000)))
+    top = max(0, min(10_000, round(y / canvas_height * 10_000)))
+    right = max(left + 1, min(10_000, round((x + width) / canvas_width * 10_000)))
+    bottom = max(top + 1, min(10_000, round((y + height) / canvas_height * 10_000)))
+    if right > 10_000 or bottom > 10_000:
+        return None
+    return NormalizedGeometry(x=left, y=top, width=right - left, height=bottom - top)
+
+
+def _font_role(size_pt: float) -> str:
+    if size_pt >= 36:
+        return "display"
+    if size_pt >= 28:
+        return "title"
+    if size_pt >= 22:
+        return "subtitle"
+    if size_pt >= 16:
+        return "body"
+    if size_pt >= 12:
+        return "evidence"
+    return "footnote"
+
+
+def _page_sample(
+    page_index: int,
+    slide: SanitizedSlide,
+    canvas_width: float,
+    canvas_height: float,
+) -> PageSample:
+    boxes = tuple(
+        geometry
+        for shape in slide.shapes
+        if (
+            geometry := _normalized_geometry(
+                shape.x,
+                shape.y,
+                shape.width,
+                shape.height,
+                canvas_width,
+                canvas_height,
+            )
+        )
+    )
+    content = [box for box in boxes if box.y >= 1_500 and box.width >= 1_200]
+    centers = sorted(box.x + box.width / 2 for box in content)
+    column_count = (
+        2
+        if any(b - a >= 2_000 for a, b in zip(centers, centers[1:], strict=False))
+        else 1
+    )
+    card_candidates = [
+        box for box in content if 1_200 <= box.width <= 4_000 and 800 <= box.height <= 5_000
+    ]
+    occupied = sum(box.width * box.height for box in boxes)
+    return PageSample(
+        page_index=page_index,
+        boxes=boxes,
+        title_band=any(box.y <= 1_500 and box.height <= 2_500 for box in boxes),
+        column_count=column_count,
+        card_grid=len(card_candidates) >= 3,
+        image_region=any(
+            shape.kind == "pic"
+            and shape.width * shape.height >= canvas_width * canvas_height * 0.25
+            for shape in slide.shapes
+        ),
+        density=min(1, round(occupied / (canvas_width * canvas_height), 4)),
+    )
+
+
+def _master_layout_features(
+    layout_xml: tuple[bytes, ...], canvas_width: float, canvas_height: float
+) -> tuple[MasterLayoutFeature, ...]:
+    layouts = []
+    for index, content in enumerate(layout_xml, start=1):
+        root = _parse_xml(content)
+        common_slide = _find_child(root, "cSld")
+        shape_tree = _find_child(common_slide, "spTree")
+        placeholders = []
+        if shape_tree is not None:
+            for shape in shape_tree.iter():
+                role = _placeholder_type(shape)
+                if role is None:
+                    continue
+                geometry = _shape_xfrm(shape)
+                normalized = (
+                    _normalized_geometry(*geometry, canvas_width, canvas_height)
+                    if geometry
+                    else None
+                )
+                placeholders.append(MasterPlaceholder(role=role, geometry=normalized))
+        layouts.append(
+            MasterLayoutFeature(
+                name=(common_slide.get("name") if common_slide is not None else None)
+                or f"layout-{index}",
+                placeholders=tuple(placeholders),
+            )
+        )
+    return tuple(layouts)
+
+
 class SafePPTXParser:
     """Extract style metadata without opening ordinary slide XML parts."""
 
@@ -570,6 +691,156 @@ class SafePPTXParser:
         self.max_uncompressed_bytes = max_uncompressed_bytes
         self.max_compression_ratio = max_compression_ratio
         self.max_visual_slides = max_visual_slides
+
+    def extract_features(
+        self,
+        source: str | Path | BinaryIO,
+        *,
+        mode: Literal["theme_only", "sanitized_visual"] = "sanitized_visual",
+    ) -> StyleFeatureSet:
+        """Return sanitized, strongly typed observations for the v2 style compiler."""
+        legacy = self.parse(source, mode=mode)
+        try:
+            with zipfile.ZipFile(source) as archive:
+                _validate_archive(
+                    archive,
+                    max_entries=self.max_entries,
+                    max_uncompressed_bytes=self.max_uncompressed_bytes,
+                    max_compression_ratio=self.max_compression_ratio,
+                )
+                resolved = resolve_theme_xml(archive, self.max_part_bytes)
+                canvas_width, canvas_height = _presentation_size(archive, self.max_part_bytes)
+                color_map = parse_clr_map(resolved.slide_master_xml)
+                theme = parse_theme_palette(resolved.theme_xml)
+                scheme_colors = _scheme_colors(theme.palette, color_map)
+                visual_parts = (
+                    sorted(
+                        (
+                            info.filename
+                            for info in archive.infolist()
+                            if SLIDE_PART_PATTERN.fullmatch(info.filename)
+                        ),
+                        key=lambda name: int(re.search(r"\d+", name).group()),
+                    )[: self.max_visual_slides]
+                    if mode == "sanitized_visual"
+                    else []
+                )
+                slides = [
+                    parse_sanitized_slide(
+                        _read_part(archive, part_name, self.max_part_bytes), scheme_colors
+                    )
+                    for part_name in visual_parts
+                ]
+        except SanitizedVisualParseError as exc:
+            raise PPTXParseError("PPTX slide failed sanitized visual parsing") from exc
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise PPTXParseError("File is not a readable PPTX archive") from exc
+
+        page_count = max(1, len(slides))
+        color_counts: Counter[tuple[str, str]] = Counter()
+        color_pages: dict[tuple[str, str], set[int]] = {}
+        for index, slide in enumerate(slides, start=1):
+            for shape in slide.shapes:
+                for role, values in (
+                    ("fill", shape.fill_colors),
+                    ("text", shape.text_colors),
+                    ("line", shape.line_colors),
+                ):
+                    for color in values:
+                        key = (color.upper(), role)
+                        color_counts[key] += 1
+                        color_pages.setdefault(key, set()).add(index)
+        for role, color in (
+            ("theme", legacy.palette.primary),
+            ("theme", legacy.palette.secondary),
+            ("theme", legacy.palette.accent),
+            ("background", legacy.palette.background),
+            ("text", legacy.palette.foreground),
+        ):
+            color_counts[(color.upper(), role)] += 1
+            color_pages.setdefault((color.upper(), role), set()).add(0)
+
+        font_counts: Counter[tuple[str, float, str]] = Counter()
+        heading_key = (
+            legacy.typography.heading_font,
+            legacy.typography.base_size_px * 0.75,
+            "title",
+        )
+        body_key = (
+            legacy.typography.body_font,
+            legacy.typography.base_size_px * 0.75,
+            "body",
+        )
+        font_counts[heading_key] += 1
+        font_counts[body_key] += 1
+        for slide in slides:
+            for shape in slide.shapes:
+                for size in shape.font_sizes_pt:
+                    font_counts[(legacy.typography.body_font, size, _font_role(size))] += 1
+
+        shape_samples = []
+        for slide in slides:
+            for shape in slide.shapes:
+                geometry = _normalized_geometry(
+                    shape.x,
+                    shape.y,
+                    shape.width,
+                    shape.height,
+                    canvas_width,
+                    canvas_height,
+                )
+                if geometry is None:
+                    continue
+                shape_samples.append(
+                    ShapeSample(
+                        kind=shape.kind,
+                        geometry=geometry,
+                        fill=next(iter(shape.fill_colors), None),
+                        line=next(iter(shape.line_colors), None),
+                        line_width_emu=round(shape.line_widths[0])
+                        if shape.line_widths
+                        else None,
+                    )
+                )
+
+        return StyleFeatureSet(
+            canvas=CanvasFeature(
+                width_emu=round(canvas_width),
+                height_emu=round(canvas_height),
+                aspect_ratio=round(canvas_width / canvas_height, 6),
+            ),
+            color_samples=tuple(
+                ColorSample(
+                    color=color,
+                    role=role,
+                    frequency=frequency,
+                    page_coverage=min(1, len(color_pages[(color, role)]) / page_count),
+                )
+                for (color, role), frequency in sorted(
+                    color_counts.items(), key=lambda item: (-item[1], item[0])
+                )
+            ),
+            font_samples=tuple(
+                FontSample(
+                    family=family,
+                    size_pt=round(size, 2),
+                    role=role,
+                    frequency=frequency,
+                )
+                for (family, size, role), frequency in sorted(
+                    font_counts.items(), key=lambda item: (-item[1], item[0])
+                )
+            ),
+            shape_samples=tuple(shape_samples[:2_000]),
+            page_samples=tuple(
+                _page_sample(index, slide, canvas_width, canvas_height)
+                for index, slide in enumerate(slides, start=1)
+            ),
+            master_layouts=_master_layout_features(
+                resolved.slide_layout_xml, canvas_width, canvas_height
+            ),
+            source_mode=mode,
+        )
 
     def parse(
         self,

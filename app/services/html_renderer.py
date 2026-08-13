@@ -26,6 +26,11 @@ class HTMLRenderer:
         "two_column": "layouts/two_column.html",
         "three_cards": "layouts/three_cards.html",
         "evidence_grid": "layouts/evidence_grid.html",
+        "metric_highlight": "layouts/metric_highlight.html",
+        "comparison": "layouts/comparison.html",
+        "timeline": "layouts/timeline.html",
+        "process": "layouts/process.html",
+        "source_list": "layouts/source_list.html",
     }
 
     def render(self, spec: PositionedPresentationSpec, style: VisualStyleProfileData) -> str:

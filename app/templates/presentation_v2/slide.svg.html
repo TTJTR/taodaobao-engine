@@ -1,0 +1,32 @@
+<section class="slide-frame" data-slide-id="{{ slide.slide_id }}">
+  <svg class="slide" viewBox="0 0 {{ render_ir.canvas.width }} {{ render_ir.canvas.height }}"
+       role="img" aria-label="演示文稿第 {{ slide_index }} 页"
+       xmlns="http://www.w3.org/2000/svg">
+    {% for node in slide.layers %}
+      {% if node.node_type == "shape" %}
+        <rect data-node-id="{{ node.node_id }}" x="{{ node.geometry.x }}" y="{{ node.geometry.y }}"
+              width="{{ node.geometry.width }}" height="{{ node.geometry.height }}"
+              rx="{{ node.corner_radius }}" fill="{{ node.fill }}" opacity="{{ node.opacity }}"
+              {% if node.shadow_color %}style="filter:drop-shadow({{ node.shadow_offset_x }}px {{ node.shadow_offset_y }}px {{ node.shadow_blur }}px {{ node.shadow_color }})"{% endif %}
+              {% if node.stroke %}stroke="{{ node.stroke }}" stroke-width="{{ node.stroke_width }}"{% endif %}/>
+      {% else %}
+        <defs><clipPath id="clip-{{ node.node_id }}"><rect x="{{ node.geometry.x }}"
+          y="{{ node.geometry.y }}" width="{{ node.geometry.width }}"
+          height="{{ node.geometry.height }}"/></clipPath></defs>
+        <text data-node-id="{{ node.node_id }}" data-component-id="{{ node.component_id }}"
+              data-content-hash="{{ text_hash(node) }}" data-content-origin="{{ origins(node) }}"
+              data-claim-ids="{{ claim_ids(node) }}" fill="{{ node.fill }}"
+              data-font-measurement="{{ node.layout.measurement_method }}"
+              data-font-hash="{{ node.layout.font_file_hash or '' }}"
+              font-family="{{ safe_font(node.layout.resolved_font) }}"
+              font-size="{{ node.layout.font_size }}" font-weight="{{ weight(node.font_weight) }}"
+              clip-path="url(#clip-{{ node.node_id }})" xml:space="preserve">
+          {% for line in node.layout.line_boxes %}<tspan x="{{ node.geometry.x + line.x }}"
+            {% if node.text_align == "center" %}text-anchor="middle" dx="{{ node.geometry.width / 2 }}"
+            {% elif node.text_align == "right" %}text-anchor="end" dx="{{ node.geometry.width }}"{% endif %}
+            y="{{ node.geometry.y + line.y + node.layout.font_size }}">{{ line.text }}</tspan>{% endfor %}
+        </text>
+      {% endif %}
+    {% endfor %}
+  </svg>
+</section>

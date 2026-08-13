@@ -21,31 +21,71 @@
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; background: #151719; color: var(--foreground-color); }
-    body { font-family: var(--body-font); font-size: clamp(12px, 1.25vw, var(--body-size)); }
+    body { font-family: var(--body-font); font-size: clamp(12px, 2cqh, var(--body-size)); }
     .presentation { margin: 0; }
     .slide-frame { height: 100vh; height: 100dvh; display: grid; place-items: center; overflow: hidden; }
     .slide { position: relative; width: min(100vw, calc(100vh * 16 / 9));
       width: min(100vw, calc(100dvh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16));
       height: min(100dvh, calc(100vw * 9 / 16)); overflow: hidden; background: var(--background-color);
       box-shadow: 0 18px 60px rgba(0, 0, 0, .32); container-type: size; }
-    .slide::before { content: ""; position: absolute; inset: 0 auto 0 0; width: clamp(6px, .7vw, 12px);
+    .slide::before { content: ""; position: absolute; inset: 0 auto 0 0; width: clamp(4px, 1.2cqh, 12px);
       background: var(--accent-color); }
     .positioned-component { position: absolute; left: var(--x); top: var(--y); width: var(--w);
       height: var(--h); z-index: var(--z); overflow: hidden; }
     .component-title { margin: 0; color: var(--primary-color); font-family: var(--title-font);
       font-size: clamp(14px, 5cqh, 56px); line-height: 1.14; letter-spacing: 0; }
     .layout-cover .component-title { font-size: clamp(20px, 8cqh, 78px); max-width: 15ch; }
-    .component-key-message { border-left: clamp(4px, .5vw, 8px) solid var(--accent-color);
+    .component-key-message { border-left: clamp(3px, .8cqh, 8px) solid var(--accent-color);
       padding: clamp(6px, 2.5cqh, 28px); font-size: clamp(11px, 3.2cqh, 30px); font-weight: 650;
       background: color-mix(in srgb, var(--secondary-color) 10%, var(--background-color)); }
     .component-evidence { height: 100%; border: 1px solid color-mix(in srgb, var(--secondary-color) 45%, transparent);
       border-top: clamp(3px, .8cqh, 7px) solid var(--secondary-color); padding: clamp(6px, 2.5cqh, 28px);
       background: color-mix(in srgb, var(--secondary-color) 7%, var(--background-color)); }
-    .component-evidence h2 { margin: 0 0 clamp(8px, 1vw, 18px); color: var(--primary-color);
+    .component-evidence h2 { margin: 0 0 clamp(4px, 1.4cqh, 18px); color: var(--primary-color);
       font-family: var(--title-font); font-size: clamp(11px, 3cqh, 28px); line-height: 1.2; }
     .component-evidence p, .component-key-message p { margin: 0; white-space: pre-wrap;
       font-size: clamp(9px, 2.15cqh, 20px); line-height: 1.55; }
-    @media (max-height: 700px) { .component-evidence { padding: clamp(10px, 1.3vw, 20px); } }
+    .component-metric { height: 100%; display: grid; place-content: center; text-align: center;
+      border-top: clamp(4px, 1cqh, 10px) solid var(--accent-color); background: var(--primary-color);
+      color: var(--background-color); padding: clamp(8px, 3cqh, 32px); }
+    .component-metric__label { margin: 0 0 clamp(6px, 2cqh, 20px); font-size: clamp(11px, 3cqh, 26px); }
+    .component-metric__value { margin: 0; font-family: var(--title-font); font-size: clamp(20px, 8cqh, 72px);
+      line-height: 1.12; font-weight: 750; }
+    .component-comparison, .component-timeline, .component-process, .component-source-list {
+      height: 100%; overflow: hidden; }
+    .component-comparison h2, .component-timeline h2, .component-process h2, .component-source-list h2 {
+      margin: 0 0 clamp(6px, 2cqh, 20px); color: var(--primary-color); font-family: var(--title-font);
+      font-size: clamp(12px, 3.4cqh, 30px); }
+    .component-comparison__grid { display: grid; grid-template-columns: 1fr 1fr;
+      gap: clamp(6px, 2.5cqh, 24px); height: calc(100% - clamp(24px, 7cqh, 58px)); }
+    .component-comparison__grid section { padding: clamp(8px, 3cqh, 28px); overflow: hidden;
+      border: 1px solid var(--secondary-color); background: color-mix(in srgb, var(--secondary-color) 8%, var(--background-color)); }
+    .item-label { margin: 0 0 clamp(4px, 1.5cqh, 14px); color: var(--primary-color);
+      font-family: var(--title-font); font-size: clamp(10px, 2.7cqh, 24px); font-weight: 700; }
+    .item-text { margin: 0; font-size: clamp(8px, 2cqh, 18px); line-height: 1.45; }
+    .component-timeline ol, .component-process ol { display: grid;
+      grid-template-columns: repeat(var(--item-count), minmax(0, 1fr)); gap: clamp(4px, 1.8cqh, 18px);
+      list-style: none; padding: 0; margin: clamp(14px, 5cqh, 48px) 0 0; height: 72%; }
+    .component-timeline li { position: relative; border-top: clamp(3px, .7cqh, 6px) solid var(--secondary-color);
+      padding: clamp(10px, 3.5cqh, 32px) clamp(5px, 1.5cqh, 16px) 0; overflow: hidden; }
+    .timeline-dot { position: absolute; top: calc(-1 * clamp(6px, 1.4cqh, 12px)); left: 0;
+      width: clamp(10px, 2.3cqh, 20px); height: clamp(10px, 2.3cqh, 20px); border-radius: 50%;
+      background: var(--accent-color); }
+    .component-process li { position: relative; padding: clamp(8px, 2.5cqh, 24px); overflow: hidden;
+      border: 1px solid var(--secondary-color); }
+    .component-process li:not(:last-child)::after { content: ">"; position: absolute; right: 0;
+      top: 50%; color: var(--accent-color); font-weight: 800; }
+    .step-index { display: grid; place-items: center; width: clamp(18px, 4cqh, 36px);
+      height: clamp(18px, 4cqh, 36px); margin-bottom: clamp(4px, 1.5cqh, 14px);
+      background: var(--primary-color); color: var(--background-color); font-weight: 800; }
+    .component-source-list ol { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(5px, 1.5cqh, 14px);
+      list-style: none; padding: 0; margin: 0; }
+    .component-source-list li { display: grid; grid-template-columns: auto 1fr; align-items: center;
+      gap: clamp(6px, 2cqh, 18px); min-height: clamp(28px, 7cqh, 64px); padding: clamp(5px, 1.8cqh, 16px);
+      border-bottom: 1px solid color-mix(in srgb, var(--secondary-color) 40%, transparent); overflow: hidden; }
+    .component-source-list li span { color: var(--accent-color); font-weight: 800; }
+    .component-source-list li p { margin: 0; font-size: clamp(9px, 2.2cqh, 19px); }
+    @media (max-height: 700px) { .component-evidence { padding: clamp(8px, 2cqh, 20px); } }
     @media (max-height: 600px) { .component-title { line-height: 1.08; } }
     @media (max-height: 500px) { .component-evidence p { line-height: 1.35; } }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }

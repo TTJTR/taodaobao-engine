@@ -3,7 +3,15 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.presentation import EvidenceCardComponent, SlideSchema
+from app.schemas.presentation import (
+    ComparisonComponent,
+    EvidenceCardComponent,
+    MetricComponent,
+    ProcessComponent,
+    SlideSchema,
+    SourceListComponent,
+    TimelineComponent,
+)
 
 
 def _fact_binding() -> dict:
@@ -71,3 +79,81 @@ def test_business_component_rejects_missing_binding_or_extra_fields(component: d
                 "components": [component],
             }
         )
+
+
+def test_phase_b_components_parse_with_independent_fact_bindings() -> None:
+    def bound_item(label: str) -> dict:
+        return {
+            "item_id": uuid.uuid4(),
+            "label": label,
+            "text": "经过验证的事实原文",
+            "fact_binding": _fact_binding(),
+        }
+
+    source_binding = _fact_binding()
+    source_binding["content_mode"] = "label_only"
+    source_id = source_binding["source_ids"][0]
+    components = [
+        {
+            "component_id": uuid.uuid4(),
+            "component_type": "metric",
+            "label": "年度营收",
+            "value": "2025年营业收入为1438亿元",
+            "fact_binding": _fact_binding(),
+        },
+        {
+            "component_id": uuid.uuid4(),
+            "component_type": "comparison",
+            "heading": "方案对比",
+            "left": bound_item("现状"),
+            "right": bound_item("目标"),
+        },
+        {
+            "component_id": uuid.uuid4(),
+            "component_type": "timeline",
+            "heading": "实施节奏",
+            "items": [bound_item("第一阶段"), bound_item("第二阶段")],
+        },
+        {
+            "component_id": uuid.uuid4(),
+            "component_type": "process",
+            "heading": "交付流程",
+            "steps": [bound_item("输入"), bound_item("输出")],
+        },
+        {
+            "component_id": uuid.uuid4(),
+            "component_type": "source_list",
+            "heading": "事实来源",
+            "sources": [
+                {
+                    "item_id": uuid.uuid4(),
+                    "label": "经授权的飞书资料",
+                    "source_id": source_id,
+                    "fact_binding": source_binding,
+                }
+            ],
+        },
+    ]
+
+    parsed_types = []
+    for token, component in zip(
+        ("metric_highlight", "comparison", "timeline", "process", "source_list"),
+        components,
+        strict=True,
+    ):
+        slide = SlideSchema.model_validate(
+            {
+                "slide_id": uuid.uuid4(),
+                "layout_token": token,
+                "components": [component],
+            }
+        )
+        parsed_types.append(type(slide.components[0]))
+
+    assert parsed_types == [
+        MetricComponent,
+        ComparisonComponent,
+        TimelineComponent,
+        ProcessComponent,
+        SourceListComponent,
+    ]

@@ -187,7 +187,7 @@ def _bounded_json_value(value):
         return {
             str(key)[:128]: _bounded_json_value(item) for key, item in list(value.items())[:100]
         }
-    if isinstance(value, (int, float, bool)) or value is None:
+    if isinstance(value, int | float | bool) or value is None:
         return value
     return str(value)[:MAX_AI_FIELD_CHARS]
 

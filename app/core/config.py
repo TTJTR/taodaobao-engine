@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     presentation_mode: Literal["mock", "live"] = "mock"
     presentation_service_url: str | None = None
     presentation_service_api_key: str | None = None
+    presentation_export_dir: Path = Path(".local/exports")
+    pptx_renderer_timeout_seconds: int = 30
+    pptx_renderer_max_output_bytes: int = 50 * 1024 * 1024
     database_url: str | None = None
     feishu_app_id: str | None = None
     feishu_app_secret: str | None = None
