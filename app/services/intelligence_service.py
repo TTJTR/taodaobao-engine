@@ -322,58 +322,48 @@ class IntelligenceService:
             [str(artifact.id)],
         )
         facts = _normalize_ai_facts(ai_output, artifact)
-        normalized_content = " ".join(artifact.text_content.split())
-        fingerprint = hashlib.sha256(
-            f"{artifact.id}\n{artifact.content_sha256}\n{facts!r}".encode()
-        ).hexdigest()
-        existing = await self.session.scalar(
-            select(IntelligenceItem).where(
-                IntelligenceItem.workspace_id == self.workspace_id,
-                IntelligenceItem.fingerprint == fingerprint,
-                IntelligenceItem.is_deleted.is_(False),
-            )
-        )
-        if existing is not None:
-            item = existing
-        else:
-            item = IntelligenceItem(
-                workspace_id=self.workspace_id,
-                search_run_id=run.id,
-                title=_ai_title(ai_output, artifact),
-                source_url=artifact.source_url,
-                source_domain=urlparse(artifact.source_url).hostname or "unknown",
-                published_at=artifact.published_at,
-                captured_at=artifact.captured_at,
-                content=artifact.text_content,
-                summary=_ai_summary(ai_output, normalized_content),
-                facts=facts,
-                fingerprint=fingerprint,
-                freshness=IntelligenceFreshness.CURRENT,
-                review_status=IntelligenceReviewStatus.PENDING,
-                metadata_snapshot={
-                    "provider": "ai_enrichment",
-                    "raw_artifact_id": str(artifact.id),
-                    "content_sha256": artifact.content_sha256,
-                    "boundary": "external_public_information",
-                },
-            )
-            self.session.add(item)
-            await self.session.flush()
-            self.session.add(
-                IntelligenceItemArtifactLink(
-                    workspace_id=self.workspace_id,
-                    intelligence_item_id=item.id,
-                    raw_artifact_id=artifact.id,
-                    relation_type=ArtifactRelationType.PRIMARY,
-                    source_snapshot={
+        items: list[IntelligenceItem] = []
+        conflicts: dict[str, dict] = {}
+        for raw_fact in facts:
+            fact = {
+                "field": raw_fact["field"],
+                "value": raw_fact["value"],
+                "category": "ai_profile_enrichment",
+                "classification": raw_fact["classification"],
+                "provider_confidence": 0.5,
+                "citation_status": "artifact_bound",
+                "citations": [
+                    {
+                        "raw_artifact_id": str(artifact.id),
                         "source_url": artifact.source_url,
-                        "content_sha256": artifact.content_sha256,
+                        "quote": artifact.text_content[:MAX_AI_FIELD_CHARS],
+                        "quote_hash": hashlib.sha256(artifact.text_content.encode()).hexdigest(),
+                        "provider_confidence": None,
                         "captured_at": artifact.captured_at.isoformat(),
-                    },
-                )
+                    }
+                ],
+            }
+            item, conflict = await self._govern_fact(
+                run=run,
+                profile=profile,
+                company_name=profile.customer_name,
+                provider="ai_enrichment",
+                provider_job_id=None,
+                provider_status="completed",
+                tool_calls_used=None,
+                cost_usd=None,
+                fact=fact,
+                linked_artifacts={artifact.id: artifact},
             )
-        snapshot = await self._create_snapshot_uncommitted("customer_profile", [item])
+            if item not in items:
+                items.append(item)
+            if conflict:
+                conflicts[fact["field"]] = conflict
+        snapshot = await self._create_snapshot_uncommitted("customer_profile", items)
         patch = _profile_diff(profile.profile, ai_output)
+        for field, conflict in conflicts.items():
+            if field in patch:
+                patch[field] = {**patch[field], **conflict}
         proposal = None
         if patch:
             proposal = ProfileIntelligenceProposal(
@@ -386,11 +376,12 @@ class IntelligenceService:
             )
             self.session.add(proposal)
         await self.session.commit()
-        await self.session.refresh(item)
+        for item in items:
+            await self.session.refresh(item)
         await self.session.refresh(snapshot)
         if proposal is not None:
             await self.session.refresh(proposal)
-        return item, snapshot, proposal
+        return items[0], snapshot, proposal
 
     async def accept_provider_result(
         self,
@@ -422,11 +413,15 @@ class IntelligenceService:
                 uuid.UUID(artifact_id): linked_artifacts[uuid.UUID(artifact_id)]
                 for artifact_id in fact["raw_artifact_ids"]
             }
-            item, conflict = await self._govern_provider_fact(
+            item, conflict = await self._govern_fact(
                 run=run,
                 profile=profile,
-                request=request,
-                result=result,
+                company_name=request.company_name,
+                provider="open_enrich",
+                provider_job_id=result.provider_job_id,
+                provider_status=result.status,
+                tool_calls_used=result.tool_calls_used,
+                cost_usd=result.cost_usd,
                 fact=fact,
                 linked_artifacts=fact_artifacts,
             )
@@ -458,13 +453,17 @@ class IntelligenceService:
             await self.session.refresh(proposal)
         return items[0], snapshot, proposal
 
-    async def _govern_provider_fact(
+    async def _govern_fact(
         self,
         *,
         run: SearchRun,
         profile: CustomerProfile,
-        request: EnrichmentJobRequest,
-        result: EnrichmentJobResult,
+        company_name: str,
+        provider: str,
+        provider_job_id: str | None,
+        provider_status: str,
+        tool_calls_used: int | None,
+        cost_usd: float | None,
         fact: dict,
         linked_artifacts: dict[uuid.UUID, RawArtifact],
     ) -> tuple[IntelligenceItem, dict | None]:
@@ -521,30 +520,29 @@ class IntelligenceService:
         item = IntelligenceItem(
             workspace_id=self.workspace_id,
             search_run_id=run.id,
-            title=f"{request.company_name} - {field_name}",
-            source_url=primary.source_url or str(request.website_url),
-            source_domain=urlparse(primary.source_url or str(request.website_url)).hostname
-            or "unknown",
+            title=f"{company_name} - {field_name}",
+            source_url=primary.source_url or "unknown",
+            source_domain=urlparse(primary.source_url or "").hostname or "unknown",
             published_at=primary.published_at,
             captured_at=captured_at,
             content="\n\n".join(citation["quote"] for citation in fact["citations"]),
-            summary=f"Open Enrich verified candidate fact: {field_name}",
+            summary=f"{provider} candidate fact: {field_name}",
             facts=[fact],
             fingerprint=fingerprint,
             freshness=IntelligenceFreshness.CURRENT,
             review_status=IntelligenceReviewStatus.PENDING,
             metadata_snapshot={
-                "provider": "open_enrich",
-                "provider_job_id": result.provider_job_id,
-                "provider_status": result.status,
+                "provider": provider,
+                "provider_job_id": provider_job_id,
+                "provider_status": provider_status,
                 "profile_id": str(profile.id),
                 "field_name": field_name,
                 "normalized_value": normalized_value,
                 "latest_captured_at": captured_at.isoformat(),
                 "confidence": fact["provider_confidence"],
                 "source_count": len(linked_artifacts),
-                "tool_calls_used": result.tool_calls_used,
-                "cost_usd": result.cost_usd,
+                "tool_calls_used": tool_calls_used,
+                "cost_usd": cost_usd,
                 "boundary": "external_public_information",
             },
         )

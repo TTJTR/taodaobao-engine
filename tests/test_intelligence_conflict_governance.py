@@ -47,6 +47,14 @@ def _result(job_id: str, url: str, quote: str, value: str) -> EnrichmentJobResul
     )
 
 
+class _FixedProfileAI:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    async def extract_profile(self, raw_text: str, source_ids: list[str]) -> dict:
+        return {"focus_technology": self.value, "source_ids": source_ids}
+
+
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("second_value,expected_items", [("AI 质检", 1), ("量子计算", 2)])
@@ -185,6 +193,80 @@ async def test_exact_deduplication_and_conflict_governance(
                 decided = proposal.proposed_patch["focus_technology"]
                 assert decided["selected_candidate_id"] == str(selected)
                 assert decided["resolution_required"] is False
+    finally:
+        await engine.dispose()
+        async with admin.begin() as connection:
+            await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await admin.dispose()
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
+@pytest.mark.asyncio
+async def test_shared_ai_enrichment_uses_conflict_governance() -> None:
+    schema = f"intelligence_shared_ai_{uuid.uuid4().hex}"
+    admin = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+    async with admin.begin() as connection:
+        await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    engine = create_async_engine(
+        TEST_DATABASE_URL,
+        pool_pre_ping=True,
+        connect_args={"server_settings": {"search_path": f"{schema}, public"}},
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all, checkfirst=False)
+        async with factory() as session:
+            workspace_id = uuid.uuid4()
+            user = User(workspace_id=workspace_id, feishu_user_id=uuid.uuid4().hex, name="Reviewer")
+            session.add(user)
+            await session.flush()
+            profile = CustomerProfile(
+                workspace_id=workspace_id,
+                customer_name="Example",
+                profile={"external_intelligence": {}},
+                status=ProfileStatus.CONFIRMED,
+                confirmed_by_id=user.id,
+                confirmed_at=datetime.now(UTC),
+            )
+            run = SearchRun(
+                workspace_id=workspace_id,
+                created_by_id=user.id,
+                query="technology signals",
+                purpose="customer_profile",
+                provider="web_scraper",
+                status=SearchRunStatus.COMPLETED,
+                trace_id=uuid.uuid4().hex,
+                input_snapshot={},
+                result_summary={},
+            )
+            session.add_all([profile, run])
+            await session.flush()
+            artifacts = [
+                _artifact(workspace_id, run.id, "https://example.com/one", "Source one quote"),
+                _artifact(workspace_id, run.id, "https://example.com/two", "Source two quote"),
+            ]
+            session.add_all(artifacts)
+            await session.commit()
+            service = IntelligenceService(session, workspace_id, user.id)
+            await service.enrich_artifact_for_profile(
+                artifacts[0].id, profile.id, _FixedProfileAI("AI quality inspection")
+            )
+            _, _, proposal = await service.enrich_artifact_for_profile(
+                artifacts[1].id, profile.id, _FixedProfileAI("Quantum computing")
+            )
+            items = list(
+                await session.scalars(
+                    select(IntelligenceItem).where(
+                        IntelligenceItem.workspace_id == workspace_id,
+                        IntelligenceItem.is_deleted.is_(False),
+                    )
+                )
+            )
+            assert len(items) == 2
+            assert items[0].conflict_group_id == items[1].conflict_group_id
+            assert proposal is not None
+            assert proposal.proposed_patch["focus_technology"]["resolution_required"] is True
     finally:
         await engine.dispose()
         async with admin.begin() as connection:
