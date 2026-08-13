@@ -91,6 +91,26 @@ paths:
         - {name: freshness, in: query, schema: {type: string, enum: [current, stale, unavailable, deleted]}}
         - {name: conflict_group_id, in: query, schema: {type: string, format: uuid}}
       responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+  /response-matrices/{matrix_id}/items:
+    get:
+      operationId: listResponseMatrixItems
+      parameters:
+        - {$ref: '#/components/parameters/MatrixId'}
+        - {name: category, in: query, schema: {type: string}}
+        - {name: evidence_status, in: query, schema: {enum: [supported, partially_supported, missing_evidence, conflicted, stale, pending_confirmation]}}
+        - {name: review_status, in: query, schema: {enum: [pending, approved, rejected, needs_evidence]}}
+        - {name: risk_flag, in: query, schema: {type: string}}
+      responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+  /response-matrices/{matrix_id}/export.csv:
+    get:
+      operationId: exportResponseMatrixCsv
+      parameters:
+        - {$ref: '#/components/parameters/MatrixId'}
+        - {name: category, in: query, schema: {type: string}}
+        - {name: evidence_status, in: query, schema: {type: string}}
+        - {name: review_status, in: query, schema: {type: string}}
+        - {name: risk_flag, in: query, schema: {type: string}}
+      responses: {'200': {description: UTF-8 CSV response matrix export}}
   /intelligence/items/{item_id}:
     get:
       operationId: getIntelligenceItem

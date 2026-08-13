@@ -608,6 +608,45 @@ class TenderService:
         )
         return matrix, items
 
+    async def list_matrix_items(
+        self,
+        matrix_id: uuid.UUID,
+        *,
+        category: str | None = None,
+        evidence_status: str | None = None,
+        review_status: str | None = None,
+        risk_flag: str | None = None,
+    ) -> tuple[ResponseMatrix, list[tuple[ResponseMatrixItem, TenderRequirement]]]:
+        matrix = await self._get(ResponseMatrix, matrix_id)
+        filters = [
+            ResponseMatrixItem.matrix_id == matrix_id,
+            *self._filters(ResponseMatrixItem),
+            TenderRequirement.workspace_id == self.workspace_id,
+            TenderRequirement.is_deleted.is_(False),
+        ]
+        if category is not None:
+            filters.append(TenderRequirement.category == category)
+        if evidence_status is not None:
+            filters.append(ResponseMatrixItem.evidence_status == evidence_status)
+        if review_status is not None:
+            filters.append(ResponseMatrixItem.review_status == review_status)
+        if risk_flag is not None:
+            filters.append(ResponseMatrixItem.risk_flags.contains([risk_flag]))
+        rows = list(
+            (
+                await self.session.execute(
+                    select(ResponseMatrixItem, TenderRequirement)
+                    .join(
+                        TenderRequirement,
+                        TenderRequirement.id == ResponseMatrixItem.requirement_id,
+                    )
+                    .where(*filters)
+                    .order_by(TenderRequirement.sequence, ResponseMatrixItem.created_at)
+                )
+            ).all()
+        )
+        return matrix, rows
+
     async def list_matrices(
         self, tender_id: uuid.UUID, page: int, page_size: int
     ) -> tuple[list[tuple[ResponseMatrix, int]], int]:

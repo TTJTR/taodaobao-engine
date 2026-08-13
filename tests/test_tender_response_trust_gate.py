@@ -44,6 +44,19 @@ class _SnapshotSession:
         self.added.append(row)
 
 
+class _FilteredMatrixSession:
+    def __init__(self, rows) -> None:
+        self.rows = rows
+        self.statement = None
+
+    async def scalar(self, _statement):
+        return SimpleNamespace(id=uuid.uuid4())
+
+    async def execute(self, statement):
+        self.statement = statement
+        return _MatrixListResult(self.rows)
+
+
 def location(text: str) -> dict:
     return {
         "kind": "pdf_page",
@@ -197,3 +210,32 @@ async def test_matrix_history_list_returns_summary_counts_with_governance_filter
     assert "LIMIT" in compiled
     assert "OFFSET" in compiled
     assert session.scalar_statement is not None
+
+
+@pytest.mark.asyncio
+async def test_matrix_item_filter_keeps_requirement_and_item_workspace_bound() -> None:
+    workspace_id = uuid.uuid4()
+    matrix_id = uuid.uuid4()
+    item = SimpleNamespace(id=uuid.uuid4())
+    requirement = SimpleNamespace(id=uuid.uuid4())
+    session = _FilteredMatrixSession([(item, requirement)])
+    service = TenderService(session, workspace_id, uuid.uuid4())
+
+    matrix, rows = await service.list_matrix_items(
+        matrix_id,
+        category="technical",
+        evidence_status="missing_evidence",
+        review_status="needs_evidence",
+        risk_flag="missing_evidence",
+    )
+
+    assert rows == [(item, requirement)]
+    assert matrix.id
+    compiled = str(session.statement)
+    assert "response_matrix_items.workspace_id" in compiled
+    assert "response_matrix_items.is_deleted IS false" in compiled
+    assert "tender_requirements.workspace_id" in compiled
+    assert "tender_requirements.is_deleted IS false" in compiled
+    assert "tender_requirements.category" in compiled
+    assert "response_matrix_items.evidence_status" in compiled
+    assert "response_matrix_items.review_status" in compiled

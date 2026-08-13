@@ -1,7 +1,9 @@
+import csv
+import io
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.api.deps import CurrentUser, DatabaseSession, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
@@ -102,6 +104,10 @@ def _matrix_summary(row, item_count: int) -> dict:
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
     }
+
+
+def _links_text(links: list[dict]) -> str:
+    return "; ".join(str(item.get("asset_id") or item.get("snapshot_id") or "") for item in links)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -411,6 +417,76 @@ async def list_response_matrix_item_versions(
     return success_response(
         request,
         {"items": [_item_version(row) for row in rows], "total": len(rows)},
+    )
+
+
+@matrix_router.get("/{matrix_id}/items")
+async def list_response_matrix_items(
+    matrix_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    category: str | None = None,
+    evidence_status: str | None = None,
+    review_status: str | None = None,
+    risk_flag: str | None = None,
+) -> dict:
+    _, rows = await TenderService(session, workspace_id, current_user.id).list_matrix_items(
+        matrix_id,
+        category=category,
+        evidence_status=evidence_status,
+        review_status=review_status,
+        risk_flag=risk_flag,
+    )
+    return success_response(
+        request,
+        {
+            "items": [
+                {**_item(item), "requirement": _requirement(requirement)}
+                for item, requirement in rows
+            ],
+            "total": len(rows),
+        },
+    )
+
+
+@matrix_router.get("/{matrix_id}/export.csv")
+async def export_response_matrix_csv(
+    matrix_id: uuid.UUID,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    category: str | None = None,
+    evidence_status: str | None = None,
+    review_status: str | None = None,
+    risk_flag: str | None = None,
+) -> Response:
+    _, rows = await TenderService(session, workspace_id, current_user.id).list_matrix_items(
+        matrix_id,
+        category=category,
+        evidence_status=evidence_status,
+        review_status=review_status,
+        risk_flag=risk_flag,
+    )
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream)
+    writer.writerow([
+        "requirement", "category", "source_location", "internal_experience_ids",
+        "internal_capability_ids", "external_context_ids", "ai_draft", "current_answer",
+        "evidence_status", "risk_flags", "review_status",
+    ])
+    for item, requirement in rows:
+        writer.writerow([
+            requirement.requirement_text, requirement.category, str(requirement.source_location),
+            _links_text(item.internal_exp_links), _links_text(item.internal_cap_links),
+            _links_text(item.external_ctx_links), item.ai_draft, item.current_answer,
+            item.evidence_status.value, "; ".join(item.risk_flags), item.review_status,
+        ])
+    return Response(
+        content="\ufeff" + stream.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="response-matrix-{matrix_id}.csv"'},
     )
 
 
