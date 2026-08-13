@@ -80,6 +80,18 @@ def _item(row) -> dict:
     }
 
 
+def _matrix_summary(row, item_count: int) -> dict:
+    return {
+        "id": str(row.id),
+        "tender_id": str(row.tender_id),
+        "version": row.version,
+        "status": row.status,
+        "item_count": item_count,
+        "created_at": row.created_at.isoformat(),
+        "updated_at": row.updated_at.isoformat(),
+    }
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_tender(
     payload: CreateTenderRequest,
@@ -302,6 +314,31 @@ async def create_response_matrix(
             "status": matrix.status,
             "evidence_snapshot": matrix.evidence_snapshot,
             "items": [_item(item) for item in items],
+        },
+    )
+
+
+@router.get("/{tender_id}/response-matrices")
+async def list_response_matrices(
+    tender_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> dict:
+    rows, total = await TenderService(session, workspace_id, current_user.id).list_matrices(
+        tender_id, page, page_size
+    )
+    return success_response(
+        request,
+        {
+            "items": [_matrix_summary(row, item_count) for row, item_count in rows],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_more": page * page_size < total,
         },
     )
 

@@ -1,4 +1,5 @@
 import hashlib
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,30 @@ from app.services.tender_service import (
     _evidence_link,
     _validate_document_location,
 )
+
+
+class _MatrixListResult:
+    def __init__(self, rows) -> None:
+        self.rows = rows
+
+    def all(self):
+        return self.rows
+
+
+class _MatrixListSession:
+    def __init__(self, rows, total: int) -> None:
+        self.rows = rows
+        self.total = total
+        self.executed = []
+        self.scalar_statement = None
+
+    async def execute(self, statement):
+        self.executed.append(statement)
+        return _MatrixListResult(self.rows)
+
+    async def scalar(self, statement):
+        self.scalar_statement = statement
+        return self.total
 
 
 def location(text: str) -> dict:
@@ -96,3 +121,34 @@ def test_optimistic_lock_rejects_stale_requirement_version() -> None:
         TenderService._check_requirement_version(requirement, 3)
 
     assert caught.value.code == ErrorCode.RESPONSE_VERSION_CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_matrix_history_list_returns_summary_counts_with_governance_filters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace_id = uuid.uuid4()
+    tender_id = uuid.uuid4()
+    first = SimpleNamespace(id=uuid.uuid4())
+    second = SimpleNamespace(id=uuid.uuid4())
+    session = _MatrixListSession([(first, 2), (second, 0)], total=2)
+    service = TenderService(session, workspace_id, uuid.uuid4())
+
+    async def get_tender(received_tender_id):
+        assert received_tender_id == tender_id
+        return SimpleNamespace(id=tender_id)
+
+    monkeypatch.setattr(service, "get_tender", get_tender)
+    rows, total = await service.list_matrices(tender_id, page=2, page_size=10)
+
+    assert rows == [(first, 2), (second, 0)]
+    assert total == 2
+    assert len(session.executed) == 1
+    compiled = str(session.executed[0])
+    assert "response_matrices.workspace_id" in compiled
+    assert "response_matrices.is_deleted IS false" in compiled
+    assert "response_matrix_items.workspace_id" in compiled
+    assert "response_matrix_items.is_deleted IS false" in compiled
+    assert "LIMIT" in compiled
+    assert "OFFSET" in compiled
+    assert session.scalar_statement is not None

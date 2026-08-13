@@ -607,6 +607,38 @@ class TenderService:
         )
         return matrix, items
 
+    async def list_matrices(
+        self, tender_id: uuid.UUID, page: int, page_size: int
+    ) -> tuple[list[tuple[ResponseMatrix, int]], int]:
+        await self.get_tender(tender_id)
+        matrix_filters = (
+            ResponseMatrix.tender_id == tender_id,
+            *self._filters(ResponseMatrix),
+        )
+        item_count = func.count(ResponseMatrixItem.id).label("item_count")
+        rows = list(
+            (
+                await self.session.execute(
+                    select(ResponseMatrix, item_count)
+                    .outerjoin(
+                        ResponseMatrixItem,
+                        (ResponseMatrixItem.matrix_id == ResponseMatrix.id)
+                        & (ResponseMatrixItem.workspace_id == self.workspace_id)
+                        & ResponseMatrixItem.is_deleted.is_(False),
+                    )
+                    .where(*matrix_filters)
+                    .group_by(ResponseMatrix.id)
+                    .order_by(ResponseMatrix.created_at.desc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            ).all()
+        )
+        total = await self.session.scalar(
+            select(func.count()).select_from(ResponseMatrix).where(*matrix_filters)
+        )
+        return [(matrix, int(count)) for matrix, count in rows], int(total or 0)
+
     async def update_item(
         self,
         matrix_id: uuid.UUID,
