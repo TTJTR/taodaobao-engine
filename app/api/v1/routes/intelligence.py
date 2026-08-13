@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from app.api.deps import AIEngineDependency, CurrentUser, DatabaseSession, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
+from app.db.models import IntelligenceFreshness
 from app.schemas.intelligence_provider import EnrichmentJobRequest
 from app.schemas.v2 import (
     CreateIntelligenceSnapshotRequest,
@@ -189,11 +190,19 @@ async def list_intelligence_items(
     current_user: CurrentUser,
     workspace_id: WorkspaceId,
     run_id: uuid.UUID | None = None,
+    freshness: IntelligenceFreshness | None = None,
+    conflict_group_id: uuid.UUID | None = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> dict:
     service = IntelligenceService(session, workspace_id, current_user.id)
-    rows, total = await service.list_items(page, page_size, run_id)
+    rows, total = await service.list_items(
+        page,
+        page_size,
+        run_id,
+        freshness=freshness,
+        conflict_group_id=conflict_group_id,
+    )
     return success_response(
         request,
         {

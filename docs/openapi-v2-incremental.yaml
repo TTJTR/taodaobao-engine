@@ -74,6 +74,8 @@ paths:
       operationId: listIntelligenceItems
       parameters:
         - {name: run_id, in: query, schema: {type: string, format: uuid}}
+        - {name: freshness, in: query, schema: {type: string, enum: [current, stale, unavailable, deleted]}}
+        - {name: conflict_group_id, in: query, schema: {type: string, format: uuid}}
       responses: {'200': {$ref: '#/components/responses/ListResponse'}}
   /intelligence/items/{item_id}:
     get:

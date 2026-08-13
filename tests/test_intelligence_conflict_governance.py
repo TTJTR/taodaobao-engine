@@ -350,6 +350,110 @@ async def test_reassess_freshness_marks_only_old_current_workspace_items() -> No
 
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
 @pytest.mark.asyncio
+async def test_list_items_filters_freshness_and_conflict_group_with_workspace_isolation() -> None:
+    schema = f"intelligence_filters_{uuid.uuid4().hex}"
+    admin = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+    async with admin.begin() as connection:
+        await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    engine = create_async_engine(
+        TEST_DATABASE_URL,
+        pool_pre_ping=True,
+        connect_args={"server_settings": {"search_path": f"{schema}, public"}},
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all, checkfirst=False)
+        async with factory() as session:
+            workspace_id = uuid.uuid4()
+            other_workspace_id = uuid.uuid4()
+            user = User(workspace_id=workspace_id, feishu_user_id=uuid.uuid4().hex, name="Reviewer")
+            other_user = User(
+                workspace_id=other_workspace_id,
+                feishu_user_id=uuid.uuid4().hex,
+                name="Other reviewer",
+            )
+            session.add_all([user, other_user])
+            await session.flush()
+            run = SearchRun(
+                workspace_id=workspace_id,
+                created_by_id=user.id,
+                query="filters",
+                purpose="customer_profile",
+                provider="manual",
+                status=SearchRunStatus.COMPLETED,
+                trace_id=uuid.uuid4().hex,
+                input_snapshot={},
+                result_summary={},
+            )
+            other_run = SearchRun(
+                workspace_id=other_workspace_id,
+                created_by_id=other_user.id,
+                query="filters",
+                purpose="customer_profile",
+                provider="manual",
+                status=SearchRunStatus.COMPLETED,
+                trace_id=uuid.uuid4().hex,
+                input_snapshot={},
+                result_summary={},
+            )
+            session.add_all([run, other_run])
+            await session.flush()
+            group_id = uuid.uuid4()
+            now = datetime.now(UTC)
+            current = _item(workspace_id, run.id, "current", now)
+            stale_in_group = _item(
+                workspace_id, run.id, "stale-in-group", now, IntelligenceFreshness.STALE
+            )
+            stale_in_group.conflict_group_id = group_id
+            stale_other_group = _item(
+                workspace_id, run.id, "stale-other-group", now, IntelligenceFreshness.STALE
+            )
+            stale_other_group.conflict_group_id = uuid.uuid4()
+            deleted = _item(workspace_id, run.id, "deleted", now, IntelligenceFreshness.STALE)
+            deleted.is_deleted = True
+            other_workspace = _item(
+                other_workspace_id,
+                other_run.id,
+                "other-workspace",
+                now,
+                IntelligenceFreshness.STALE,
+            )
+            other_workspace.conflict_group_id = group_id
+            session.add_all([current, stale_in_group, stale_other_group, deleted, other_workspace])
+            await session.commit()
+
+            service = IntelligenceService(session, workspace_id, user.id)
+            stale_rows, stale_total = await service.list_items(
+                1, 20, None, freshness=IntelligenceFreshness.STALE
+            )
+            assert stale_total == 2
+            assert {item.id for item in stale_rows} == {stale_in_group.id, stale_other_group.id}
+
+            group_rows, group_total = await service.list_items(
+                1, 20, None, conflict_group_id=group_id
+            )
+            assert group_total == 1
+            assert [item.id for item in group_rows] == [stale_in_group.id]
+
+            combined_rows, combined_total = await service.list_items(
+                1,
+                20,
+                run.id,
+                freshness=IntelligenceFreshness.STALE,
+                conflict_group_id=group_id,
+            )
+            assert combined_total == 1
+            assert [item.id for item in combined_rows] == [stale_in_group.id]
+    finally:
+        await engine.dispose()
+        async with admin.begin() as connection:
+            await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await admin.dispose()
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
+@pytest.mark.asyncio
 async def test_manual_source_creates_and_reuses_raw_artifact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

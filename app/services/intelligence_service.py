@@ -804,11 +804,21 @@ class IntelligenceService:
         return list(result), int(total or 0)
 
     async def list_items(
-        self, page: int, page_size: int, run_id: uuid.UUID | None
+        self,
+        page: int,
+        page_size: int,
+        run_id: uuid.UUID | None,
+        *,
+        freshness: IntelligenceFreshness | None = None,
+        conflict_group_id: uuid.UUID | None = None,
     ) -> tuple[list[IntelligenceItem], int]:
         filters = list(self._filters(IntelligenceItem))
         if run_id:
             filters.append(IntelligenceItem.search_run_id == run_id)
+        if freshness is not None:
+            filters.append(IntelligenceItem.freshness == freshness)
+        if conflict_group_id is not None:
+            filters.append(IntelligenceItem.conflict_group_id == conflict_group_id)
         result = await self.session.scalars(
             select(IntelligenceItem)
             .where(*filters)
