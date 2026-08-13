@@ -859,7 +859,13 @@ class IntelligenceService:
         return proposal
 
     async def decide_proposal(
-        self, profile_id: uuid.UUID, proposal_id: uuid.UUID, *, accept: bool, note: str | None
+        self,
+        profile_id: uuid.UUID,
+        proposal_id: uuid.UUID,
+        *,
+        accept: bool,
+        note: str | None,
+        selected_candidates: dict[str, uuid.UUID] | None = None,
     ) -> ProfileIntelligenceProposal:
         proposal = await self.session.scalar(
             select(ProfileIntelligenceProposal)
@@ -876,15 +882,10 @@ class IntelligenceService:
         if proposal.status != ProposalStatus.PENDING_CONFIRMATION:
             raise AppError(ErrorCode.PROPOSAL_ALREADY_DECIDED, "该画像提案已处理", status_code=409)
         if accept:
-            if any(
-                isinstance(change, dict) and change.get("resolution_required") is True
-                for change in proposal.proposed_patch.values()
-            ):
-                raise AppError(
-                    ErrorCode.VALIDATION_FAILED,
-                    "冲突画像提议必须先显式选择候选值",
-                    status_code=409,
-                )
+            resolved_patch = self._resolve_conflict_candidates(
+                proposal.proposed_patch, selected_candidates or {}
+            )
+            proposal.proposed_patch = resolved_patch
             profile = await self.session.scalar(
                 select(CustomerProfile)
                 .where(
@@ -923,7 +924,7 @@ class IntelligenceService:
                     **profile.profile.get("external_intelligence", {}),
                     **_apply_profile_patch(
                         profile.profile.get("external_intelligence", {}),
-                        proposal.proposed_patch,
+                        resolved_patch,
                     ),
                     "source_snapshot_id": str(proposal.snapshot_id),
                     "confirmed_by": str(self.user_id),
@@ -942,6 +943,55 @@ class IntelligenceService:
         await self.session.commit()
         await self.session.refresh(proposal)
         return proposal
+
+    @staticmethod
+    def _resolve_conflict_candidates(
+        proposed_patch: dict, selected_candidates: dict[str, uuid.UUID]
+    ) -> dict:
+        conflict_fields = {
+            field
+            for field, change in proposed_patch.items()
+            if isinstance(change, dict) and change.get("resolution_required") is True
+        }
+        unexpected = set(selected_candidates) - conflict_fields
+        if unexpected:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "候选选择包含非冲突字段",
+                status_code=422,
+                details={"fields": sorted(unexpected)},
+            )
+        resolved = dict(proposed_patch)
+        for field in sorted(conflict_fields):
+            selected_id = selected_candidates.get(field)
+            if selected_id is None:
+                raise AppError(
+                    ErrorCode.VALIDATION_FAILED,
+                    "冲突画像提议必须先显式选择候选值",
+                    status_code=409,
+                    details={"field": field},
+                )
+            change = dict(proposed_patch[field])
+            candidate = next(
+                (
+                    row
+                    for row in change.get("candidates", [])
+                    if row.get("intelligence_item_id") == str(selected_id)
+                ),
+                None,
+            )
+            if candidate is None:
+                raise AppError(
+                    ErrorCode.VALIDATION_FAILED,
+                    "所选情报候选不属于当前冲突字段",
+                    status_code=422,
+                    details={"field": field, "intelligence_item_id": str(selected_id)},
+                )
+            change["proposed"] = candidate.get("value")
+            change["resolution_required"] = False
+            change["selected_candidate_id"] = str(selected_id)
+            resolved[field] = change
+        return resolved
 
     def _filters(self, model) -> tuple:
         return model.workspace_id == self.workspace_id, model.is_deleted.is_(False)

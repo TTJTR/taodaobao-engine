@@ -275,7 +275,11 @@ async def confirm_profile_proposal(
     _: str = Depends(require_idempotency_key),
 ) -> dict:
     row = await IntelligenceService(session, workspace_id, current_user.id).decide_proposal(
-        profile_id, proposal_id, accept=True, note=payload.note
+        profile_id,
+        proposal_id,
+        accept=True,
+        note=payload.note,
+        selected_candidates=payload.selected_candidates,
     )
     return success_response(request, _proposal(row))
 

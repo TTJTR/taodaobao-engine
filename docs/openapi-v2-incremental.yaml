@@ -109,11 +109,21 @@ paths:
     post:
       operationId: confirmProfileIntelligenceProposal
       parameters: [{$ref: '#/components/parameters/ProfileId'}, {$ref: '#/components/parameters/ProposalId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DecideProposalRequest'}
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
   /customer-profiles/{profile_id}/intelligence-proposals/{proposal_id}/reject:
     post:
       operationId: rejectProfileIntelligenceProposal
       parameters: [{$ref: '#/components/parameters/ProfileId'}, {$ref: '#/components/parameters/ProposalId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DecideProposalRequest'}
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
   /tenders:
     post:
@@ -498,6 +508,15 @@ components:
       properties:
         snapshot_id: {type: string, format: uuid}
         proposed_patch: {type: object, minProperties: 1}
+    DecideProposalRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        note: {type: [string, 'null'], maxLength: 1000}
+        selected_candidates:
+          type: object
+          maxProperties: 50
+          additionalProperties: {type: string, format: uuid}
     CreateTenderRequest:
       type: object
       required: [title]

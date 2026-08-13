@@ -163,6 +163,28 @@ async def test_exact_deduplication_and_conflict_governance(
                     )
                 await session.refresh(profile)
                 assert profile.profile == {"external_intelligence": {}}
+                with pytest.raises(AppError, match="不属于当前冲突字段"):
+                    await service.decide_proposal(
+                        profile.id,
+                        proposal.id,
+                        accept=True,
+                        note="forged candidate",
+                        selected_candidates={"focus_technology": uuid.uuid4()},
+                    )
+                selected = uuid.UUID(change["candidates"][1]["intelligence_item_id"])
+                await service.decide_proposal(
+                    profile.id,
+                    proposal.id,
+                    accept=True,
+                    note="人工选择冲突候选",
+                    selected_candidates={"focus_technology": selected},
+                )
+                await session.refresh(profile)
+                await session.refresh(proposal)
+                assert profile.profile["external_intelligence"]["focus_technology"] == second_value
+                decided = proposal.proposed_patch["focus_technology"]
+                assert decided["selected_candidate_id"] == str(selected)
+                assert decided["resolution_required"] is False
     finally:
         await engine.dispose()
         async with admin.begin() as connection:

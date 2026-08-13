@@ -46,6 +46,7 @@ class QueueProviderEnrichmentRequest(BaseModel):
 
 class DecideProposalRequest(BaseModel):
     note: str | None = Field(default=None, max_length=1000)
+    selected_candidates: dict[str, uuid.UUID] = Field(default_factory=dict, max_length=50)
 
 
 class CreateTenderRequest(BaseModel):
