@@ -4,6 +4,7 @@ from app.integrations.presentation import MockPresentationProvider, RoutingPrese
 from app.services.interactive_html_service import (
     InteractiveHTMLValidationError,
     MockInteractiveHTMLProvider,
+    _enforce_fact_bindings,
     audit_interactive_html,
 )
 
@@ -48,6 +49,24 @@ event.preventDefault();document.querySelector('#facts').classList.toggle('active
     assert report["fact_binding_passed"] is True
     assert report["security_passed"] is True
     assert report["claim_count"] == 2
+
+
+def test_platform_hydrates_model_fact_slots_with_immutable_text() -> None:
+    snapshot = {
+        "released_claims": [{"claim_id": "claim-1", "text": "原始事实 <不得改写>"}],
+        "evidence": [{"evidence_id": "evidence-1", "quote": "逐字证据 & 来源"}],
+    }
+    generated = """<section>
+<p class="claim" data-claim-id="claim-1"><strong>模型改写的事实</strong></p>
+<blockquote data-evidence-id='evidence-1'>模型概括的证据</blockquote>
+</section>"""
+
+    hydrated = _enforce_fact_bindings(generated, snapshot)
+
+    assert "模型改写" not in hydrated
+    assert "模型概括" not in hydrated
+    assert "原始事实 &lt;不得改写&gt;" in hydrated
+    assert "逐字证据 &amp; 来源" in hydrated
 
 
 @pytest.mark.parametrize(

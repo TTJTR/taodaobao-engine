@@ -276,6 +276,43 @@ def _enforce_document_title(document: str, title: str) -> str:
     )
 
 
+def _enforce_fact_bindings(document: str, snapshot: dict[str, Any]) -> str:
+    """Hydrate model-selected fact slots with immutable platform-owned text."""
+
+    hydrated = document
+    bindings = (
+        (
+            "data-claim-id",
+            "claim_id",
+            "text",
+            snapshot.get("released_claims", []),
+        ),
+        (
+            "data-evidence-id",
+            "evidence_id",
+            "quote",
+            snapshot.get("evidence", []),
+        ),
+    )
+    for attribute, identifier_key, text_key, items in bindings:
+        for item in items:
+            identifier = re.escape(str(item[identifier_key]))
+            pattern = re.compile(
+                rf"<(?P<tag>[a-z][a-z0-9-]*)(?P<attrs>[^>]*\b{attribute}="
+                rf"(?P<quote>['\"]){identifier}(?P=quote)[^>]*)>.*?</(?P=tag)>",
+                re.IGNORECASE | re.DOTALL,
+            )
+            replacement_text = html.escape(str(item[text_key]))
+            hydrated = pattern.sub(
+                lambda match, replacement_text=replacement_text: (
+                    f"<{match.group('tag')}{match.group('attrs')}>"
+                    f"{replacement_text}</{match.group('tag')}>"
+                ),
+                hydrated,
+            )
+    return hydrated
+
+
 def _inject_interaction_runtime(document: str) -> str:
     runtime = """<script id="taodaobao-interaction-runtime">
 document.addEventListener('DOMContentLoaded',()=>{
@@ -474,7 +511,8 @@ class LiveInteractiveHTMLProvider:
                     document = _inject_interaction_runtime(
                         _inject_csp(
                             _enforce_document_title(
-                                generated, str(snapshot.get("title", ""))
+                                _enforce_fact_bindings(generated, snapshot),
+                                str(snapshot.get("title", "")),
                             )
                         )
                     )
