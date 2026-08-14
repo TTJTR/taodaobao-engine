@@ -6,7 +6,13 @@ import httpx
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import text
 
-from app.api.deps import AIEngineDependency, CurrentUser, DatabaseSession, WorkspaceId
+from app.api.deps import (
+    CurrentUser,
+    DatabaseSession,
+    WorkspaceId,
+    bailian_is_configured,
+    get_ai_engine,
+)
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
@@ -72,7 +78,9 @@ def _connections() -> list[dict]:
             "provider": "ai",
             "label": "AI 可信服务",
             "mode": settings.ai_mode,
-            "status": "mock" if settings.ai_mode == "mock" else "configured",
+            "status": "configured"
+            if settings.ai_mode == "live" and bailian_is_configured()
+            else "not_configured",
         },
         {
             "provider": "deep-research",
@@ -84,20 +92,16 @@ def _connections() -> list[dict]:
             "provider": "presentation",
             "label": "展示稿服务",
             "mode": settings.presentation_mode,
-            "status": "mock"
-            if settings.presentation_mode == "mock"
-            else "configured"
-            if settings.presentation_service_url
+            "status": "configured"
+            if settings.presentation_mode == "live" and settings.presentation_service_url
             else "not_configured",
         },
         {
             "provider": "interactive-html",
             "label": "互动 HTML 生成",
             "mode": settings.interactive_html_mode,
-            "status": "mock"
-            if settings.interactive_html_mode == "mock"
-            else "configured"
-            if settings.interactive_html_api_key
+            "status": "configured"
+            if settings.interactive_html_mode == "live" and settings.interactive_html_api_key
             else "not_configured",
         },
         {
@@ -110,10 +114,10 @@ def _connections() -> list[dict]:
             "provider": "feishu",
             "label": "飞书开放平台",
             "mode": settings.feishu_mode,
-            "status": "mock"
-            if settings.feishu_mode == "mock"
-            else "configured"
-            if settings.feishu_app_id and settings.feishu_app_secret
+            "status": "configured"
+            if settings.feishu_mode == "live"
+            and settings.feishu_app_id
+            and settings.feishu_app_secret
             else "not_configured",
         },
     ]
@@ -130,7 +134,6 @@ async def test_model_connection(
     request: Request,
     session: DatabaseSession,
     current_user: CurrentUser,
-    ai_engine: AIEngineDependency,
     _: str = Depends(require_idempotency_key),
 ) -> dict:
     known = {row["provider"]: row for row in _connections()}
@@ -140,6 +143,7 @@ async def test_model_connection(
     mode = known[provider]["mode"]
     try:
         if provider == "ai":
+            ai_engine = get_ai_engine()
             result = await ai_engine.extract_search_intent(
                 {
                     "customer_profile": {
@@ -184,8 +188,6 @@ async def test_model_connection(
                 response.raise_for_status()
         elif provider == "deep-research":
             await session.execute(text("SELECT 1"))
-        elif mode == "mock":
-            pass
         else:
             raise RuntimeError("provider is not configured")
     except Exception as exc:
@@ -200,7 +202,7 @@ async def test_model_connection(
         request,
         {
             "provider": provider,
-            "status": "mock" if mode == "mock" else "ok",
+            "status": "ok",
             "mode": mode,
             "latency_ms": round((time.perf_counter() - started) * 1000),
             "tested_at": __import__("datetime")

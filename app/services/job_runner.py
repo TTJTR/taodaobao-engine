@@ -2,7 +2,6 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
-from app.ai import MockAIEngine
 from app.ai.embedding import content_fingerprint
 from app.contracts.ai import AIEngine
 from app.core.errors import ErrorCode
@@ -36,7 +35,7 @@ async def run_source_job(
     source_id: uuid.UUID,
     workspace_id: uuid.UUID,
     feishu_adapter: FeishuAdapter,
-    ai_engine: AIEngine | None = None,
+    ai_engine: AIEngine,
     access_token: str | None = None,
 ) -> None:
     session_factory = get_session_factory()
@@ -48,7 +47,6 @@ async def run_source_job(
         if job is None or source is None:
             return
 
-        ai_engine = ai_engine or MockAIEngine()
         try:
             await _set_stage(session, job, source, "fetching", SourceStatus.FETCHING)
             if source.type == SourceType.FEISHU_DOC:

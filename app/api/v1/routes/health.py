@@ -1,4 +1,3 @@
-import os
 from typing import Any
 
 import asyncpg
@@ -6,6 +5,7 @@ import httpx
 from fastapi import APIRouter, Request
 from sqlalchemy.engine import make_url
 
+from app.api.deps import bailian_is_configured
 from app.core.config import settings
 from app.core.responses import success_response
 
@@ -75,13 +75,12 @@ async def health_check(request: Request) -> dict[str, Any]:
             if connection is not None:
                 await connection.close()
 
-    if settings.ai_mode == "mock":
-        ai_status = "mock"
-    else:
-        ai_status = "ok" if os.getenv("DASHSCOPE_API_KEY") else "not_configured"
-    if settings.feishu_mode == "mock":
-        feishu_status = "mock"
-    else:
+    ai_status = (
+        "ok"
+        if settings.ai_mode == "live" and bailian_is_configured()
+        else "not_configured"
+    )
+    if settings.feishu_mode == "live":
         required_feishu_settings = (
             settings.feishu_app_id,
             settings.feishu_app_secret,
@@ -90,27 +89,24 @@ async def health_check(request: Request) -> dict[str, Any]:
             settings.feishu_token_encryption_key,
         )
         feishu_status = "configured" if all(required_feishu_settings) else "not_configured"
+    else:
+        feishu_status = "not_configured"
     presentation_status = (
-        "mock"
-        if settings.presentation_mode == "mock"
-        else "configured"
-        if settings.presentation_service_url
+        "configured"
+        if settings.presentation_mode == "live" and settings.presentation_service_url
         else "not_configured"
     )
     interactive_html_status = (
-        "mock"
-        if settings.interactive_html_mode == "mock"
-        else "configured"
-        if settings.interactive_html_api_key
+        "configured"
+        if settings.interactive_html_mode == "live" and settings.interactive_html_api_key
         else "not_configured"
     )
     status = (
         "ok"
         if database_status in {"ok", "not_configured"}
-        and ai_status in {"ok", "mock"}
-        and feishu_status in {"configured", "mock"}
-        and presentation_status in {"configured", "mock"}
-        and interactive_html_status in {"configured", "mock"}
+        and ai_status == "ok"
+        and feishu_status == "configured"
+        and interactive_html_status == "configured"
         else "degraded"
     )
     return success_response(

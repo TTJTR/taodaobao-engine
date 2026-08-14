@@ -11,6 +11,7 @@ from app.db.models import (
     PresentationStatus,
     StyleProfileStatus,
 )
+from app.integrations.presentation_planner import MockSlidePlanner
 from app.schemas.presentation import FactAtom, FactLedger, LedgerEvidence
 from app.services import presentation_pipeline as module
 
@@ -104,7 +105,9 @@ async def test_pipeline_builds_validated_deterministic_html_artifact(
     ledger_service = SimpleNamespace(build_ledger=AsyncMock(return_value=ledger))
     monkeypatch.setattr(module, "FactLedgerService", lambda *_: ledger_service)
 
-    await module.run_presentation_generation(presentation_id, run_id, style_profile_id)
+    await module.run_presentation_generation(
+        presentation_id, run_id, style_profile_id, MockSlidePlanner()
+    )
 
     assert observed_statuses == [
         PresentationStatus.PLANNING,

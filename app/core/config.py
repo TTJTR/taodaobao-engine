@@ -17,14 +17,14 @@ class Settings(BaseSettings):
     env: Literal["development", "test", "production"] = "development"
     debug: bool = False
     api_prefix: str = "/api/v1"
-    ai_mode: Literal["mock", "live"] = "mock"
+    ai_mode: Literal["live"] = "live"
     rehearsal_ai_timeout_seconds: float = 20.0
     rehearsal_ai_max_prompt_characters: int = 36_000
-    feishu_mode: Literal["mock", "live"] = "mock"
-    presentation_mode: Literal["mock", "live"] = "mock"
+    feishu_mode: Literal["live"] = "live"
+    presentation_mode: Literal["live"] = "live"
     presentation_service_url: str | None = None
     presentation_service_api_key: str | None = None
-    interactive_html_mode: Literal["mock", "live"] = "mock"
+    interactive_html_mode: Literal["live"] = "live"
     interactive_html_base_url: str = "https://api.deepseek.com"
     interactive_html_api_key: str | None = None
     interactive_html_model: str = "deepseek-chat"
@@ -81,13 +81,6 @@ class Settings(BaseSettings):
             raise ValueError("APP_OPEN_ENRICH_POLL_SECONDS must be positive")
         if self.interactive_html_timeout_seconds <= 0:
             raise ValueError("APP_INTERACTIVE_HTML_TIMEOUT_SECONDS must be positive")
-        if self.interactive_html_mode == "live" and not (
-            self.interactive_html_api_key or ""
-        ).strip():
-            raise ValueError(
-                "APP_INTERACTIVE_HTML_API_KEY is required when "
-                "APP_INTERACTIVE_HTML_MODE=live"
-            )
         return self
 
 

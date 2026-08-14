@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from app.ai import MockAIEngine
 from app.db.models import Job, ProcessStatus, Source, SourcePurpose, SourceStatus, SourceType
 from app.integrations.protocols import FeishuDocument
 from app.services import job_runner as module
@@ -79,7 +80,9 @@ async def test_job_runner_flows_to_pending_review(monkeypatch: pytest.MonkeyPatc
     workspace_id, source, job = make_entities()
     session = configure_runner(monkeypatch, source, job)
 
-    await module.run_source_job(job.id, source.id, workspace_id, Adapter())
+    await module.run_source_job(
+        job.id, source.id, workspace_id, Adapter(), MockAIEngine()
+    )
 
     assert session.observed_stages == [
         "fetching",
@@ -98,7 +101,9 @@ async def test_job_runner_records_failure_and_retry(monkeypatch: pytest.MonkeyPa
     workspace_id, source, job = make_entities()
     configure_runner(monkeypatch, source, job)
 
-    await module.run_source_job(job.id, source.id, workspace_id, FailingAdapter())
+    await module.run_source_job(
+        job.id, source.id, workspace_id, FailingAdapter(), MockAIEngine()
+    )
 
     assert job.status == ProcessStatus.FAILED
     assert source.status == SourceStatus.FAILED

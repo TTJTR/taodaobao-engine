@@ -50,8 +50,12 @@ V1 使用 pgvector。可先启动独立数据库并执行迁移：
 docker compose -f compose.dev.yaml up -d postgres
 $env:APP_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:55433/taodaobao_v1"
 python -m alembic upgrade head
-python -m app.cli.seed_demo --reset
+python scripts/verify_builtin_document_index.py
 ```
+
+该命令只写入明确标记为虚构的内置验收文档，并调用真实 Embedding、pgvector
+与 `RetrievalService`。缺少数据库或模型配置时输出 `skipped`，不会回退到 Mock。
+详见 [运行时无Mock与内置文档索引验收](docs/运行时无Mock与内置文档索引验收.md)。
 
 V1 增量 HTTP 契约见 `docs/openapi-v1-incremental.yaml`；根目录
 `openapi.yaml` 继续作为冻结的 V0.5 前后端契约。

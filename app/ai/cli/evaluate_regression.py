@@ -2,7 +2,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from app.ai.engine import BailianAIEngine, MockAIEngine
+from app.ai.engine import BailianAIEngine
 from app.ai.evaluation import load_evaluation_suite, run_evaluation_suite
 from app.ai.model_client import BailianChatClient, BailianSettings
 
@@ -23,9 +23,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=("mock", "bailian"),
-        default="mock",
-        help="使用离线 Mock 或真实百炼运行评测",
+        choices=("bailian",),
+        default="bailian",
+        help="使用真实百炼服务运行评测；未配置时直接跳过",
     )
     parser.add_argument(
         "--env-file",
@@ -38,14 +38,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 async def run(args: argparse.Namespace) -> None:
     suite, cases = load_evaluation_suite(args.cases)
-    if args.mode == "bailian":
-        settings = BailianSettings.from_env(args.env_file)
-        client = BailianChatClient(settings)
-        engine = BailianAIEngine(client)
-        model_version = client.model_version
-    else:
-        engine = MockAIEngine()
-        model_version = "mock-v1"
+    settings = BailianSettings.from_env(args.env_file)
+    client = BailianChatClient(settings)
+    engine = BailianAIEngine(client)
+    model_version = client.model_version
     report = await run_evaluation_suite(
         suite,
         cases,

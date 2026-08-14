@@ -172,6 +172,7 @@ def test_metadata_contains_core_and_idempotency_tables() -> None:
         "jobs",
         "idempotency_records",
         "invitation_redemptions",
+        "invitation_redemption_uses",
         "review_records",
         "ai_run_records",
         "research_tasks",

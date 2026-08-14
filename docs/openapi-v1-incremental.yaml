@@ -10,6 +10,10 @@ paths:
   /auth/invitation/verify:
     post:
       operationId: verifyInvitation
+      description: >-
+        Verifies a signed invitation. New tokens may declare 1-100 total
+        redemptions; legacy tokens default to one. Every successful redemption
+        still creates a distinct, short-lived, single-use OAuth proof.
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
         required: true

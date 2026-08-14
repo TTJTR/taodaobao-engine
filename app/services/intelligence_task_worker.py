@@ -11,13 +11,11 @@ from app.core.errors import AppError, ErrorCode
 from app.db.database import get_session_factory
 from app.db.models import SearchRun, SearchRunStatus, WorkflowTask, WorkflowTaskStatus
 from app.integrations.http_open_enrich_adapter import HttpOpenEnrichAdapter
-from app.integrations.open_enrich_adapter import OpenEnrichAdapter
 from app.integrations.protocols import IntelligenceProvider
 from app.schemas.intelligence_provider import EnrichmentJobRequest
 from app.services.intelligence_service import IntelligenceService
 
 logger = logging.getLogger(__name__)
-_mock_provider = OpenEnrichAdapter()
 
 
 def get_intelligence_provider() -> IntelligenceProvider:
@@ -25,7 +23,12 @@ def get_intelligence_provider() -> IntelligenceProvider:
         return HttpOpenEnrichAdapter(
             settings.open_enrich_svc_url, token=settings.open_enrich_svc_token
         )
-    return _mock_provider
+    raise AppError(
+        ErrorCode.PROVIDER_UNAVAILABLE,
+        "Open Enrich service is not configured; task skipped without mock output",
+        status_code=503,
+        retryable=False,
+    )
 
 
 async def run_open_enrich_task(
@@ -34,13 +37,33 @@ async def run_open_enrich_task(
     run_id: uuid.UUID,
     provider: IntelligenceProvider | None = None,
 ) -> None:
-    provider = provider or get_intelligence_provider()
+    if provider is None:
+        try:
+            provider = get_intelligence_provider()
+        except AppError as exc:
+            await _mark_provider_unavailable(task_id, workspace_id, run_id, exc)
+            return
     try:
         await _run_task(task_id, workspace_id, run_id, provider)
     finally:
         close = getattr(provider, "aclose", None)
         if close is not None:
             await close()
+
+
+async def _mark_provider_unavailable(
+    task_id: uuid.UUID,
+    workspace_id: uuid.UUID,
+    run_id: uuid.UUID,
+    error: AppError,
+) -> None:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        task, run = await _load(session, task_id, workspace_id, run_id)
+        if task is None or run is None:
+            return
+        _fail(task, run, error.code.value, error.message)
+        await session.commit()
 
 
 async def _run_task(

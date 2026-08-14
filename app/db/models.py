@@ -7,6 +7,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -1146,12 +1147,46 @@ class IdempotencyRecord(Base):
 
 class InvitationRedemption(Base):
     __tablename__ = "invitation_redemptions"
+    __table_args__ = (
+        CheckConstraint(
+            "max_uses >= 1 AND max_uses <= 100",
+            name="ck_invitation_redemptions_max_uses",
+        ),
+        CheckConstraint(
+            "redeemed_count >= 1 AND redeemed_count <= max_uses",
+            name="ck_invitation_redemptions_redeemed_count",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     token_id_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
+    max_uses: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    redeemed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class InvitationRedemptionUse(Base):
+    __tablename__ = "invitation_redemption_uses"
+    __table_args__ = (
+        UniqueConstraint("token_id_hash", "redemption_number"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    token_id_hash: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("invitation_redemptions.token_id_hash", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    redemption_number: Mapped[int] = mapped_column(Integer, nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

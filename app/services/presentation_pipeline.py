@@ -16,7 +16,6 @@ from app.db.models import (
     VisualStyleProfile,
 )
 from app.db.repositories import PresentationRenderSnapshotRepository
-from app.integrations.presentation_planner import MockSlidePlanner
 from app.presentation.layouts.diagnostics import diagnose_layout
 from app.presentation.layouts.engine import LayoutEngine
 from app.presentation.layouts.paginator import SlidePaginator
@@ -99,9 +98,11 @@ async def run_presentation_generation(
                 max_pages=12,
                 max_components_per_page=4,
             )
-            plan = await PresentationPlanningHarness(
-                planner or MockSlidePlanner()
-            ).run_slide_planning(planning_context, fact_catalog, style_constraints)
+            if planner is None:
+                raise PresentationPlanningUnavailable("slide planner is not configured")
+            plan = await PresentationPlanningHarness(planner).run_slide_planning(
+                planning_context, fact_catalog, style_constraints
+            )
             spec = SlidePaginator().paginate(SlidePlanMaterializer().materialize(plan, ledger))
             text_provenance = SystemLabelCatalog().build_provenance(spec, ledger)
 

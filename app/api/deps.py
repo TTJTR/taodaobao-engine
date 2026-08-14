@@ -11,14 +11,13 @@ from app.ai import (
     BailianAIEngine,
     BailianChatClient,
     BailianSettings,
-    MockAIEngine,
 )
 from app.ai.embedding import (
     BailianEmbeddingProvider,
     BailianEmbeddingSettings,
     EmbeddingProvider,
-    MockEmbeddingProvider,
 )
+from app.ai.model_client import ModelClientError
 from app.ai.rehearsal import RehearsalAIWorkflow
 from app.contracts.ai import AIEngine
 from app.contracts.presentation import SlidePlanner
@@ -29,8 +28,8 @@ from app.core.token_crypto import validate_live_token_encryption
 from app.db.database import get_db
 from app.db.models import User
 from app.db.repositories import UserRepository
-from app.integrations import FeishuAdapter, LiveFeishuAdapter, MockFeishuAdapter
-from app.integrations.presentation_planner import AIEngineSlidePlanner, MockSlidePlanner
+from app.integrations import FeishuAdapter, LiveFeishuAdapter
+from app.integrations.presentation_planner import AIEngineSlidePlanner
 from app.services.auth import AuthService
 from app.services.invitations import (
     InvitationRedemptionStore,
@@ -47,10 +46,20 @@ def get_session_codec() -> SessionCodec:
 
 @lru_cache
 def get_feishu_adapter() -> FeishuAdapter:
-    if settings.feishu_mode == "mock":
-        return MockFeishuAdapter(settings.public_base_url)
+    if settings.feishu_mode != "live":
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "飞书服务未启用",
+            status_code=503,
+            retryable=False,
+        )
     if not settings.feishu_app_id or not settings.feishu_app_secret:
-        raise RuntimeError("Live Feishu mode requires APP_FEISHU_APP_ID and APP_FEISHU_APP_SECRET")
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "飞书服务未配置",
+            status_code=503,
+            retryable=False,
+        )
     validate_live_token_encryption()
     return LiveFeishuAdapter(
         settings.feishu_app_id,
@@ -75,9 +84,22 @@ InvitationRedemptionStoreDependency = Annotated[
 
 @lru_cache
 def get_ai_engine() -> AIEngine:
-    if settings.ai_mode == "mock":
-        return MockAIEngine()
-    bailian_settings = BailianSettings.from_env(Path(".env"))
+    if settings.ai_mode != "live":
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "AI 服务未启用",
+            status_code=503,
+            retryable=False,
+        )
+    try:
+        bailian_settings = BailianSettings.from_env(Path(".env"))
+    except (ModelClientError, ValueError) as exc:
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "AI 服务未配置",
+            status_code=503,
+            retryable=False,
+        ) from exc
     return BailianAIEngine(BailianChatClient(bailian_settings))
 
 
@@ -86,12 +108,22 @@ AIEngineDependency = Annotated[AIEngine, Depends(get_ai_engine)]
 
 @lru_cache
 def get_rehearsal_ai_workflow() -> RehearsalAIWorkflow:
-    if settings.ai_mode == "mock":
-        return RehearsalAIWorkflow(
-            timeout_seconds=settings.rehearsal_ai_timeout_seconds,
-            max_prompt_characters=settings.rehearsal_ai_max_prompt_characters,
+    if settings.ai_mode != "live":
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "AI 演练服务未启用",
+            status_code=503,
+            retryable=False,
         )
-    bailian_settings = BailianSettings.from_env(Path(".env"))
+    try:
+        bailian_settings = BailianSettings.from_env(Path(".env"))
+    except (ModelClientError, ValueError) as exc:
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "AI 演练服务未配置",
+            status_code=503,
+            retryable=False,
+        ) from exc
     return RehearsalAIWorkflow(
         BailianChatClient(bailian_settings),
         timeout_seconds=settings.rehearsal_ai_timeout_seconds,
@@ -106,8 +138,13 @@ RehearsalAIWorkflowDependency = Annotated[
 
 @lru_cache
 def get_slide_planner() -> SlidePlanner:
-    if settings.ai_mode == "mock":
-        return MockSlidePlanner()
+    if settings.ai_mode != "live":
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "AI 展示规划服务未启用",
+            status_code=503,
+            retryable=False,
+        )
     return AIEngineSlidePlanner(get_ai_engine())
 
 
@@ -116,9 +153,32 @@ SlidePlannerDependency = Annotated[SlidePlanner, Depends(get_slide_planner)]
 
 @lru_cache
 def get_embedding_provider() -> EmbeddingProvider:
-    if settings.ai_mode == "mock":
-        return MockEmbeddingProvider(dimension=1024)
-    return BailianEmbeddingProvider(BailianEmbeddingSettings.from_env(Path(".env")))
+    if settings.ai_mode != "live":
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "Embedding 服务未启用",
+            status_code=503,
+            retryable=False,
+        )
+    try:
+        provider_settings = BailianEmbeddingSettings.from_env(Path(".env"))
+    except (ModelClientError, ValueError) as exc:
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "Embedding 服务未配置",
+            status_code=503,
+            retryable=False,
+        ) from exc
+    return BailianEmbeddingProvider(provider_settings)
+
+
+def bailian_is_configured() -> bool:
+    try:
+        BailianSettings.from_env(Path(".env"))
+        BailianEmbeddingSettings.from_env(Path(".env"))
+    except (ModelClientError, ValueError):
+        return False
+    return True
 
 
 EmbeddingProviderDependency = Annotated[EmbeddingProvider, Depends(get_embedding_provider)]

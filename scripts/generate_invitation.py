@@ -13,14 +13,28 @@ def main() -> int:
     parser.add_argument("--secret-file", type=Path, required=True)
     parser.add_argument("--hours", type=int, default=24, help="validity in hours (default: 24)")
     parser.add_argument("--count", type=int, default=1, help="number of single-use tokens")
+    parser.add_argument(
+        "--max-uses",
+        type=int,
+        default=1,
+        help="maximum successful redemptions per token (default: 1)",
+    )
     args = parser.parse_args()
     if not 1 <= args.hours <= 720:
         parser.error("--hours must be between 1 and 720")
     if not 1 <= args.count <= 100:
         parser.error("--count must be between 1 and 100")
+    if not 1 <= args.max_uses <= 100:
+        parser.error("--max-uses must be between 1 and 100")
     secret = args.secret_file.read_text(encoding="utf-8").strip()
     for _ in range(args.count):
-        print(generate_invitation_token(secret, ttl_seconds=args.hours * 3600))
+        print(
+            generate_invitation_token(
+                secret,
+                ttl_seconds=args.hours * 3600,
+                max_uses=args.max_uses,
+            )
+        )
     return 0
 
 

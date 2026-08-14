@@ -38,11 +38,15 @@ def _invitation_signing_key() -> bytes:
     return hmac.new(settings.session_secret.encode(), code, hashlib.sha256).digest()
 
 
-def create_invitation_proof(token_id_hash: str | None = None) -> str:
+def create_invitation_proof(
+    token_id_hash: str | None = None,
+    redemption_number: int | None = None,
+) -> str:
     expires_at = int(time.time()) + settings.invitation_ttl_seconds
     parts = [str(expires_at), secrets.token_urlsafe(18)]
     if token_id_hash:
         parts.append(token_id_hash)
+        parts.append(str(redemption_number or 1))
     payload = ".".join(parts)
     signature = hmac.new(
         _invitation_signing_key(), payload.encode(), hashlib.sha256
@@ -55,7 +59,7 @@ def verify_invitation_proof(proof: str | None) -> bool:
         return False
     try:
         parts = proof.split(".")
-        if len(parts) not in {3, 4}:
+        if len(parts) not in {3, 4, 5}:
             return False
         expires_at_raw, nonce, *remainder = parts
         signature = remainder[-1]
@@ -75,7 +79,22 @@ def invitation_proof_token_hash(proof: str | None) -> str | None:
     if not verify_invitation_proof(proof) or proof is None:
         return None
     parts = proof.split(".")
-    return parts[2] if len(parts) == 4 else None
+    return parts[2] if len(parts) in {4, 5} else None
+
+
+def invitation_proof_redemption_number(proof: str | None) -> int | None:
+    if not verify_invitation_proof(proof) or proof is None:
+        return None
+    parts = proof.split(".")
+    if len(parts) == 4:
+        return 1
+    if len(parts) != 5:
+        return None
+    try:
+        number = int(parts[3])
+    except ValueError:
+        return None
+    return number if number > 0 else None
 
 
 def consume_invitation_proof(proof: str | None) -> bool:
@@ -111,6 +130,7 @@ async def verify_invitation(
     _: str = Depends(require_idempotency_key),
 ) -> dict[str, object]:
     claims: InvitationClaims | None = None
+    redemption_number: int | None = None
     if settings.invitation_signing_secret:
         claims = verify_invitation_token(
             payload.invitation_code,
@@ -119,7 +139,10 @@ async def verify_invitation(
         )
         if claims is not None:
             expires_at = datetime.fromtimestamp(claims.expires_at, tz=UTC)
-            if not await redemption_store.redeem(claims.token_id_hash, expires_at):
+            redemption_number = await redemption_store.redeem(
+                claims.token_id_hash, expires_at, claims.max_uses
+            )
+            if redemption_number is None:
                 claims = None
     else:
         configured = settings.invitation_code or ""
@@ -133,7 +156,10 @@ async def verify_invitation(
         )
     response.set_cookie(
         settings.invitation_cookie_name,
-        create_invitation_proof(None if claims.token_id == "legacy" else claims.token_id_hash),
+        create_invitation_proof(
+            None if claims.token_id == "legacy" else claims.token_id_hash,
+            redemption_number,
+        ),
         max_age=settings.invitation_ttl_seconds,
         httponly=True,
         secure=settings.cookie_secure,
@@ -156,9 +182,10 @@ async def start_feishu_authorization(
 ) -> JSONResponse:
     if settings.invitation_required:
         token_hash = invitation_proof_token_hash(invitation)
+        redemption_number = invitation_proof_redemption_number(invitation)
         accepted = (
-            await redemption_store.consume(token_hash)
-            if token_hash
+            await redemption_store.consume(token_hash, redemption_number)
+            if token_hash and redemption_number is not None
             else consume_invitation_proof(invitation)
         )
         if not accepted:

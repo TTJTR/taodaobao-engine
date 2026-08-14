@@ -27,8 +27,16 @@ def test_static_index_is_served_at_root() -> None:
     assert "function createIdempotencyKey()" in response.text
     assert 'headers["Idempotency-Key"]=createIdempotencyKey()' in response.text
     assert "apiFetch(`/feishu/resources?${query}`)" in response.text
-    assert 'AI ${s.runtime.ai_mode==="live"?"真实":"模拟"}' in response.text
-    assert '飞书 ${s.runtime.feishu_mode==="live"?"真实":"模拟"}' in response.text
+    assert "function runtimeLabel(status)" in response.text
+    assert "AI ${runtimeLabel(s.runtime.ai)}" in response.text
+    assert "飞书 ${runtimeLabel(s.runtime.feishu)}" in response.text
+    assert "前端已停止渲染，不会使用固定文案补齐结果" in response.text
+    assert "当前页面全部为结构演示数据" not in response.text
+    assert "reset-demo" not in response.text
+    assert 'id="calm-pet"' not in response.text
+    assert "const CalmPet" not in response.text
+    assert "功德＋1" not in response.text
+    assert "某智能制造集团" not in response.text
     assert 'source.is_demo?"（演示数据）"' in response.text
     assert "TAO2026" not in response.text
     assert "制造业智能质检PRD v3.1" not in response.text
@@ -51,6 +59,15 @@ def test_static_index_is_served_at_root() -> None:
     assert "function renderModels()" in response.text
     assert "apiFetch(`/style-profiles/${id}`)" in response.text
     assert "V1.0 规划能力，不进入当前MVP主流程" not in response.text
+
+
+def test_truthful_youthful_shell_styles_are_served() -> None:
+    response = TestClient(app).get("/app-shell-v3.css")
+
+    assert response.status_code == 200
+    assert "TRUSTED PRESALES" not in response.text
+    assert ".home-hero" in response.text
+    assert ".journey-grid" in response.text
 
 
 def test_static_mount_does_not_shadow_api_routes() -> None:

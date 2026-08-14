@@ -19,6 +19,7 @@ class InvitationClaims:
     token_id: str
     issued_at: int
     expires_at: int
+    max_uses: int = 1
 
     @property
     def token_id_hash(self) -> str:
@@ -37,17 +38,26 @@ def _key(secret: str) -> bytes:
     return hashlib.sha256(("taodaobao-invitation-v1:" + secret).encode()).digest()
 
 
-def generate_invitation_token(secret: str, *, ttl_seconds: int, now: int | None = None) -> str:
+def generate_invitation_token(
+    secret: str,
+    *,
+    ttl_seconds: int,
+    max_uses: int = 1,
+    now: int | None = None,
+) -> str:
     if len(secret) < 32:
         raise ValueError("invitation signing secret must contain at least 32 characters")
     if ttl_seconds <= 0:
         raise ValueError("ttl_seconds must be positive")
+    if not 1 <= max_uses <= 100:
+        raise ValueError("max_uses must be between 1 and 100")
     issued_at = int(time.time()) if now is None else now
     payload = {
         "aud": TOKEN_AUDIENCE,
         "exp": issued_at + ttl_seconds,
         "iat": issued_at,
         "jti": secrets.token_urlsafe(16),
+        "uses": max_uses,
     }
     encoded = _encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
     signed = f"{TOKEN_PREFIX}.{encoded}"
@@ -78,6 +88,7 @@ def verify_invitation_token(
             token_id=str(payload["jti"]),
             issued_at=int(payload["iat"]),
             expires_at=int(payload["exp"]),
+            max_uses=int(payload.get("uses", 1)),
         )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         return None
@@ -85,6 +96,8 @@ def verify_invitation_token(
     if payload.get("aud") != TOKEN_AUDIENCE or not claims.token_id:
         return None
     if claims.issued_at > current + 60 or claims.expires_at < current:
+        return None
+    if not 1 <= claims.max_uses <= 100:
         return None
     invalid_ttl = claims.expires_at - claims.issued_at > max_ttl_seconds
     if claims.expires_at <= claims.issued_at or invalid_ttl:

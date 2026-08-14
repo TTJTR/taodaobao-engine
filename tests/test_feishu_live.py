@@ -6,6 +6,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from app.integrations.feishu import LiveFeishuAdapter
 from app.integrations.feishu_events import (
     FeishuEventError,
@@ -135,10 +136,17 @@ def test_feishu_event_signature_and_text_parsing() -> None:
         )
 
 
-def test_native_feishu_event_url_verification_has_no_business_dependencies() -> None:
+def test_native_feishu_event_url_verification_has_no_business_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "feishu_verification_token", "verification-token")
     response = TestClient(create_app()).post(
         "/api/v1/expert-collaborations/events/feishu",
-        json={"type": "url_verification", "challenge": "challenge-123"},
+        json={
+            "type": "url_verification",
+            "challenge": "challenge-123",
+            "token": "verification-token",
+        },
     )
 
     assert response.status_code == 200

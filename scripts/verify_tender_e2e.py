@@ -39,31 +39,13 @@ from app.db.models import (  # noqa: E402
     User,
 )
 from app.integrations.docling_adapter import DoclingAdapter  # noqa: E402
-from app.integrations.protocols import DocumentIR, DocumentNode  # noqa: E402
+from app.integrations.protocols import DocumentNode  # noqa: E402
 from app.services.tender_parse_worker import TenderParseWorker  # noqa: E402
 from app.services.tender_service import TenderService  # noqa: E402
 
 MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 REQUIREMENT_SUPPORTED = "要求系统必须支持 10 万并发处理。"
 REQUIREMENT_UNSUPPORTED = "要求系统必须提供宇宙飞船对接接口。"
-
-
-class MockParserAdapter:
-    parser_name = "mock-docx-e2e"
-    parser_version = "1.0"
-
-    def parse(self, source, mime_type, *, filename=None) -> DocumentIR:
-        del source, filename
-        if mime_type != MIME_DOCX:
-            raise ValueError("E2E mock parser only accepts DOCX")
-        return DocumentIR(
-            parser_name=self.parser_name,
-            parser_version=self.parser_version,
-            nodes=(
-                _node(REQUIREMENT_SUPPORTED, 1, "table", row=1),
-                _node(REQUIREMENT_UNSUPPORTED, 2, "table", row=2),
-            ),
-        )
 
 
 def _node(value: str, paragraph: int, node_type: str, *, row: int) -> DocumentNode:
@@ -103,6 +85,9 @@ def generate_docx(path: Path) -> None:
 
 
 async def main() -> int:
+    if not importlib.util.find_spec("docling"):
+        print("[SKIPPED] Docling is not installed; tender parsing was not simulated.")
+        return 0
     if not settings.database_url:
         print("[FAIL] 未配置 APP_DATABASE_URL，无法连接 PostgreSQL。")
         return 2
@@ -112,7 +97,7 @@ async def main() -> int:
     engine = None
     factory = None
     temp_dir = tempfile.TemporaryDirectory(prefix="tender-e2e-")
-    docx_path = Path(temp_dir.name) / "mock-tender.docx"
+    docx_path = Path(temp_dir.name) / "synthetic-tender.docx"
     print(f"[SETUP] E2E workspace: {workspace_id}")
     try:
         async with admin_engine.begin() as connection:
@@ -204,11 +189,7 @@ async def main() -> int:
             await session.commit()
             print(f"[STEP 1] RawArtifact: {artifact.id}")
 
-            parser = (
-                DoclingAdapter()
-                if importlib.util.find_spec("docling")
-                else MockParserAdapter()
-            )
+            parser = DoclingAdapter()
             print(f"[STEP 2] Parser: {parser.parser_name} {parser.parser_version}")
             parsed = await TenderParseWorker(
                 session, workspace_id, parser=parser

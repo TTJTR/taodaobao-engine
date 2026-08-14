@@ -172,6 +172,8 @@ def test_auth_routes_and_secure_cookies(monkeypatch: pytest.MonkeyPatch) -> None
 
         missing_key = client.post("/api/v1/auth/logout")
         assert missing_key.status_code == 422
+        if not settings.database_url:
+            pytest.skip("APP_DATABASE_URL is not configured; logout persistence not simulated")
         logout = client.post(
             "/api/v1/auth/logout",
             headers={"Idempotency-Key": f"logout-{uuid.uuid4()}"},
@@ -233,6 +235,8 @@ def test_invitation_must_be_verified_before_oauth_and_is_single_use(
 
 
 def test_me_requires_session_cookie() -> None:
+    if not settings.database_url:
+        pytest.skip("APP_DATABASE_URL is not configured; auth database access not simulated")
     response = TestClient(create_app()).get("/api/v1/me")
 
     assert response.status_code == 401

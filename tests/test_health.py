@@ -8,19 +8,28 @@ def test_health_check_uses_standard_envelope(monkeypatch) -> None:
     from app.api.v1.routes import health
 
     monkeypatch.setattr(health.settings, "open_enrich_svc_url", None)
+    monkeypatch.setattr(health.settings, "database_url", None)
+    monkeypatch.setattr(health, "bailian_is_configured", lambda: False)
+    monkeypatch.setattr(health.settings, "ai_mode", "live")
+    monkeypatch.setattr(health.settings, "feishu_mode", "live")
+    monkeypatch.setattr(health.settings, "presentation_mode", "live")
+    monkeypatch.setattr(health.settings, "interactive_html_mode", "live")
+    monkeypatch.setattr(health.settings, "presentation_service_url", None)
+    monkeypatch.setattr(health.settings, "interactive_html_api_key", None)
+    monkeypatch.setattr(health.settings, "feishu_app_id", None)
     response = TestClient(app).get("/api/v1/health")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["request_id"].startswith("req_")
-    assert payload["data"]["status"] == "ok"
-    assert payload["data"]["database"] == "ok"
-    assert payload["data"]["ai"] == "mock"
-    assert payload["data"]["ai_mode"] == "mock"
-    assert payload["data"]["feishu"] == "mock"
-    assert payload["data"]["feishu_mode"] == "mock"
-    assert payload["data"]["interactive_html"] == "mock"
-    assert payload["data"]["interactive_html_mode"] == "mock"
+    assert payload["data"]["status"] == "degraded"
+    assert payload["data"]["database"] == "not_configured"
+    assert payload["data"]["ai"] == "not_configured"
+    assert payload["data"]["ai_mode"] == "live"
+    assert payload["data"]["feishu"] == "not_configured"
+    assert payload["data"]["feishu_mode"] == "live"
+    assert payload["data"]["interactive_html"] == "not_configured"
+    assert payload["data"]["interactive_html_mode"] == "live"
     assert payload["data"]["sidecar_status"] == "not_configured"
     assert response.headers["X-Request-ID"] == payload["request_id"]
 
