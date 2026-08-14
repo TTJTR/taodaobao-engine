@@ -37,6 +37,7 @@ from app.services.retrieval_service import RetrievalService  # noqa: E402
 
 DEFAULT_FIXTURE = Path("fixtures/builtin_documents/index_cases.json")
 DEFAULT_REPORT = Path(".local/builtin-index-report.json")
+BUILTIN_FIXTURE_WORKSPACE_ID = uuid.UUID("00000000-0000-4000-8000-000000000099")
 
 
 def _write_report(path: Path, payload: dict) -> None:
@@ -155,7 +156,15 @@ async def run(fixture_path: Path, report_path: Path) -> int:
         return 0
 
     _, factory = configure_database()
-    workspace_id = settings.demo_workspace_id
+    workspace_id = BUILTIN_FIXTURE_WORKSPACE_ID
+    if workspace_id == settings.demo_workspace_id:
+        report = {
+            "status": "failed",
+            "reason": "built-in fixture workspace must be isolated from the business workspace",
+            "fixture": str(fixture_path),
+        }
+        _write_report(report_path, report)
+        return 1
     cases: list[dict] = []
     try:
         async with factory() as session:

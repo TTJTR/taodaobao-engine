@@ -9,6 +9,7 @@ from app.integrations.presentation import (
     get_presentation_provider,
 )
 from app.services.intelligence_task_worker import get_intelligence_provider
+from scripts.verify_builtin_document_index import BUILTIN_FIXTURE_WORKSPACE_ID
 
 
 @pytest.mark.parametrize(
@@ -26,6 +27,7 @@ def test_runtime_configuration_rejects_mock_modes(field: str, value: str) -> Non
 
 
 def test_unconfigured_intelligence_provider_never_falls_back(monkeypatch) -> None:
+    assert BUILTIN_FIXTURE_WORKSPACE_ID != settings.demo_workspace_id
     monkeypatch.setattr(settings, "open_enrich_svc_url", None)
 
     with pytest.raises(AppError) as captured:
