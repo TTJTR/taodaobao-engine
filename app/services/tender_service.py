@@ -319,6 +319,7 @@ class TenderService:
                     category="general",
                     mandatory=bool(re.search(r"必须|应当|不得|须|shall|must", requirement, re.I)),
                     source_location={"sequence": sequence},
+                    status=TenderRequirementStatus.AI_DRAFT,
                 )
             )
         await self.session.commit()

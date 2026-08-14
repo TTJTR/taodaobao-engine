@@ -3,6 +3,7 @@ from pathlib import Path
 
 import yaml
 
+from app.ai.schemas import CustomerProfileDraft, SolutionContext
 from app.contracts.ai import AIEngine
 from app.main import app
 
@@ -21,6 +22,25 @@ def test_frozen_ai_engine_signatures_are_unchanged() -> None:
         "context",
         "retrieval_snapshot",
     ]
+
+
+def test_solution_context_accepts_separate_external_intelligence_context() -> None:
+    external_context = {
+        "boundary": "external background only; never internal capability evidence",
+        "intelligence_snapshot": {"id": "snapshot-1", "model_context": {"facts": []}},
+    }
+
+    context = SolutionContext(
+        customer_profile=CustomerProfileDraft(
+            customer_name="测试客户",
+            profile_summary="用于验证外部情报边界的测试画像。",
+            source_ids=["profile-source-1"],
+        ),
+        current_requirement="形成一份有可信边界的方案",
+        external_context=external_context,
+    )
+
+    assert context.external_context == external_context
 
 
 def test_v2_incremental_openapi_is_valid_and_matches_routes() -> None:

@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
@@ -23,7 +23,6 @@ class ConversationMessage(AISchema):
 
 
 class SolutionContext(AISchema):
-    schema_version: Literal["solution-v1", "solution-v2"] = "solution-v1"
     customer_profile: CustomerProfileDraft
     current_requirement: NonEmptyStr
     schema_version: Literal["solution-v1", "solution-v2"] = "solution-v1"
@@ -44,6 +43,7 @@ class SolutionContext(AISchema):
         default_factory=list,
         max_length=20,
     )
+    external_context: dict[str, Any] | None = None
     deadline_at: str | None = None
     retry_budget: int = Field(default=0, ge=0, le=3)
 
