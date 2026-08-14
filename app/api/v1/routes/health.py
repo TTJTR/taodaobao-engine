@@ -97,12 +97,20 @@ async def health_check(request: Request) -> dict[str, Any]:
         if settings.presentation_service_url
         else "not_configured"
     )
+    interactive_html_status = (
+        "mock"
+        if settings.interactive_html_mode == "mock"
+        else "configured"
+        if settings.interactive_html_api_key
+        else "not_configured"
+    )
     status = (
         "ok"
         if database_status in {"ok", "not_configured"}
         and ai_status in {"ok", "mock"}
         and feishu_status in {"configured", "mock"}
         and presentation_status in {"configured", "mock"}
+        and interactive_html_status in {"configured", "mock"}
         else "degraded"
     )
     return success_response(
@@ -117,6 +125,8 @@ async def health_check(request: Request) -> dict[str, Any]:
             "feishu_mode": settings.feishu_mode,
             "presentation": presentation_status,
             "presentation_mode": settings.presentation_mode,
+            "interactive_html": interactive_html_status,
+            "interactive_html_mode": settings.interactive_html_mode,
             "sidecar_status": sidecar_status,
             "workflow_queue": workflow_queue,
         },

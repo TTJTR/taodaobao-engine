@@ -53,6 +53,18 @@ class CreatePresentationRequest(BaseModel):
         return self
 
 
+class CreateInteractivePresentationRequest(BaseModel):
+    style_profile_id: uuid.UUID
+    mode: Literal["strict", "balanced", "brand_only"] = "balanced"
+    audience: str = Field(min_length=1, max_length=64)
+    language: Literal["zh-CN", "en-US"] = "zh-CN"
+    visual_direction: str = Field(
+        default="暖白咨询、编辑部式商业叙事",
+        min_length=2,
+        max_length=200,
+    )
+
+
 class UpdatePresentationBlockRequest(BaseModel):
     expected_version: int = Field(ge=1)
     text: str | None = Field(default=None, max_length=20_000)

@@ -19,6 +19,8 @@ def test_health_check_uses_standard_envelope(monkeypatch) -> None:
     assert payload["data"]["ai_mode"] == "mock"
     assert payload["data"]["feishu"] == "mock"
     assert payload["data"]["feishu_mode"] == "mock"
+    assert payload["data"]["interactive_html"] == "mock"
+    assert payload["data"]["interactive_html_mode"] == "mock"
     assert payload["data"]["sidecar_status"] == "not_configured"
     assert response.headers["X-Request-ID"] == payload["request_id"]
 

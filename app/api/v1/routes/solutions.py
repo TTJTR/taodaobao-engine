@@ -8,7 +8,10 @@ from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.db.repositories import SolutionRunRepository
 from app.schemas.chat import SolutionRunRead
-from app.schemas.presentations import CreatePresentationRequest
+from app.schemas.presentations import (
+    CreateInteractivePresentationRequest,
+    CreatePresentationRequest,
+)
 from app.schemas.trust import TrustReviewRequest
 from app.services.presentation_pipeline import run_presentation_generation
 from app.services.presentation_service import PresentationService
@@ -106,5 +109,30 @@ async def create_presentation(
             "status": item.status.value,
             "trace_id": item.trace_id,
             "poll_after_ms": 1000,
+        },
+    )
+
+
+@router.post("/{run_id}/interactive-presentations", status_code=status.HTTP_202_ACCEPTED)
+async def create_interactive_presentation(
+    run_id: uuid.UUID,
+    payload: CreateInteractivePresentationRequest,
+    request: Request,
+    session: DatabaseSession,
+    workspace_id: WorkspaceId,
+    current_user: CurrentUser,
+    _: str = Depends(require_idempotency_key),
+) -> dict[str, object]:
+    item = await PresentationService(
+        session, workspace_id, current_user.id
+    ).create_interactive_presentation(run_id, payload)
+    return success_response(
+        request,
+        {
+            "presentation_id": str(item.id),
+            "status": item.status.value,
+            "trace_id": item.trace_id,
+            "poll_after_ms": 1000,
+            "render_mode": "interactive",
         },
     )

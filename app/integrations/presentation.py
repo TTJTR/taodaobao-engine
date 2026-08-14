@@ -4,6 +4,10 @@ from typing import Any, Protocol
 import httpx
 
 from app.core.config import settings
+from app.services.interactive_html_service import (
+    LiveInteractiveHTMLProvider,
+    MockInteractiveHTMLProvider,
+)
 
 
 class PresentationProvider(Protocol):
@@ -166,11 +170,49 @@ class LivePresentationProvider:
         )
 
 
+class RoutingPresentationProvider:
+    """Keep the deterministic provider intact and isolate AI-authored interactive HTML."""
+
+    def __init__(self, base: PresentationProvider, interactive) -> None:
+        self.base = base
+        self.interactive = interactive
+        self.mode = base.mode
+
+    async def parse_reference(self, reference: dict[str, Any]) -> dict[str, Any]:
+        return await self.base.parse_reference(reference)
+
+    async def generate_style(self, references: list[dict[str, Any]]) -> dict[str, Any]:
+        return await self.base.generate_style(references)
+
+    async def render(
+        self, input_snapshot: dict[str, Any], style_profile: dict[str, Any]
+    ) -> dict[str, Any]:
+        if input_snapshot.get("render_mode") == "interactive":
+            return await self.interactive.render(input_snapshot, style_profile)
+        return await self.base.render(input_snapshot, style_profile)
+
+    async def export(self, artifact: dict[str, Any], export_type: str) -> dict[str, Any]:
+        return await self.base.export(artifact, export_type)
+
+
 def get_presentation_provider() -> PresentationProvider:
     if settings.presentation_mode == "mock":
-        return MockPresentationProvider()
-    if not settings.presentation_service_url:
-        raise RuntimeError("APP_PRESENTATION_SERVICE_URL is required in live mode")
-    return LivePresentationProvider(
-        settings.presentation_service_url, settings.presentation_service_api_key
-    )
+        base: PresentationProvider = MockPresentationProvider()
+    else:
+        if not settings.presentation_service_url:
+            raise RuntimeError("APP_PRESENTATION_SERVICE_URL is required in live mode")
+        base = LivePresentationProvider(
+            settings.presentation_service_url, settings.presentation_service_api_key
+        )
+    if settings.interactive_html_mode == "live":
+        if not settings.interactive_html_api_key:
+            raise RuntimeError("APP_INTERACTIVE_HTML_API_KEY is required in live mode")
+        interactive = LiveInteractiveHTMLProvider(
+            settings.interactive_html_base_url,
+            settings.interactive_html_api_key,
+            settings.interactive_html_model,
+            settings.interactive_html_timeout_seconds,
+        )
+    else:
+        interactive = MockInteractiveHTMLProvider()
+    return RoutingPresentationProvider(base, interactive)

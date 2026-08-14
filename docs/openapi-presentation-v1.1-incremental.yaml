@@ -6,6 +6,27 @@ info:
     本文件仅描述冻结 openapi.yaml 之外的演示渲染增量能力。基础路径、鉴权、
     Idempotency-Key、统一成功/错误信封以及既有字段语义继续引用冻结主契约。
 paths:
+  /api/v1/solution-runs/{run_id}/interactive-presentations:
+    post:
+      summary: 基于已发布主张创建可信互动 HTML 演示任务
+      description: >-
+        仅接受 Trust Gate 已 RELEASE/DOWNGRADE 的方案。AI 可生成内联 HTML/CSS 视觉结构，
+        交互由平台注入固定运行时；所有业务文字必须逐字绑定输入快照中的 Claim/Evidence，
+        产物还必须通过静态安全审计。
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInteractivePresentationRequest'
+      responses:
+        '202': {description: 已创建互动演示任务，使用统一成功信封}
   /api/v1/style-profiles/{style_profile_id}/template-candidates:
     get:
       summary: 查询脱敏模板候选及容量校验结果
@@ -56,6 +77,27 @@ paths:
       responses:
         '200': {description: 已确认模板，使用统一成功信封}
 components:
+  schemas:
+    CreateInteractivePresentationRequest:
+      type: object
+      additionalProperties: false
+      required: [style_profile_id, audience]
+      properties:
+        style_profile_id: {type: string, format: uuid}
+        mode:
+          type: string
+          enum: [strict, balanced, brand_only]
+          default: balanced
+        audience: {type: string, minLength: 1, maxLength: 64}
+        language:
+          type: string
+          enum: [zh-CN, en-US]
+          default: zh-CN
+        visual_direction:
+          type: string
+          minLength: 2
+          maxLength: 200
+          default: 暖白咨询、编辑部式商业叙事
   parameters:
     StyleProfileId:
       name: style_profile_id

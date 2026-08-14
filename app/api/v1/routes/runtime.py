@@ -91,6 +91,16 @@ def _connections() -> list[dict]:
             else "not_configured",
         },
         {
+            "provider": "interactive-html",
+            "label": "互动 HTML 生成",
+            "mode": settings.interactive_html_mode,
+            "status": "mock"
+            if settings.interactive_html_mode == "mock"
+            else "configured"
+            if settings.interactive_html_api_key
+            else "not_configured",
+        },
+        {
             "provider": "worker",
             "label": "持久化任务 Worker",
             "mode": "internal",
@@ -161,6 +171,15 @@ async def test_model_connection(
             async with httpx.AsyncClient(timeout=5) as client:
                 response = await client.get(
                     f"{settings.presentation_service_url.rstrip('/')}/health"
+                )
+                response.raise_for_status()
+        elif provider == "interactive-html" and settings.interactive_html_mode == "live":
+            async with httpx.AsyncClient(timeout=5) as client:
+                response = await client.get(
+                    f"{settings.interactive_html_base_url.rstrip('/')}/models",
+                    headers={
+                        "Authorization": f"Bearer {settings.interactive_html_api_key}"
+                    },
                 )
                 response.raise_for_status()
         elif provider == "deep-research":

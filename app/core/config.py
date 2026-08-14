@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     presentation_mode: Literal["mock", "live"] = "mock"
     presentation_service_url: str | None = None
     presentation_service_api_key: str | None = None
+    interactive_html_mode: Literal["mock", "live"] = "mock"
+    interactive_html_base_url: str = "https://api.deepseek.com"
+    interactive_html_api_key: str | None = None
+    interactive_html_model: str = "deepseek-chat"
+    interactive_html_timeout_seconds: float = 180.0
     presentation_export_dir: Path = Path(".local/exports")
     pptx_renderer_timeout_seconds: int = 30
     pptx_renderer_max_output_bytes: int = 50 * 1024 * 1024
@@ -74,6 +79,15 @@ class Settings(BaseSettings):
             raise ValueError("APP_INVITATION_MAX_TOKEN_TTL_SECONDS must be positive")
         if self.open_enrich_poll_seconds <= 0:
             raise ValueError("APP_OPEN_ENRICH_POLL_SECONDS must be positive")
+        if self.interactive_html_timeout_seconds <= 0:
+            raise ValueError("APP_INTERACTIVE_HTML_TIMEOUT_SECONDS must be positive")
+        if self.interactive_html_mode == "live" and not (
+            self.interactive_html_api_key or ""
+        ).strip():
+            raise ValueError(
+                "APP_INTERACTIVE_HTML_API_KEY is required when "
+                "APP_INTERACTIVE_HTML_MODE=live"
+            )
         return self
 
 

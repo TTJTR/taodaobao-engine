@@ -39,6 +39,14 @@ def test_static_index_is_served_at_root() -> None:
     assert "function renderDeep()" in response.text
     assert "function renderExperts()" in response.text
     assert "function renderPresentations()" in response.text
+    assert "/interactive-presentations" in response.text
+    assert 'sandbox="allow-scripts"' in response.text
+    assert "互动 HTML（推荐演示）" in response.text
+    assert 'data-view="intelligence"' in response.text
+    assert 'data-view="rehearsals"' in response.text
+    assert 'data-view="about"' in response.text
+    assert "V2Integrated.renderBusiness()" in response.text
+    assert "V2Integrated.renderRehearsals()" in response.text
     assert "function renderRuntime()" in response.text
     assert "function renderModels()" in response.text
     assert "apiFetch(`/style-profiles/${id}`)" in response.text
@@ -58,12 +66,20 @@ def test_style_profile_polling_route_is_registered() -> None:
     assert "get" in schema["paths"]["/api/v1/style-profiles/{profile_id}"]
 
 
+def test_interactive_presentation_incremental_route_is_registered() -> None:
+    schema = app.openapi()
+    path = "/api/v1/solution-runs/{run_id}/interactive-presentations"
+
+    assert "post" in schema["paths"][path]
+
+
 def test_v2_business_workbenches_are_served_with_real_api_contracts() -> None:
     client = TestClient(app)
 
     intelligence = client.get("/v2_intelligence.html")
     tender = client.get("/v2_tender.html")
     adapter = client.get("/v2-workbench.js")
+    integrated = client.get("/v2-integrated.js")
     index = client.get("/")
 
     assert intelligence.status_code == 200
@@ -78,8 +94,13 @@ def test_v2_business_workbenches_are_served_with_real_api_contracts() -> None:
     assert "/export" in tender.text
     assert "批量补充证据" in tender.text
     assert 'headers["Idempotency-Key"]' in adapter.text
-    assert "/v2_intelligence.html" in index.text
-    assert "/v2_tender.html" in index.text
+    assert integrated.status_code == 200
+    assert "/v2_intelligence.html?embedded=1" in integrated.text
+    assert "/v2_tender.html?embedded=1" in integrated.text
+    assert 'request("/rehearsals?page=1&page_size=100")' in integrated.text
+    assert 'request(`/rehearsals/${item.id}/start`' in integrated.text
+    assert "磋商前 · 识别机会" in integrated.text
+    assert "关于我们" in index.text
 
 
 def test_profile_intelligence_proposals_have_a_read_route() -> None:

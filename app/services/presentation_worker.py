@@ -163,7 +163,7 @@ async def _render_presentation(session, workspace_id, target_id, task, provider)
     await session.commit()
     run.status = PresentationStatus.RENDERING
     task.stage = "rendering"
-    _renew_lease(task)
+    _renew_lease(task, seconds=600 if input_data.get("render_mode") == "interactive" else 180)
     await session.commit()
     result = await provider.render(
         input_data,
@@ -280,7 +280,7 @@ def _error_code(kind: str, exc: Exception) -> ErrorCode:
     return ErrorCode.PRESENTATION_RENDER_FAILED
 
 
-def _renew_lease(task: WorkflowTask) -> None:
+def _renew_lease(task: WorkflowTask, *, seconds: int = 180) -> None:
     now = datetime.now(UTC)
     task.heartbeat_at = now
-    task.lease_expires_at = now + timedelta(seconds=180)
+    task.lease_expires_at = now + timedelta(seconds=seconds)

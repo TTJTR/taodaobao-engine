@@ -32,6 +32,7 @@ from app.db.models import (
     WorkflowTaskStatus,
 )
 from app.schemas.presentations import (
+    CreateInteractivePresentationRequest,
     CreatePresentationRequest,
     CreateReferenceDeckRequest,
     ExportPresentationRequest,
@@ -172,6 +173,33 @@ class PresentationService:
     async def create_presentation(
         self, run_id: uuid.UUID, payload: CreatePresentationRequest
     ) -> PresentationRun:
+        return await self._create_presentation(run_id, payload, render_mode="deterministic")
+
+    async def create_interactive_presentation(
+        self, run_id: uuid.UUID, payload: CreateInteractivePresentationRequest
+    ) -> PresentationRun:
+        request = CreatePresentationRequest(
+            style_profile_id=payload.style_profile_id,
+            mode=payload.mode,
+            audience=payload.audience,
+            output=["html"],
+            language=payload.language,
+        )
+        return await self._create_presentation(
+            run_id,
+            request,
+            render_mode="interactive",
+            visual_direction=payload.visual_direction,
+        )
+
+    async def _create_presentation(
+        self,
+        run_id: uuid.UUID,
+        payload: CreatePresentationRequest,
+        *,
+        render_mode: str,
+        visual_direction: str | None = None,
+    ) -> PresentationRun:
         decision = await self._latest_trust_decision(run_id)
         if decision is None or decision.action not in {TrustAction.RELEASE, TrustAction.DOWNGRADE}:
             raise AppError(
@@ -224,7 +252,14 @@ class PresentationService:
         )
         self.session.add(run)
         await self.session.flush()
-        snapshot = await self._build_input_snapshot(run, claims, profile, template)
+        snapshot = await self._build_input_snapshot(
+            run,
+            claims,
+            profile,
+            template,
+            render_mode=render_mode,
+            visual_direction=visual_direction,
+        )
         self.session.add(snapshot)
         await self._queue_render(run, {"operation": "initial"})
         await self.session.commit()
@@ -272,6 +307,12 @@ class PresentationService:
         artifact = await self._latest_artifact(run.id)
         if artifact is None or run.spec is None:
             raise AppError(ErrorCode.VALIDATION_FAILED, "演示稿尚未生成", status_code=409)
+        if artifact.render_report.get("render_mode") == "interactive":
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "互动演示的事实区块已锁定；请返回上游方案修改并重新生成",
+                status_code=409,
+            )
         spec = copy.deepcopy(run.spec)
         block = next(
             (
@@ -322,6 +363,13 @@ class PresentationService:
     ) -> PresentationRun:
         run = await self._get(PresentationRun, presentation_id, "演示稿不存在")
         self._require_version(run.version, payload.expected_version)
+        artifact = await self._latest_artifact(run.id)
+        if artifact and artifact.render_report.get("render_mode") == "interactive":
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "互动演示不支持局部重生；请从可信输入快照重新创建",
+                status_code=409,
+            )
         if any(block_id in run.locked_block_ids for block_id in payload.block_ids):
             raise AppError(ErrorCode.VALIDATION_FAILED, "不能重生成已锁定区块", status_code=409)
         run.version += 1
@@ -365,6 +413,15 @@ class PresentationService:
         artifact = await self._latest_artifact(run.id)
         if artifact is None:
             raise AppError(ErrorCode.PRESENTATION_RENDER_FAILED, "HTML 产物不存在", status_code=409)
+        if (
+            artifact.render_report.get("render_mode") == "interactive"
+            and payload.export_type != "html"
+        ):
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "互动演示当前只支持 HTML 导出",
+                status_code=409,
+            )
         existing = await self.session.scalar(
             select(ExportArtifact).where(
                 ExportArtifact.workspace_id == self.workspace_id,
@@ -418,6 +475,9 @@ class PresentationService:
         claims: list[ClaimRecord],
         profile: StyleProfile,
         template: StyleTemplateVersion | None,
+        *,
+        render_mode: str = "deterministic",
+        visual_direction: str | None = None,
     ) -> PresentationInputSnapshot:
         claim_ids = [item.id for item in claims]
         links = list(
@@ -469,6 +529,8 @@ class PresentationService:
                 ),
                 "audience": run.audience,
                 "language": run.language,
+                "render_mode": render_mode,
+                "visual_direction": visual_direction,
                 "released_claims": [
                     {
                         "claim_id": item.claim_key,
@@ -727,6 +789,8 @@ class PresentationService:
             "audience": run.audience,
             "language": run.language,
             "requested_outputs": run.requested_outputs,
+            "render_mode": (artifact.render_report.get("render_mode") if artifact else None)
+            or "deterministic",
             "spec": run.spec,
             "locked_block_ids": run.locked_block_ids,
             "version": run.version,
