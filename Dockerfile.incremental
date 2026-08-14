@@ -1,0 +1,11 @@
+# Fast production release layer for code/static-only updates.
+# The base image must be a previously verified full runtime image built from Dockerfile.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+USER root
+COPY --chown=app:app app /usr/local/lib/python3.11/site-packages/app
+COPY --chown=app:app static /app/static
+COPY --chown=app:app alembic /app/alembic
+COPY --chown=app:app alembic.ini /app/alembic.ini
+USER app
