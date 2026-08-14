@@ -426,7 +426,7 @@ class LiveInteractiveHTMLProvider:
         last_error: InteractiveHTMLValidationError | None = None
         usage: dict[str, Any] = {}
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            for attempt in range(2):
+            for attempt in range(3):
                 request_messages = list(messages)
                 chunks: list[str] = []
                 for _ in range(3):
@@ -436,7 +436,7 @@ class LiveInteractiveHTMLProvider:
                         json={
                             "model": self.model,
                             "messages": request_messages,
-                            "temperature": 0.55 if attempt == 0 else 0.1,
+                            "temperature": 0.45 if attempt == 0 else 0.0,
                             "max_tokens": 8192,
                             "stream": False,
                         },
@@ -487,9 +487,15 @@ class LiveInteractiveHTMLProvider:
                             {"role": "assistant", "content": raw},
                             {
                                 "role": "user",
-                                "content": "上一版未通过契约："
-                                + "；".join(exc.violations)
-                                + "。请重新输出完整 HTML。",
+                                "content": (
+                                    "上一版未通过契约："
+                                    + "；".join(exc.violations)
+                                    + "。请从零重新输出完整 HTML。CSS 中禁止 url(、@import、"
+                                    "expression( 和 content:；不要使用伪元素生成文字或图标。"
+                                    "每个 data-system-label 元素必须包含 supplied_system_labels "
+                                    "中的一条非空可见文字；装饰图形不得带任何文字绑定属性。"
+                                    "不要输出 script、外链、表单或未绑定可见文字。"
+                                ),
                             },
                         ]
                     )
