@@ -187,7 +187,6 @@ EmbeddingProviderDependency = Annotated[EmbeddingProvider, Depends(get_embedding
 async def get_current_user(
     session: DatabaseSession,
     codec: SessionCodecDependency,
-    adapter: FeishuAdapterDependency,
     session_token: Annotated[str | None, Cookie(alias=settings.session_cookie_name)] = None,
 ) -> User:
     if not session_token:
@@ -217,6 +216,10 @@ async def get_current_user(
         and user.feishu_token_expires_at
         and user.feishu_token_expires_at <= datetime.now(UTC) + timedelta(seconds=60)
     ):
+        # Resolve Feishu only after a valid session has been established. This
+        # preserves a truthful 401 for anonymous requests even when Feishu is
+        # intentionally unconfigured in an isolated test or offline runtime.
+        adapter = get_feishu_adapter()
         try:
             token = await adapter.refresh_access_token(user.feishu_refresh_token)
         except Exception as exc:

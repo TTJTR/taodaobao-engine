@@ -203,7 +203,7 @@ async def test_http_adapter_sends_internal_bearer_token() -> None:
 
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
 @pytest.mark.asyncio
-async def test_persistent_mock_polling_creates_snapshot_and_proposal(
+async def test_persistent_contract_adapter_polling_creates_snapshot_and_proposal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.integrations.open_enrich_adapter import OpenEnrichAdapter
@@ -213,14 +213,17 @@ async def test_persistent_mock_polling_creates_snapshot_and_proposal(
     monkeypatch.setattr(
         "app.services.intelligence_task_worker.get_session_factory", lambda: factory
     )
-    monkeypatch.setattr(
-        "app.services.intelligence_service.socket.getaddrinfo",
-        lambda *_: [(None, None, None, None, ("93.184.216.34", 0))],
-    )
     workspace_id = uuid.uuid4()
     provider = OpenEnrichAdapter()
     async with engine.begin() as connection:
         await connection.execute(text("TRUNCATE TABLE users CASCADE"))
+    # Patch only after SQLAlchemy has resolved and opened the test database.
+    # The replacement validates public-source handling and must not intercept
+    # the database driver's own DNS resolution.
+    monkeypatch.setattr(
+        "app.services.intelligence_service.socket.getaddrinfo",
+        lambda *_: [(None, None, None, None, ("93.184.216.34", 0))],
+    )
     async with factory() as session:
         user = User(workspace_id=workspace_id, feishu_user_id="oe-worker", name="Reviewer")
         session.add(user)
