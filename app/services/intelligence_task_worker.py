@@ -9,9 +9,16 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.db.database import get_session_factory
-from app.db.models import SearchRun, SearchRunStatus, WorkflowTask, WorkflowTaskStatus
+from app.db.models import (
+    RawArtifact,
+    SearchRun,
+    SearchRunStatus,
+    WorkflowTask,
+    WorkflowTaskStatus,
+)
 from app.integrations.http_open_enrich_adapter import HttpOpenEnrichAdapter
 from app.integrations.protocols import IntelligenceProvider
+from app.integrations.web_scraper import WebScraperAdapter
 from app.schemas.intelligence_provider import EnrichmentJobRequest
 from app.services.intelligence_service import IntelligenceService
 
@@ -151,10 +158,19 @@ async def _poll_once(session, task, run, request, profile_id, user_id, provider)
         await _cancel_quietly(provider, provider_job_id)
         _fail(task, run, limit_error, "Provider execution limit reached")
         return
+    service = IntelligenceService(session, task.workspace_id, user_id)
+    # Provider citations are discovery hints, not evidence. Re-fetch every new
+    # public URL through the SSRF-safe scraper and persist its immutable body
+    # before quote verification is allowed to run.
+    await _capture_provider_sources(
+        session,
+        service=service,
+        run=run,
+        result=result,
+        provider_job_id=provider_job_id,
+    )
     # This service commits the verified intelligence records atomically.
-    item, snapshot, proposal = await IntelligenceService(
-        session, task.workspace_id, user_id
-    ).accept_provider_result(
+    item, snapshot, proposal = await service.accept_provider_result(
         run_id=run.id,
         profile_id=profile_id,
         request=request,
@@ -178,18 +194,87 @@ async def _poll_once(session, task, run, request, profile_id, user_id, provider)
     task.error_summary = None
     task.lease_owner = None
     task.lease_expires_at = None
-    run.status = (
-        SearchRunStatus.PARTIAL
-        if result.status == "partial"
-        else SearchRunStatus.COMPLETED
-    )
-    run.result_summary = {
+    previous_summary = dict(run.result_summary or {})
+    run.status = _final_run_status(result.status, previous_summary)
+    open_enrich_summary = {
         "intelligence_item_id": str(item.id),
         "snapshot_id": str(snapshot.id),
         "proposal_id": str(proposal.id) if proposal else None,
         "fact_count": len(result.facts),
+        "status": result.status,
+        "cost_usd": result.cost_usd,
+        "tool_calls_used": result.tool_calls_used,
     }
+    if previous_summary:
+        run.result_summary = {
+            **previous_summary,
+            "open_enrich": open_enrich_summary,
+        }
+    else:
+        run.result_summary = {
+            **open_enrich_summary,
+            "provider_chain": ["open_enrich"],
+            "open_enrich": open_enrich_summary,
+        }
     run.completed_at = datetime.now(UTC)
+
+
+async def _capture_provider_sources(
+    session,
+    *,
+    service: IntelligenceService,
+    run,
+    result,
+    provider_job_id: str,
+) -> None:
+    rows = (
+        await session.execute(
+            select(RawArtifact.source_url, RawArtifact.normalized_url).where(
+                RawArtifact.workspace_id == run.workspace_id,
+                RawArtifact.search_run_id == run.id,
+                RawArtifact.is_deleted.is_(False),
+            )
+        )
+    ).all()
+    known_urls = {
+        alias
+        for row in rows
+        for value in row
+        if value
+        for alias in _url_aliases(str(value))
+    }
+    citation_urls: list[str] = []
+    for fact in result.facts:
+        for citation in fact.citations:
+            url = str(citation.url)
+            if _url_aliases(url).isdisjoint(known_urls) and url not in citation_urls:
+                citation_urls.append(url)
+
+    if not citation_urls:
+        return
+    scraper = WebScraperAdapter()
+    captures = [await scraper.fetch(url) for url in citation_urls]
+    await service.persist_provider_captures(
+        run_id=run.id,
+        captures=captures,
+        provider_job_id=provider_job_id,
+    )
+
+
+def _url_aliases(value: str) -> set[str]:
+    stripped = value.strip()
+    without_slash = stripped.rstrip("/")
+    return {stripped, without_slash, f"{without_slash}/"}
+
+
+def _final_run_status(provider_status: str, previous_summary: dict) -> SearchRunStatus:
+    primary_had_warnings = bool(
+        previous_summary.get("skipped")
+        or previous_summary.get("enrichment_error_count")
+    )
+    if provider_status == "partial" or primary_had_warnings:
+        return SearchRunStatus.PARTIAL
+    return SearchRunStatus.COMPLETED
 
 
 async def _load(session, task_id, workspace_id, run_id):
@@ -265,9 +350,28 @@ def _fail(task, run, code: str, summary: str) -> None:
     task.finished_at = now
     task.lease_owner = None
     task.lease_expires_at = None
-    run.status = SearchRunStatus.FAILED
-    run.error_code = code[:64]
-    run.error_summary = summary[:1000]
+    previous_summary = dict(getattr(run, "result_summary", {}) or {})
+    provider_chain = previous_summary.get("provider_chain") or []
+    has_primary_result = (
+        previous_summary.get("provider") == "bailian_web_search"
+        or "bailian_web_search" in provider_chain
+    )
+    if has_primary_result:
+        run.status = SearchRunStatus.PARTIAL
+        run.error_code = None
+        run.error_summary = None
+        run.result_summary = {
+            **previous_summary,
+            "open_enrich": {
+                "status": "failed",
+                "error_code": code[:64],
+                "error_summary": summary[:1000],
+            },
+        }
+    else:
+        run.status = SearchRunStatus.FAILED
+        run.error_code = code[:64]
+        run.error_summary = summary[:1000]
     run.completed_at = now
 
 

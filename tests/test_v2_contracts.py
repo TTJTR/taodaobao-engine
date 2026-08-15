@@ -91,6 +91,18 @@ def test_intelligence_enrichment_write_requires_idempotency_key() -> None:
     }
 
 
+def test_combined_intelligence_contract_is_optional_and_cost_bounded() -> None:
+    contract = yaml.safe_load(Path("docs/openapi-v2-incremental.yaml").read_text(encoding="utf-8"))
+    operation = contract["paths"]["/intelligence/search-runs/combined"]["post"]
+    assert {parameter.get("$ref") for parameter in operation["parameters"]} >= {
+        "#/components/parameters/IdempotencyKey"
+    }
+    schema = contract["components"]["schemas"]["CreateCombinedSearchRunRequest"]
+    assert schema["properties"]["purpose"]["const"] == "customer_profile"
+    assert schema["properties"]["max_tool_calls"]["default"] == 50
+    assert schema["properties"]["max_cost_usd"]["default"] == 2.0
+
+
 def test_tender_breakdown_and_review_contracts_enforce_trust_gate() -> None:
     contract = yaml.safe_load(Path("docs/openapi-v2-incremental.yaml").read_text(encoding="utf-8"))
     paths = contract["paths"]

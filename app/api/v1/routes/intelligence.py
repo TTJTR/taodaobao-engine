@@ -10,6 +10,7 @@ from app.db.models import IntelligenceFreshness, ProposalStatus
 from app.schemas.intelligence_provider import EnrichmentJobRequest
 from app.schemas.v2 import (
     CreateAutomaticSearchRunRequest,
+    CreateCombinedSearchRunRequest,
     CreateIntelligenceSearchTemplateRequest,
     CreateIntelligenceSnapshotRequest,
     CreateProfileProposalRequest,
@@ -194,6 +195,47 @@ async def create_automatic_search_run(
                 "stage": task.stage,
                 "trace_id": task.trace_id,
             },
+        },
+    )
+
+
+@router.post("/search-runs/combined", status_code=status.HTTP_202_ACCEPTED)
+async def create_combined_search_run(
+    payload: CreateCombinedSearchRunRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    run, task = await IntelligenceService(
+        session, workspace_id, current_user.id
+    ).queue_automatic_search(
+        query=payload.query,
+        purpose=payload.purpose,
+        profile_id=payload.profile_id,
+        max_results=payload.max_results,
+        language=payload.language,
+        country=payload.country,
+        open_enrich_options={
+            "company_name": payload.company_name,
+            "website_url": str(payload.website_url) if payload.website_url else None,
+            "allowed_fields": payload.allowed_fields,
+            "max_tool_calls": payload.max_tool_calls,
+            "max_cost_usd": payload.max_cost_usd,
+        },
+    )
+    return success_response(
+        request,
+        {
+            "run": _run(run),
+            "task": {
+                "id": str(task.id),
+                "status": task.status.value,
+                "stage": task.stage,
+                "trace_id": task.trace_id,
+            },
+            "provider_chain": ["bailian_web_search", "open_enrich"],
         },
     )
 

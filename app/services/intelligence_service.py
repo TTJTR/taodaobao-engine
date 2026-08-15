@@ -10,6 +10,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.contracts.ai import AIEngine
+from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.db.models import (
     ArtifactRelationType,
@@ -231,11 +232,13 @@ def _verify_provider_facts(
     artifacts: list[RawArtifact],
 ) -> tuple[list[dict], dict[uuid.UUID, RawArtifact], dict[str, object]]:
     allowed_fields = set(request.allowed_fields)
-    artifacts_by_url = {
-        _canonical_url(source_url): artifact
-        for artifact in artifacts
-        if (source_url := artifact.normalized_url or artifact.source_url) and artifact.text_content
-    }
+    artifacts_by_url: dict[str, RawArtifact] = {}
+    for artifact in artifacts:
+        if not artifact.text_content:
+            continue
+        for source_url in (artifact.source_url, artifact.normalized_url):
+            if source_url:
+                artifacts_by_url[_canonical_url(source_url)] = artifact
     verified_facts: list[dict] = []
     linked_artifacts: dict[uuid.UUID, RawArtifact] = {}
     proposed_values: dict[str, object] = {}
@@ -671,8 +674,12 @@ class IntelligenceService:
                 "该 SearchRun 已存在不同参数的富化任务",
                 status_code=409,
             )
-        run.provider = "open_enrich"
+        if run.provider != "open_enrich" and "open_enrich" not in run.provider:
+            run.provider = f"{run.provider}+open_enrich"[:64]
         run.status = SearchRunStatus.QUEUED
+        run.completed_at = None
+        run.error_code = None
+        run.error_summary = None
         await self.session.commit()
         await self.session.refresh(task)
         return task
@@ -686,22 +693,39 @@ class IntelligenceService:
         max_results: int,
         language: str,
         country: str | None,
+        open_enrich_options: dict | None = None,
     ) -> tuple[SearchRun, WorkflowTask]:
-        if profile_id is not None:
-            await self._get(CustomerProfile, profile_id)
+        profile = await self._get(CustomerProfile, profile_id) if profile_id is not None else None
         if purpose == "customer_profile" and profile_id is None:
             raise AppError(
                 ErrorCode.VALIDATION_FAILED,
                 "客户画像情报搜索必须绑定客户画像",
                 status_code=422,
             )
+        if open_enrich_options is not None:
+            if profile is None:
+                raise AppError(
+                    ErrorCode.VALIDATION_FAILED,
+                    "Open Enrich 补充检索必须绑定客户画像",
+                    status_code=422,
+                )
+            if not settings.open_enrich_svc_url or not settings.open_enrich_svc_token:
+                raise AppError(
+                    ErrorCode.PROVIDER_UNAVAILABLE,
+                    "Open Enrich 未配置；请使用默认阿里云搜索，或先部署 Sidecar 与 Redis",
+                    status_code=503,
+                )
         now = datetime.now(UTC)
         run = SearchRun(
             workspace_id=self.workspace_id,
             created_by_id=self.user_id,
             query=query.strip(),
             purpose=purpose,
-            provider="bailian_web_search",
+            provider=(
+                "bailian_web_search+open_enrich"
+                if open_enrich_options is not None
+                else "bailian_web_search"
+            ),
             status=SearchRunStatus.QUEUED,
             trace_id=str(uuid.uuid4()),
             input_snapshot={
@@ -710,13 +734,37 @@ class IntelligenceService:
                 "max_results": max_results,
                 "language": language,
                 "country": country,
-                "provider": "bailian_web_search",
+                "provider": (
+                    "bailian_web_search+open_enrich"
+                    if open_enrich_options is not None
+                    else "bailian_web_search"
+                ),
+                "provider_chain": (
+                    ["bailian_web_search", "open_enrich"]
+                    if open_enrich_options is not None
+                    else ["bailian_web_search"]
+                ),
                 "trust_boundary": "source_discovery_only",
             },
             result_summary={},
         )
         self.session.add(run)
         await self.session.flush()
+        open_enrich_request = None
+        if open_enrich_options is not None:
+            open_enrich_request = EnrichmentJobRequest(
+                client_job_id=run.id,
+                company_name=(
+                    str(open_enrich_options.get("company_name") or "").strip()
+                    or profile.customer_name
+                ),
+                website_url=open_enrich_options.get("website_url"),
+                allowed_fields=open_enrich_options["allowed_fields"],
+                language=language,
+                country=country,
+                max_tool_calls=open_enrich_options["max_tool_calls"],
+                max_cost_usd=open_enrich_options["max_cost_usd"],
+            )
         task = WorkflowTask(
             workspace_id=self.workspace_id,
             kind="intelligence_search",
@@ -732,6 +780,11 @@ class IntelligenceService:
                 "max_results": max_results,
                 "language": language,
                 "country": country,
+                "open_enrich_request": (
+                    open_enrich_request.model_dump(mode="json")
+                    if open_enrich_request is not None
+                    else None
+                ),
             },
             attempt_count=0,
             max_attempts=3,
@@ -842,6 +895,61 @@ class IntelligenceService:
         for item in items:
             await self.session.refresh(item)
         return artifacts, items
+
+    async def persist_provider_captures(
+        self,
+        *,
+        run_id: uuid.UUID,
+        captures: list[WebScrapeArtifact],
+        provider_job_id: str,
+    ) -> list[RawArtifact]:
+        """Persist provider citation pages before any quote is trusted."""
+
+        run = await self._get(SearchRun, run_id)
+        artifacts: list[RawArtifact] = []
+        for captured in captures:
+            artifact_key = hashlib.sha256(
+                f"{run.id}\n{captured.normalized_url}\n{captured.content_sha256}".encode()
+            ).hexdigest()
+            artifact = await self.session.scalar(
+                select(RawArtifact).where(
+                    RawArtifact.workspace_id == self.workspace_id,
+                    RawArtifact.artifact_key == artifact_key,
+                    RawArtifact.is_deleted.is_(False),
+                )
+            )
+            if artifact is None:
+                fields = captured.as_raw_artifact()
+                artifact = RawArtifact(
+                    workspace_id=self.workspace_id,
+                    search_run_id=run.id,
+                    artifact_key=artifact_key,
+                    kind=RawArtifactKind.WEB_PAGE,
+                    status=RawArtifactStatus(str(fields["status"])),
+                    provider="open_enrich+web_scraper",
+                    source_url=str(fields["source_url"]),
+                    normalized_url=str(fields["normalized_url"]),
+                    mime_type=str(fields["mime_type"]) if fields["mime_type"] else None,
+                    http_status=int(fields["http_status"]),
+                    content_sha256=str(fields["content_sha256"]),
+                    byte_size=int(fields["byte_size"]),
+                    text_content=str(fields["text_content"]),
+                    captured_at=fields["captured_at"],
+                    security_report=dict(fields["security_report"]),
+                    metadata_snapshot={
+                        **dict(fields["metadata_snapshot"]),
+                        "provider_job_id": provider_job_id,
+                        "discovery_provider": "open_enrich",
+                        "content_source": "direct_public_fetch",
+                    },
+                )
+                self.session.add(artifact)
+                await self.session.flush()
+            artifacts.append(artifact)
+        await self.session.commit()
+        for artifact in artifacts:
+            await self.session.refresh(artifact)
+        return artifacts
 
     async def create_run(
         self,

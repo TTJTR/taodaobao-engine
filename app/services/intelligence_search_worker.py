@@ -10,6 +10,7 @@ from app.db.database import get_session_factory
 from app.db.models import SearchRun, SearchRunStatus, WorkflowTask, WorkflowTaskStatus
 from app.integrations.protocols import SearchProvider
 from app.integrations.web_scraper import WebScraperAdapter
+from app.schemas.intelligence_provider import EnrichmentJobRequest
 from app.services.intelligence_service import IntelligenceService
 from app.services.model_connection_service import workspace_ai_engine, workspace_search_provider
 
@@ -122,6 +123,7 @@ async def run_intelligence_search_task(
             task, run = await _load(session, task_id, workspace_id, run_id, lock=True)
             if task is None or run is None:
                 return
+            follow_up_request = context["open_enrich_request"]
             partial = bool(skipped or enrichment_errors)
             task.payload = {
                 **task.payload,
@@ -135,15 +137,28 @@ async def run_intelligence_search_task(
                 "usage": result.usage,
             }
             task.status = WorkflowTaskStatus.COMPLETED
-            task.stage = "completed_with_warnings" if partial else "completed"
+            task.stage = (
+                "completed_primary"
+                if follow_up_request is not None
+                else ("completed_with_warnings" if partial else "completed")
+            )
             task.finished_at = datetime.now(UTC)
             task.error_code = None
             task.error_summary = None
             task.lease_owner = None
             task.lease_expires_at = None
-            run.status = SearchRunStatus.PARTIAL if partial else SearchRunStatus.COMPLETED
+            run.status = (
+                SearchRunStatus.QUEUED
+                if follow_up_request is not None
+                else (SearchRunStatus.PARTIAL if partial else SearchRunStatus.COMPLETED)
+            )
             run.result_summary = {
                 "provider": result.provider,
+                "provider_chain": (
+                    ["bailian_web_search", "open_enrich"]
+                    if follow_up_request is not None
+                    else ["bailian_web_search"]
+                ),
                 "provider_request_id": result.provider_request_id,
                 "discovered": len(result.sources),
                 "captured": len(artifacts),
@@ -153,8 +168,40 @@ async def run_intelligence_search_task(
                 "enrichment_error_count": len(enrichment_errors),
                 "trust_boundary": "external_public_information",
             }
-            run.completed_at = datetime.now(UTC)
+            run.completed_at = None if follow_up_request is not None else datetime.now(UTC)
             await session.commit()
+            if follow_up_request is not None:
+                try:
+                    follow_up_task = await service.queue_provider_enrichment(
+                        run.id,
+                        context["profile_id"],
+                        follow_up_request,
+                    )
+                    task, run = await _load(session, task_id, workspace_id, run_id, lock=True)
+                    if task is not None and run is not None:
+                        task.payload = {
+                            **task.payload,
+                            "open_enrich_task_id": str(follow_up_task.id),
+                        }
+                        await session.commit()
+                except Exception as exc:
+                    task, run = await _load(session, task_id, workspace_id, run_id, lock=True)
+                    if task is not None and run is not None:
+                        task.stage = "completed_with_warnings"
+                        run.status = SearchRunStatus.PARTIAL
+                        run.completed_at = datetime.now(UTC)
+                        run.result_summary = {
+                            **dict(run.result_summary or {}),
+                            "open_enrich": {
+                                "status": "not_started",
+                                "error_code": (
+                                    exc.code.value
+                                    if isinstance(exc, AppError)
+                                    else ErrorCode.INTERNAL_ERROR.value
+                                ),
+                            },
+                        }
+                        await session.commit()
             _log_terminal(task, run)
     except Exception as exc:
         async with session_factory() as session:
@@ -209,6 +256,11 @@ def _context(payload: dict) -> dict:
             "max_results": int(payload["max_results"]),
             "language": str(payload.get("language") or "zh-CN"),
             "country": str(payload["country"]) if payload.get("country") else None,
+            "open_enrich_request": (
+                EnrichmentJobRequest.model_validate(payload["open_enrich_request"])
+                if payload.get("open_enrich_request")
+                else None
+            ),
         }
     except (KeyError, TypeError, ValueError) as exc:
         raise AppError(

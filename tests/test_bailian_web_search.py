@@ -3,7 +3,10 @@ import pytest
 
 from app.core.errors import AppError, ErrorCode
 from app.integrations.bailian_web_search import BailianWebSearchAdapter
-from app.schemas.v2 import CreateAutomaticSearchRunRequest
+from app.schemas.v2 import (
+    CreateAutomaticSearchRunRequest,
+    CreateCombinedSearchRunRequest,
+)
 
 
 @pytest.mark.asyncio
@@ -90,3 +93,24 @@ def test_customer_profile_automatic_search_requires_profile() -> None:
         purpose="solution",
     )
     assert request.profile_id is None
+
+
+def test_combined_search_is_profile_only_and_has_cost_guardrails() -> None:
+    profile_id = __import__("uuid").uuid4()
+    request = CreateCombinedSearchRunRequest(
+        query="客户公开情报与交叉验证",
+        profile_id=profile_id,
+    )
+
+    assert request.purpose == "customer_profile"
+    assert request.profile_id == profile_id
+    assert request.max_cost_usd == 2.0
+    assert request.max_tool_calls == 50
+    assert request.allowed_fields
+
+    with pytest.raises(ValueError):
+        CreateCombinedSearchRunRequest(
+            query="重复字段不能进入 Provider",
+            profile_id=profile_id,
+            allowed_fields=["industry", "industry"],
+        )

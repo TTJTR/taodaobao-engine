@@ -34,6 +34,39 @@ class CreateAutomaticSearchRunRequest(BaseModel):
         return self
 
 
+class CreateCombinedSearchRunRequest(BaseModel):
+    """Alibaba source discovery followed by optional Open Enrich corroboration."""
+
+    query: str = Field(min_length=1, max_length=2000)
+    purpose: Literal["customer_profile"] = "customer_profile"
+    profile_id: uuid.UUID
+    company_name: str | None = Field(default=None, min_length=1, max_length=500)
+    website_url: HttpUrl | None = None
+    allowed_fields: list[str] = Field(
+        default_factory=lambda: [
+            "industry",
+            "business_priorities",
+            "hiring_signals",
+            "technology_signals",
+            "recent_projects",
+            "risk_signals",
+        ],
+        min_length=1,
+        max_length=20,
+    )
+    max_results: int = Field(default=5, ge=1, le=10)
+    language: str = Field(default="zh-CN", min_length=2, max_length=16)
+    country: str | None = Field(default="CN", min_length=2, max_length=2)
+    max_tool_calls: int = Field(default=50, ge=1, le=200)
+    max_cost_usd: float = Field(default=2.0, gt=0, le=100)
+
+    @model_validator(mode="after")
+    def unique_allowed_fields(self) -> "CreateCombinedSearchRunRequest":
+        if len(self.allowed_fields) != len(set(self.allowed_fields)):
+            raise ValueError("allowed_fields must be unique")
+        return self
+
+
 class CreateIntelligenceSearchTemplateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     purpose: Literal["customer_profile", "solution", "tender"]

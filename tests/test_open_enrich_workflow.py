@@ -25,8 +25,16 @@ from app.db.models import (
     WorkflowTaskStatus,
 )
 from app.integrations.http_open_enrich_adapter import HttpOpenEnrichAdapter
-from app.schemas.intelligence_provider import EnrichmentJobRequest, EnrichmentJobStatus
+from app.schemas.intelligence_provider import (
+    EnrichmentJobRequest,
+    EnrichmentJobResult,
+    EnrichmentJobStatus,
+)
+from app.services.intelligence_service import IntelligenceService
 from app.services.intelligence_task_worker import (
+    _capture_provider_sources,
+    _fail,
+    _final_run_status,
     _limit_error,
     _log_terminal_task,
     _poll_once,
@@ -117,6 +125,128 @@ def test_limits_trip_at_the_exact_boundary_and_report_the_cause() -> None:
     assert _limit_error(request, 2, 9) == ErrorCode.QUOTA_EXCEEDED.value
 
 
+def test_optional_provider_failure_preserves_primary_search_result() -> None:
+    task = SimpleNamespace(
+        status=WorkflowTaskStatus.RUNNING,
+        stage="polling",
+        error_code=None,
+        error_summary=None,
+        finished_at=None,
+        lease_owner="worker",
+        lease_expires_at=datetime.now(UTC),
+    )
+    run = SimpleNamespace(
+        status=SearchRunStatus.RUNNING,
+        error_code=None,
+        error_summary=None,
+        completed_at=None,
+        result_summary={
+            "provider": "bailian_web_search",
+            "provider_chain": ["bailian_web_search", "open_enrich"],
+            "captured": 3,
+        },
+    )
+
+    _fail(task, run, "PROVIDER_UNAVAILABLE", "optional provider unavailable")
+
+    assert task.status == WorkflowTaskStatus.FAILED
+    assert run.status == SearchRunStatus.PARTIAL
+    assert run.error_code is None
+    assert run.result_summary["captured"] == 3
+    assert run.result_summary["open_enrich"] == {
+        "status": "failed",
+        "error_code": "PROVIDER_UNAVAILABLE",
+        "error_summary": "optional provider unavailable",
+    }
+
+
+def test_primary_warning_is_not_erased_by_successful_optional_provider() -> None:
+    previous_summary = {
+        "provider": "bailian_web_search",
+        "provider_chain": ["bailian_web_search", "open_enrich"],
+        "skipped": 1,
+        "enrichment_error_count": 0,
+    }
+
+    assert _final_run_status("completed", previous_summary) == SearchRunStatus.PARTIAL
+    assert _final_run_status("completed", {**previous_summary, "skipped": 0}) == (
+        SearchRunStatus.COMPLETED
+    )
+
+
+@pytest.mark.asyncio
+async def test_provider_citation_is_refetched_before_it_can_be_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    citation_url = "https://public.example.com/facts"
+    captured = SimpleNamespace(source_url=citation_url)
+
+    class FakeRows:
+        def all(self):
+            return []
+
+    class FakeSession:
+        async def execute(self, _statement):
+            return FakeRows()
+
+    class FakeScraper:
+        def __init__(self):
+            self.urls = []
+
+        async def fetch(self, url):
+            self.urls.append(url)
+            return captured
+
+    class FakeService:
+        def __init__(self):
+            self.persisted = None
+
+        async def persist_provider_captures(self, **kwargs):
+            self.persisted = kwargs
+
+    scraper = FakeScraper()
+    service = FakeService()
+    monkeypatch.setattr(
+        "app.services.intelligence_task_worker.WebScraperAdapter", lambda: scraper
+    )
+    result = EnrichmentJobResult.model_validate(
+        {
+            "provider_job_id": "oe-public-source",
+            "status": "completed",
+            "facts": [
+                {
+                    "field": "buying_signals",
+                    "value": "发布公开采购计划",
+                    "category": "buying_signal",
+                    "provider_confidence": 0.8,
+                    "citations": [
+                        {
+                            "url": citation_url,
+                            "quote": "发布公开采购计划",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    run = SimpleNamespace(id=uuid.uuid4(), workspace_id=uuid.uuid4())
+
+    await _capture_provider_sources(
+        FakeSession(),
+        service=service,
+        run=run,
+        result=result,
+        provider_job_id="oe-public-source",
+    )
+
+    assert scraper.urls == [citation_url]
+    assert service.persisted == {
+        "run_id": run.id,
+        "captures": [captured],
+        "provider_job_id": "oe-public-source",
+    }
+
+
 def test_terminal_log_has_fixed_observability_fields(caplog) -> None:
     now = datetime.now(UTC)
     task = SimpleNamespace(
@@ -199,6 +329,95 @@ async def test_http_adapter_sends_internal_bearer_token() -> None:
         assert accepted.provider_job_id == "provider-job"
     finally:
         await client.aclose()
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
+@pytest.mark.asyncio
+async def test_combined_queue_is_optional_and_keeps_alibaba_as_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    workspace_id = uuid.uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(text("TRUNCATE TABLE users CASCADE"))
+    async with factory() as session:
+        user = User(workspace_id=workspace_id, feishu_user_id="combined-user", name="Reviewer")
+        session.add(user)
+        await session.flush()
+        profile = CustomerProfile(
+            workspace_id=workspace_id,
+            customer_name="Example Group",
+            profile={"external_intelligence": {}},
+            status=ProfileStatus.CONFIRMED,
+            confirmed_by_id=user.id,
+            confirmed_at=datetime.now(UTC),
+        )
+        session.add(profile)
+        await session.flush()
+        service = IntelligenceService(session, workspace_id, user.id)
+
+        monkeypatch.setattr(
+            "app.services.intelligence_service.settings.open_enrich_svc_url", ""
+        )
+        monkeypatch.setattr(
+            "app.services.intelligence_service.settings.open_enrich_svc_token", ""
+        )
+        options = {
+            "company_name": "Example Group",
+            "website_url": None,
+            "allowed_fields": ["buying_signals"],
+            "max_tool_calls": 10,
+            "max_cost_usd": 1.0,
+        }
+        with pytest.raises(AppError) as caught:
+            await service.queue_automatic_search(
+                query="Example public signals",
+                purpose="customer_profile",
+                profile_id=profile.id,
+                max_results=3,
+                language="zh-CN",
+                country="CN",
+                open_enrich_options=options,
+            )
+        assert caught.value.code == ErrorCode.PROVIDER_UNAVAILABLE
+
+        default_run, default_task = await service.queue_automatic_search(
+            query="Example public signals",
+            purpose="customer_profile",
+            profile_id=profile.id,
+            max_results=3,
+            language="zh-CN",
+            country="CN",
+        )
+        assert default_run.provider == "bailian_web_search"
+        assert default_task.payload["open_enrich_request"] is None
+
+        monkeypatch.setattr(
+            "app.services.intelligence_service.settings.open_enrich_svc_url",
+            "http://open-enrich-sidecar:8090",
+        )
+        monkeypatch.setattr(
+            "app.services.intelligence_service.settings.open_enrich_svc_token",
+            "internal-test-token",
+        )
+        combined_run, combined_task = await service.queue_automatic_search(
+            query="Example public signals",
+            purpose="customer_profile",
+            profile_id=profile.id,
+            max_results=3,
+            language="zh-CN",
+            country="CN",
+            open_enrich_options=options,
+        )
+        assert combined_run.provider == "bailian_web_search+open_enrich"
+        assert combined_run.input_snapshot["provider_chain"] == [
+            "bailian_web_search",
+            "open_enrich",
+        ]
+        assert combined_task.payload["open_enrich_request"]["max_cost_usd"] == 1.0
+        assert combined_task.payload["open_enrich_request"]["max_tool_calls"] == 10
+    await engine.dispose()
 
 
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not configured")
