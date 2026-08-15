@@ -800,7 +800,7 @@ class TenderService:
                 ambiguities=candidate.ambiguities,
                 recommended_action=candidate.recommended_action,
                 source_location=candidate.source_location,
-                status="ai_draft",
+                status=TenderRequirementStatus.AI_DRAFT,
             )
             if row.source_location != original_location:
                 raise AppError(

@@ -1,12 +1,37 @@
 import hashlib
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from app.api.v1.routes.tenders import _requirement
 from app.core.errors import AppError, ErrorCode
 from app.main import app
 from app.services.tender_service import _persist_tender_artifact, _safe_upload_filename
+
+
+def test_requirement_response_handles_fresh_string_status() -> None:
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        tender_id=uuid.uuid4(),
+        sequence=1,
+        requirement_text="系统必须支持私有化部署。",
+        category="deployment",
+        mandatory=True,
+        source_location={"content_kind": "table", "paragraph": 1},
+        version=1,
+        status="ai_draft",
+        acceptance_condition=None,
+        constraints={},
+        metrics=[],
+        ambiguities=[],
+        recommended_action=None,
+        confirmed_by_id=None,
+        confirmed_at=None,
+    )
+
+    assert _requirement(row)["status"] == "ai_draft"
 
 
 def test_tender_upload_route_is_incremental_and_binary() -> None:

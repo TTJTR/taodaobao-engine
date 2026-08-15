@@ -42,6 +42,7 @@ def _tender(row) -> dict:
 
 
 def _requirement(row) -> dict:
+    status_value = row.status.value if hasattr(row.status, "value") else row.status
     return {
         "id": str(row.id),
         "tender_id": str(row.tender_id),
@@ -52,7 +53,7 @@ def _requirement(row) -> dict:
         "is_mandatory": row.mandatory,
         "source_location": row.source_location,
         "version": row.version,
-        "status": row.status.value,
+        "status": status_value,
         "acceptance_condition": row.acceptance_condition,
         "constraints": row.constraints,
         "metrics": row.metrics,
