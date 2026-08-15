@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.db.database import get_session_factory
-from app.db.models import RawArtifact, WorkflowTask, WorkflowTaskStatus
+from app.db.models import RawArtifact, TenderDocument, WorkflowTask, WorkflowTaskStatus
 from app.services.tender_parse_worker import TenderParseWorker
 
 
@@ -61,7 +61,20 @@ async def run_tender_parse_task(
                 RawArtifact.is_deleted.is_(False),
             )
         )
+        tender = await session.scalar(
+            select(TenderDocument).where(
+                TenderDocument.id == tender_id,
+                TenderDocument.workspace_id == workspace_id,
+                TenderDocument.is_deleted.is_(False),
+            )
+        )
         try:
+            if tender is None:
+                raise AppError(
+                    ErrorCode.VALIDATION_FAILED,
+                    "解析任务引用的招标文件不存在",
+                    status_code=404,
+                )
             if artifact is None or not artifact.storage_uri or not artifact.mime_type:
                 raise AppError(
                     ErrorCode.VALIDATION_FAILED,
@@ -69,6 +82,7 @@ async def run_tender_parse_task(
                     status_code=404,
                 )
             task.stage = "validating_file"
+            tender.status = "parsing"
             await session.commit()
             source = resolve_tender_source(artifact.storage_uri)
             if source.stat().st_size != artifact.byte_size:
@@ -98,6 +112,7 @@ async def run_tender_parse_task(
             task.finished_at = datetime.now(UTC)
             task.error_code = None
             task.error_summary = None
+            tender.status = "ready"
         except Exception as exc:
             await session.rollback()
             task = await session.scalar(
@@ -109,6 +124,13 @@ async def run_tender_parse_task(
             )
             if task is None:
                 return
+            tender = await session.scalar(
+                select(TenderDocument).where(
+                    TenderDocument.id == tender_id,
+                    TenderDocument.workspace_id == workspace_id,
+                    TenderDocument.is_deleted.is_(False),
+                ).with_for_update()
+            )
             task.status = WorkflowTaskStatus.FAILED
             task.stage = "failed"
             if isinstance(exc, AppError):
@@ -118,6 +140,8 @@ async def run_tender_parse_task(
                 task.error_code = ErrorCode.TENDER_PARSE_FAILED.value
                 task.error_summary = str(exc)[:1000]
             task.finished_at = datetime.now(UTC)
+            if tender is not None:
+                tender.status = "failed"
         task.lease_owner = None
         task.lease_expires_at = None
         await session.commit()

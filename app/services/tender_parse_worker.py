@@ -22,11 +22,14 @@ from app.integrations.docling_adapter import DoclingAdapter
 from app.integrations.protocols import DocumentIR, DocumentParserAdapter
 
 MAX_TENDER_FILE_BYTES = 50 * 1024 * 1024
+MAX_TENDER_ARCHIVE_ENTRIES = 10_000
+MAX_TENDER_ARCHIVE_UNCOMPRESSED_BYTES = 250 * 1024 * 1024
 DEFAULT_PARSE_TIMEOUT_SECONDS = 300.0
 SUPPORTED_MIME = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/plain",
 }
 
 
@@ -75,7 +78,7 @@ class TenderParseWorker:
         await self.session.commit()
         started = time.perf_counter()
         try:
-            payload = _read_and_validate(source, mime_type, filename)
+            payload = read_and_validate_tender_source(source, mime_type, filename)
             document_ir = await asyncio.wait_for(
                 self._invoke_parser(payload, mime_type, filename),
                 timeout=self.timeout_seconds,
@@ -167,7 +170,9 @@ class TenderParseWorker:
         await self.session.commit()
 
 
-def _read_and_validate(source: bytes | Path, mime_type: str, filename: str | None) -> bytes:
+def read_and_validate_tender_source(
+    source: bytes | Path, mime_type: str, filename: str | None
+) -> bytes:
     if mime_type not in SUPPORTED_MIME:
         raise AppError(ErrorCode.TENDER_FILE_UNSAFE, "不支持的招标文件格式", status_code=415)
     if isinstance(source, Path):
@@ -191,6 +196,7 @@ def _validate_signature(payload: bytes, mime_type: str, filename: str | None) ->
         "application/pdf": {"", ".pdf"},
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {"", ".docx"},
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {"", ".xlsx"},
+        "text/plain": {"", ".txt"},
     }[mime_type]
     if suffix not in expected_suffixes:
         raise AppError(
@@ -202,11 +208,46 @@ def _validate_signature(payload: bytes, mime_type: str, filename: str | None) ->
         if not payload.startswith(b"%PDF-"):
             raise AppError(ErrorCode.TENDER_FILE_UNSAFE, "文件头不是有效 PDF", status_code=422)
         return
+    if mime_type == "text/plain":
+        try:
+            payload.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise AppError(
+                ErrorCode.TENDER_FILE_UNSAFE,
+                "TXT 文件必须使用 UTF-8 编码",
+                status_code=422,
+            ) from exc
+        return
     try:
         import io
 
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-            names = set(archive.namelist())
+            entries = archive.infolist()
+            if len(entries) > MAX_TENDER_ARCHIVE_ENTRIES or sum(
+                entry.file_size for entry in entries
+            ) > MAX_TENDER_ARCHIVE_UNCOMPRESSED_BYTES:
+                raise AppError(
+                    ErrorCode.TENDER_FILE_UNSAFE,
+                    "Office 文件解压后体积或条目数超过安全限制",
+                    status_code=422,
+                )
+            if any(entry.flag_bits & 0x1 for entry in entries):
+                raise AppError(
+                    ErrorCode.TENDER_FILE_UNSAFE,
+                    "不支持加密的 Office 文件",
+                    status_code=422,
+                )
+            if any(
+                entry.filename.startswith(("/", "\\"))
+                or ".." in Path(entry.filename.replace("\\", "/")).parts
+                for entry in entries
+            ):
+                raise AppError(
+                    ErrorCode.TENDER_FILE_UNSAFE,
+                    "Office 文件包含不安全的归档路径",
+                    status_code=422,
+                )
+            names = {entry.filename for entry in entries}
     except zipfile.BadZipFile as exc:
         raise AppError(
             ErrorCode.TENDER_FILE_UNSAFE,

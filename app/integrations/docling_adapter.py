@@ -1,5 +1,6 @@
 import hashlib
 import importlib.metadata
+import re
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -11,6 +12,7 @@ MIME_SUFFIXES = {
     "application/pdf": ".pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "text/plain": ".txt",
 }
 
 
@@ -33,6 +35,8 @@ class DoclingAdapter:
     ) -> DocumentIR:
         if mime_type not in MIME_SUFFIXES:
             raise ValueError(f"unsupported parser MIME type: {mime_type}")
+        if mime_type == "text/plain":
+            return self._parse_plain_text(source)
         path, temporary = self._materialize(source, mime_type, filename)
         try:
             converter = self._converter or self._load_converter()
@@ -42,6 +46,28 @@ class DoclingAdapter:
         finally:
             if temporary:
                 path.unlink(missing_ok=True)
+
+    def _parse_plain_text(self, source: bytes | Path) -> DocumentIR:
+        payload = source.read_bytes() if isinstance(source, Path) else source
+        text = payload.decode("utf-8", errors="strict")
+        nodes: list[DocumentNode] = []
+        for match in re.finditer(r"[^\r\n]+", text):
+            value = match.group(0).strip()
+            if not value:
+                continue
+            location: DocumentLocation = {
+                "schema_version": "document-location-v1",
+                "quote_hash": hashlib.sha256(value.encode("utf-8")).hexdigest(),
+                "kind": "plain_text",
+                "start_offset": match.start(),
+                "end_offset": match.end(),
+            }
+            nodes.append(DocumentNode(text=value, node_type="paragraph", location=location))
+        return DocumentIR(
+            nodes=tuple(nodes),
+            parser_name=self.parser_name,
+            parser_version=self.parser_version,
+        )
 
     def map_document(self, document: Any, mime_type: str) -> DocumentIR:
         nodes: list[DocumentNode] = []
@@ -65,6 +91,7 @@ class DoclingAdapter:
                 section_path=headings,
                 text_offset=text_offset,
             )
+            location["content_kind"] = node_type
             if node_type == "table" and location["kind"] == "plain_text":
                 warnings.append(f"table {index} has no native location; used plain_text fallback")
             nodes.append(DocumentNode(text=text, node_type=node_type, location=location))

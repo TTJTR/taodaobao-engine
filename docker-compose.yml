@@ -50,6 +50,8 @@ services:
       APP_OPEN_ENRICH_SVC_URL: ${APP_OPEN_ENRICH_SVC_URL:-}
       APP_OPEN_ENRICH_SVC_TOKEN: ${APP_OPEN_ENRICH_SVC_TOKEN:-}
       APP_PRESENTATION_EXPORT_DIR: /app/exports
+      APP_TENDER_STORAGE_ROOT: /app/tender-artifacts
+      APP_TENDER_STORAGE_ROOT: /app/tender-artifacts
     depends_on:
       db:
         condition: service_healthy
@@ -57,6 +59,7 @@ services:
       - "8000"
     volumes:
       - presentation_exports:/app/exports
+      - tender_artifacts:/app/tender-artifacts
     healthcheck:
       test:
         - CMD
@@ -98,6 +101,7 @@ services:
         condition: service_healthy
     volumes:
       - presentation_exports:/app/exports
+      - tender_artifacts:/app/tender-artifacts
 
   open-enrich-sidecar:
     profiles: ["intelligence-live"]
@@ -156,3 +160,4 @@ volumes:
   caddy_data:
   caddy_config:
   presentation_exports:
+  tender_artifacts:

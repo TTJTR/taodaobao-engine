@@ -2,11 +2,13 @@ import base64
 import hashlib
 import io
 import json
+import os
 import re
 import uuid
 import zipfile
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from defusedxml import ElementTree
@@ -15,6 +17,7 @@ from pypdf import PdfReader
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.db.models import (
     Capability,
@@ -22,6 +25,8 @@ from app.db.models import (
     Experience,
     IntelligenceSnapshot,
     RawArtifact,
+    RawArtifactKind,
+    RawArtifactStatus,
     ResponseEvidenceStatus,
     ResponseMatrix,
     ResponseMatrixItem,
@@ -39,6 +44,7 @@ from app.db.models import (
     WorkflowTaskStatus,
 )
 from app.services.retrieval_service import RetrievalService
+from app.services.tender_parse_worker import read_and_validate_tender_source
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_ARCHIVE_UNCOMPRESSED = 30 * 1024 * 1024
@@ -259,6 +265,49 @@ def _evidence_link(row: dict) -> dict:
     }
 
 
+def _safe_upload_filename(filename: str) -> str:
+    normalized = filename.strip().replace("\\", "/")
+    safe = normalized.rsplit("/", maxsplit=1)[-1]
+    if not safe or safe != normalized or len(safe) > 500 or "\x00" in safe:
+        raise AppError(ErrorCode.TENDER_FILE_UNSAFE, "招标文件名不安全", status_code=422)
+    return safe
+
+
+def _persist_tender_artifact(
+    payload: bytes,
+    *,
+    workspace_id: uuid.UUID,
+    content_sha256: str,
+    filename: str,
+    storage_root: Path | None = None,
+) -> Path:
+    root = (storage_root or settings.tender_storage_root).resolve()
+    workspace_root = (root / str(workspace_id)).resolve()
+    if not workspace_root.is_relative_to(root):
+        raise AppError(ErrorCode.TENDER_FILE_UNSAFE, "招标存储目录无效", status_code=500)
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    suffix = Path(filename).suffix.lower()
+    destination = (workspace_root / f"{content_sha256}{suffix}").resolve()
+    if not destination.is_relative_to(workspace_root):
+        raise AppError(ErrorCode.TENDER_FILE_UNSAFE, "招标存储路径无效", status_code=500)
+    if destination.exists():
+        if destination.stat().st_size != len(payload):
+            raise AppError(
+                ErrorCode.TENDER_FILE_UNSAFE,
+                "已存储招标制品大小不一致",
+                status_code=409,
+            )
+        return destination
+    temporary = workspace_root / f".{content_sha256}.{uuid.uuid4().hex}.upload"
+    try:
+        temporary.write_bytes(payload)
+        temporary.chmod(0o600)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return destination
+
+
 class TenderService:
     def __init__(self, session: AsyncSession, workspace_id: uuid.UUID, user_id: uuid.UUID) -> None:
         self.session = session
@@ -325,6 +374,87 @@ class TenderService:
         await self.session.commit()
         await self.session.refresh(tender)
         return tender
+
+    async def create_uploaded_tender(
+        self,
+        *,
+        title: str,
+        customer_profile_id: uuid.UUID | None,
+        payload: bytes,
+        filename: str,
+        mime_type: str,
+    ) -> tuple[TenderDocument, RawArtifact]:
+        if customer_profile_id:
+            await self._get(CustomerProfile, customer_profile_id)
+        safe_filename = _safe_upload_filename(filename)
+        validated = read_and_validate_tender_source(payload, mime_type, safe_filename)
+        content_sha256 = hashlib.sha256(validated).hexdigest()
+        storage_path = _persist_tender_artifact(
+            validated,
+            workspace_id=self.workspace_id,
+            content_sha256=content_sha256,
+            filename=safe_filename,
+        )
+        artifact_key = hashlib.sha256(
+            f"tender_file:{content_sha256}:{mime_type}".encode()
+        ).hexdigest()
+        artifact = await self.session.scalar(
+            select(RawArtifact).where(
+                RawArtifact.workspace_id == self.workspace_id,
+                RawArtifact.artifact_key == artifact_key,
+                RawArtifact.is_deleted.is_(False),
+            )
+        )
+        now = datetime.now(UTC)
+        if artifact is None:
+            artifact = RawArtifact(
+                workspace_id=self.workspace_id,
+                artifact_key=artifact_key,
+                kind=RawArtifactKind.TENDER_FILE,
+                status=RawArtifactStatus.CAPTURED,
+                provider="user_upload",
+                source_filename=safe_filename,
+                mime_type=mime_type,
+                content_sha256=content_sha256,
+                byte_size=len(validated),
+                storage_uri=storage_path.as_uri(),
+                captured_at=now,
+                security_report={
+                    "signature_valid": True,
+                    "size_within_limit": True,
+                    "mime_type": mime_type,
+                },
+                metadata_snapshot={"title": title.strip(), "upload_mode": "binary"},
+            )
+            self.session.add(artifact)
+            await self.session.flush()
+        elif (
+            artifact.content_sha256 != content_sha256
+            or artifact.byte_size != len(validated)
+            or artifact.mime_type != mime_type
+        ):
+            raise AppError(
+                ErrorCode.TENDER_FILE_UNSAFE,
+                "同一招标制品标识对应的文件校验信息不一致",
+                status_code=409,
+            )
+        tender = TenderDocument(
+            workspace_id=self.workspace_id,
+            created_by_id=self.user_id,
+            title=title.strip(),
+            customer_profile_id=customer_profile_id,
+            raw_artifact_id=artifact.id,
+            source_filename=safe_filename,
+            source_mime_type=mime_type,
+            source_fingerprint=content_sha256,
+            content_text="",
+            status="uploaded",
+        )
+        self.session.add(tender)
+        await self.session.commit()
+        await self.session.refresh(tender)
+        await self.session.refresh(artifact)
+        return tender, artifact
 
     async def list_tenders(self, page: int, page_size: int) -> tuple[list[TenderDocument], int]:
         filters = self._filters(TenderDocument)

@@ -256,6 +256,33 @@ paths:
     get:
       operationId: listTenders
       responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+  /tenders/file-uploads:
+    post:
+      operationId: uploadTenderFile
+      description: >-
+        上传单个真实招标文件，持久化为 RawArtifact，并自动创建 tender_parse
+        Runtime Task。客户端通过返回的 task.id 查询解析进度；失败时不会生成要求项。
+      parameters:
+        - {name: title, in: query, required: true, schema: {type: string, minLength: 1, maxLength: 500}}
+        - {name: customer_profile_id, in: query, required: false, schema: {type: [string, 'null'], format: uuid}}
+        - {name: X-File-Name, in: header, required: true, schema: {type: string, minLength: 1, maxLength: 1500}}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/pdf:
+            schema: {type: string, format: binary, maxLength: 52428800}
+          application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+            schema: {type: string, format: binary, maxLength: 52428800}
+          application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+            schema: {type: string, format: binary, maxLength: 52428800}
+          text/plain:
+            schema: {type: string, format: binary, maxLength: 52428800}
+      responses:
+        '202': {$ref: '#/components/responses/ItemResponse'}
+        '413': {$ref: '#/components/responses/ErrorResponse'}
+        '415': {$ref: '#/components/responses/ErrorResponse'}
+        '422': {$ref: '#/components/responses/ErrorResponse'}
   /tenders/{tender_id}:
     get:
       operationId: getTender

@@ -1,6 +1,8 @@
 import asyncio
 import hashlib
+import io
 import uuid
+import zipfile
 from types import SimpleNamespace
 
 import pytest
@@ -9,7 +11,11 @@ from app.core.errors import AppError, ErrorCode
 from app.db.models import TenderParseStatus
 from app.integrations.docling_adapter import DoclingAdapter
 from app.integrations.protocols import DocumentIR, DocumentNode
-from app.services.tender_parse_worker import MAX_TENDER_FILE_BYTES, TenderParseWorker
+from app.services.tender_parse_worker import (
+    MAX_TENDER_FILE_BYTES,
+    TenderParseWorker,
+    read_and_validate_tender_source,
+)
 
 
 def pdf_location(text: str) -> dict:
@@ -198,3 +204,42 @@ def test_docling_maps_pdf_table_to_markdown_and_bounding_box() -> None:
     assert node.text.startswith("| A | B |")
     assert node.location["page"] == 2
     assert node.location["bounding_box"] == [1.0, 2.0, 10.0, 20.0]
+    assert node.location["content_kind"] == "table"
+
+
+def test_utf8_txt_is_parsed_with_verifiable_offsets() -> None:
+    payload = "供应商必须提供三年案例。\n系统应支持不少于1000并发。".encode()
+
+    validated = read_and_validate_tender_source(payload, "text/plain", "requirements.txt")
+    result = DoclingAdapter().parse(validated, "text/plain", filename="requirements.txt")
+
+    assert len(result.nodes) == 2
+    assert result.nodes[0].location["kind"] == "plain_text"
+    assert result.nodes[0].location["start_offset"] == 0
+    assert result.nodes[0].location["quote_hash"] == hashlib.sha256(
+        result.nodes[0].text.encode()
+    ).hexdigest()
+
+
+def test_txt_rejects_non_utf8_content() -> None:
+    with pytest.raises(AppError) as caught:
+        read_and_validate_tender_source(b"\xff\xfe", "text/plain", "requirements.txt")
+
+    assert caught.value.code == ErrorCode.TENDER_FILE_UNSAFE
+
+
+def test_office_archive_rejects_unsafe_member_path() -> None:
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("word/document.xml", "<document/>")
+        archive.writestr("../outside", "unsafe")
+
+    with pytest.raises(AppError) as caught:
+        read_and_validate_tender_source(
+            stream.getvalue(),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "requirements.docx",
+        )
+
+    assert caught.value.code == ErrorCode.TENDER_FILE_UNSAFE

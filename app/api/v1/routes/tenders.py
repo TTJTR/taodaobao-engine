@@ -2,8 +2,9 @@ import csv
 import io
 import uuid
 from typing import Annotated
+from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 
 from app.api.deps import CurrentUser, DatabaseSession, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
@@ -171,6 +172,67 @@ async def create_tender(
         mime_type=payload.source_mime_type,
     )
     return success_response(request, _tender(row))
+
+
+@router.post(
+    "/file-uploads",
+    status_code=status.HTTP_202_ACCEPTED,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                mime_type: {"schema": {"type": "string", "format": "binary"}}
+                for mime_type in (
+                    "application/pdf",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "text/plain",
+                )
+            },
+        }
+    },
+)
+async def upload_tender_file(
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    title: Annotated[str, Query(min_length=1, max_length=500)],
+    x_file_name: Annotated[str, Header(alias="X-File-Name", min_length=1, max_length=1500)],
+    customer_profile_id: uuid.UUID | None = None,
+    content_type: Annotated[str | None, Header(alias="Content-Type")] = None,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    mime_type = (content_type or "").split(";", maxsplit=1)[0].strip().lower()
+    service = TenderService(session, workspace_id, current_user.id)
+    tender, artifact = await service.create_uploaded_tender(
+        title=title,
+        customer_profile_id=customer_profile_id,
+        payload=await request.body(),
+        filename=unquote(x_file_name),
+        mime_type=mime_type,
+    )
+    task = await service.queue_parse(tender.id, artifact.id)
+    return success_response(
+        request,
+        {
+            "tender": _tender(tender),
+            "artifact": {
+                "id": str(artifact.id),
+                "filename": artifact.source_filename,
+                "mime_type": artifact.mime_type,
+                "content_sha256": artifact.content_sha256,
+                "byte_size": artifact.byte_size,
+                "status": artifact.status.value,
+            },
+            "task": {
+                "id": str(task.id),
+                "status": task.status.value,
+                "stage": task.stage,
+                "trace_id": task.trace_id,
+            },
+        },
+    )
 
 
 @router.get("")

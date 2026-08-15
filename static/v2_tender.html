@@ -20,7 +20,7 @@
         <div class="toolbar">
           <select id="tender"></select>
           <select id="filter"><option value="all">全部要求</option><option value="mandatory">强制条款</option><option value="risk">风险缺口</option></select>
-          <button class="warn" id="batch">批量补充证据</button><button id="export">导出 CSV</button>
+          <button class="primary" id="generate" hidden>生成响应矩阵</button><button class="warn" id="batch">批量补充证据</button><button id="export">导出 CSV</button>
         </div>
         <div class="list" id="items"></div>
       </section>
@@ -29,15 +29,16 @@
   </div>
   <script type="module">
     import {apiFetch, esc, notice, locationText} from "/v2-workbench.js";
-    const state = {tenders: [], matrix: null, items: [], selected: null, checked: new Set()};
+    const state = {tenders: [], tender: null, matrix: null, items: [], selected: null, checked: new Set()};
     const $ = id => document.getElementById(id);
+    const tenderStatus = value => ({uploaded:"已上传",parsing:"解析中",ready:"已解析",failed:"解析失败"}[value] || value || "未知状态");
 
     async function load() {
       try {
         await apiFetch("/me");
         const data = await apiFetch("/tenders?page=1&page_size=100");
         state.tenders = data.items || [];
-        $("tender").innerHTML = state.tenders.map(t => `<option value="${t.id}">${esc(t.title)}</option>`).join("");
+        $("tender").innerHTML = state.tenders.map(t => `<option value="${t.id}">${esc(t.title)} · ${esc(tenderStatus(t.status))}</option>`).join("");
         await loadTender();
         $("status").textContent = "已连接";
       } catch (error) { $("status").textContent = "需要登录"; notice(error.message, true); }
@@ -47,9 +48,10 @@
       const tenderId = $("tender").value;
       if (!tenderId) return;
       const tender = state.tenders.find(row => row.id === tenderId);
+      state.tender = tender || null;
       $("title").textContent = tender?.title || "招标响应矩阵";
       const matrices = await apiFetch(`/tenders/${tenderId}/response-matrices?page_size=100`);
-      if (!matrices.items?.length) { state.items = []; render(); return; }
+      if (!matrices.items?.length) { state.matrix = null; state.items = []; state.selected = null; state.checked.clear(); render(); return; }
       state.matrix = await apiFetch(`/response-matrices/${matrices.items[0].id}`);
       const rows = await apiFetch(`/response-matrices/${state.matrix.id}/items`);
       state.items = rows.items || [];
@@ -67,7 +69,10 @@
       $("outline").innerHTML = [...sections].map(([name, count]) => `<div class="row"><strong>${esc(name)}</strong><div class="meta">${count} 条要求</div></div>`).join("") || '<div class="empty">暂无文档结构</div>';
       const mode = $("filter").value;
       const rows = state.items.filter(item => mode === "all" || mode === "mandatory" && item.requirement.mandatory || mode === "risk" && item.risk_flags?.length);
-      $("summary").textContent = `${state.items.length} 条要求 · ${state.items.filter(item => item.requirement.mandatory).length} 条强制 · ${state.items.filter(item => item.risk_flags?.includes("missing_evidence")).length} 个证据缺口`;
+      $("generate").hidden = Boolean(state.matrix) || state.tender?.status !== "ready";
+      $("batch").disabled = !state.matrix;
+      $("export").disabled = !state.matrix;
+      $("summary").textContent = state.matrix ? `${state.items.length} 条要求 · ${state.items.filter(item => item.requirement.mandatory).length} 条强制 · ${state.items.filter(item => item.risk_flags?.includes("missing_evidence")).length} 个证据缺口` : `${state.tender?.source_filename || "粘贴正文"} · ${tenderStatus(state.tender?.status)}${state.tender?.status === "ready" ? " · 可生成响应矩阵" : ""}`;
       $("items").innerHTML = rows.map(item => `<div class="row requirement ${item.requirement.mandatory ? "mandatory" : ""} ${item.id === state.selected ? "selected" : ""}" data-item="${item.id}"><label><input type="checkbox" data-select="${item.id}" ${state.checked.has(item.id) ? "checked" : ""}> <strong>${item.requirement.mandatory ? "★ " : ""}${esc(item.requirement.requirement_text)}</strong></label><div class="meta"><span class="badge">${esc(item.requirement.category)}</span><span class="badge ${item.evidence_status === "supported" ? "green" : item.risk_flags?.length ? "red" : "amber"}">${esc(item.evidence_status)}</span><span>${esc(locationText(item.requirement.source_location))}</span></div></div>`).join("") || '<div class="empty">当前筛选没有要求</div>';
       renderDetail();
     }
@@ -103,6 +108,17 @@
         await apiFetch(`/response-matrices/${state.matrix.id}/batch-review`, {method: "POST", body: {item_ids: items.map(item => item.id), action: "needs_evidence", expected_versions, note: "V2 工作台批量补充证据"}});
         notice(`已标记 ${items.length} 项需补充证据`); await loadTender();
       } catch (error) { notice(error.message, true); }
+    });
+
+    $("generate").addEventListener("click", async () => {
+      if (!state.tender || state.tender.status !== "ready") return;
+      $("generate").disabled = true;
+      try {
+        if (state.tender.source_filename) await apiFetch(`/tenders/${state.tender.id}/requirements/breakdown`, {method: "POST"});
+        await apiFetch(`/tenders/${state.tender.id}/response-matrices`, {method: "POST", body: {experience_ids: [], capability_ids: [], intelligence_snapshot_id: null}});
+        notice("响应矩阵已生成"); await loadTender();
+      } catch (error) { notice(error.message, true); }
+      finally { $("generate").disabled = false; }
     });
 
     $("export").addEventListener("click", async () => {
