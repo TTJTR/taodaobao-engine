@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 淘到宝引擎 V1.1 演示渲染增量契约
-  version: 1.1.0
+  version: 1.1.1
   description: >-
     本文件仅描述冻结 openapi.yaml 之外的演示渲染增量能力。基础路径、鉴权、
     Idempotency-Key、统一成功/错误信封以及既有字段语义继续引用冻结主契约。
@@ -27,6 +27,28 @@ paths:
               $ref: '#/components/schemas/CreateInteractivePresentationRequest'
       responses:
         '202': {description: 已创建互动演示任务，使用统一成功信封}
+  /api/v1/presentations/{presentation_id}/artifact:
+    get:
+      summary: 在当前设备浏览器中打开或下载已审计互动 HTML
+      description: >-
+        仅返回状态为 ready 且事实绑定、安全审计均通过的互动 HTML。服务端不启动浏览器，
+        HTML 的布局、动画和交互由访问者设备完成，并通过响应级 CSP sandbox 隔离。
+      parameters:
+        - name: presentation_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: download
+          in: query
+          required: false
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: 已审计单文件 HTML
+          content:
+            text/html:
+              schema: {type: string}
+        '409': {description: 任务未完成、已失效或审计未通过}
   /api/v1/style-profiles/{style_profile_id}/template-candidates:
     get:
       summary: 查询脱敏模板候选及容量校验结果
@@ -81,9 +103,12 @@ components:
     CreateInteractivePresentationRequest:
       type: object
       additionalProperties: false
-      required: [style_profile_id, audience]
+      required: [audience]
       properties:
-        style_profile_id: {type: string, format: uuid}
+        style_profile_id:
+          type: [string, 'null']
+          format: uuid
+          description: 可选历史风格画像；省略时按 visual_direction 创建已审计系统风格快照
         mode:
           type: string
           enum: [strict, balanced, brand_only]

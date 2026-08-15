@@ -54,7 +54,7 @@ class CreatePresentationRequest(BaseModel):
 
 
 class CreateInteractivePresentationRequest(BaseModel):
-    style_profile_id: uuid.UUID
+    style_profile_id: uuid.UUID | None = None
     mode: Literal["strict", "balanced", "brand_only"] = "balanced"
     audience: str = Field(min_length=1, max_length=64)
     language: Literal["zh-CN", "en-US"] = "zh-CN"

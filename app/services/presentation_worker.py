@@ -18,8 +18,13 @@ from app.db.models import (
     WorkflowTask,
     WorkflowTaskStatus,
 )
-from app.integrations.presentation import PresentationProvider, get_presentation_provider
+from app.integrations.presentation import (
+    PresentationProvider,
+    RoutingPresentationProvider,
+    get_presentation_provider,
+)
 from app.schemas.presentation import PositionedPresentationSpec, VisualStyleProfileData
+from app.services.model_connection_service import workspace_interactive_provider
 from app.services.pptx_renderer import PPTXRenderer
 
 
@@ -31,9 +36,13 @@ async def run_presentation_task(
     *,
     provider: PresentationProvider | None = None,
 ) -> None:
-    provider = provider or get_presentation_provider()
     session_factory = get_session_factory()
     async with session_factory() as session:
+        if provider is None:
+            provider = get_presentation_provider()
+            interactive = await workspace_interactive_provider(session, workspace_id)
+            if interactive is not None:
+                provider = RoutingPresentationProvider(provider.base, interactive)
         task = await session.scalar(
             select(WorkflowTask).where(
                 WorkflowTask.id == task_id,

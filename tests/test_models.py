@@ -161,6 +161,7 @@ def test_presentation_model_compatibility_aliases() -> None:
 def test_metadata_contains_core_and_idempotency_tables() -> None:
     assert set(Base.metadata.tables) == {
         "users",
+        "workspace_model_connections",
         "sources",
         "customer_profiles",
         "customer_profile_versions",

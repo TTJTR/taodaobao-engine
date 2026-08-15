@@ -11,7 +11,6 @@ from app.api.deps import (
     EmbeddingProviderDependency,
     FeishuAdapterDependency,
     WorkspaceId,
-    get_ai_engine,
     get_embedding_provider,
     get_feishu_adapter,
 )
@@ -39,6 +38,7 @@ from app.services.expert_collaboration_service import (
     resolve_collaboration_by_feishu_group,
     resolve_collaboration_workspace,
 )
+from app.services.model_connection_service import workspace_ai_engine
 from app.services.research_pipeline import run_research_pipeline
 
 router = APIRouter(route_class=IdempotencyRoute)
@@ -61,9 +61,7 @@ def _verify_feishu_token(payload: dict) -> None:
 def _question_id_for_message(collaboration, text: str) -> str:
     questions = collaboration.questions or []
     explicit = [
-        str(item["question_id"])
-        for item in questions
-        if str(item.get("question_id") or "") in text
+        str(item["question_id"]) for item in questions if str(item.get("question_id") or "") in text
     ]
     if explicit:
         return explicit[0]
@@ -99,13 +97,13 @@ async def receive_native_feishu_event(
     event = parse_text_message_event(payload)
     if event is None:
         return {"code": 0}
-    ai_engine = get_ai_engine()
     embedding_provider = get_embedding_provider()
     feishu = get_feishu_adapter()
     async with get_session_factory()() as session:
         collaboration, workspace_id, user_id = await resolve_collaboration_by_feishu_group(
             session, event["chat_id"]
         )
+        ai_engine = await workspace_ai_engine(session, workspace_id)
         candidate = next(
             (
                 item

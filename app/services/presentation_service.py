@@ -178,8 +178,16 @@ class PresentationService:
     async def create_interactive_presentation(
         self, run_id: uuid.UUID, payload: CreateInteractivePresentationRequest
     ) -> PresentationRun:
+        profile = (
+            await self.get_style(payload.style_profile_id)
+            if payload.style_profile_id is not None
+            else await self._create_interactive_style_profile(
+                payload.visual_direction,
+                payload.language,
+            )
+        )
         request = CreatePresentationRequest(
-            style_profile_id=payload.style_profile_id,
+            style_profile_id=profile.id,
             mode=payload.mode,
             audience=payload.audience,
             output=["html"],
@@ -191,6 +199,38 @@ class PresentationService:
             render_mode="interactive",
             visual_direction=payload.visual_direction,
         )
+
+    async def _create_interactive_style_profile(
+        self,
+        visual_direction: str,
+        language: str,
+    ) -> StyleProfile:
+        """Create an audited system profile without requiring a PPTX reference deck."""
+
+        profile = StyleProfile(
+            workspace_id=self.workspace_id,
+            created_by_id=self.user_id,
+            name=f"互动 HTML · {visual_direction}"[:300],
+            version=1,
+            reference_versions=[],
+            status=StyleProfileStatus.CONFIRMED,
+            visual_json={
+                "source": "user_visual_direction",
+                "visual_direction": visual_direction,
+                "reference_deck_required": False,
+            },
+            narrative_json={
+                "source": "system_interactive_html",
+                "language": language,
+                "fact_copying_from_reference": False,
+            },
+            conflict_notes=[],
+            confirmed_by_id=self.user_id,
+            confirmed_at=datetime.now(UTC),
+        )
+        self.session.add(profile)
+        await self.session.flush()
+        return profile
 
     async def _create_presentation(
         self,
@@ -291,6 +331,40 @@ class PresentationService:
         )
         await self.session.commit()
         return self._serialize_presentation(run, artifact)
+
+    async def get_interactive_html(self, presentation_id: uuid.UUID) -> str:
+        serialized = await self.get_presentation(presentation_id)
+        if serialized["status"] != PresentationStatus.READY.value:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "互动 HTML 尚未通过事实与安全审计",
+                status_code=409,
+                details={"status": serialized["status"]},
+            )
+        artifact = await self._latest_artifact(presentation_id)
+        if artifact is None or artifact.render_report.get("render_mode") != "interactive":
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "互动 HTML 产物不存在",
+                status_code=404,
+            )
+        if not artifact.render_report.get("fact_binding_passed") or not artifact.render_report.get(
+            "security_passed"
+        ):
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "互动 HTML 未通过事实或安全审计",
+                status_code=409,
+            )
+        document = artifact.html
+        if artifact.css:
+            style = f"<style>{artifact.css}</style>"
+            document = (
+                document.replace("</head>", f"{style}</head>", 1)
+                if "</head>" in document
+                else f"{style}{document}"
+            )
+        return document
 
     async def update_block(
         self,

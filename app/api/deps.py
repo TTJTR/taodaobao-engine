@@ -35,6 +35,10 @@ from app.services.invitations import (
     InvitationRedemptionStore,
     PostgresInvitationRedemptionStore,
 )
+from app.services.model_connection_service import (
+    workspace_ai_engine,
+    workspace_rehearsal_workflow,
+)
 
 DatabaseSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -103,9 +107,6 @@ def get_ai_engine() -> AIEngine:
     return BailianAIEngine(BailianChatClient(bailian_settings))
 
 
-AIEngineDependency = Annotated[AIEngine, Depends(get_ai_engine)]
-
-
 @lru_cache
 def get_rehearsal_ai_workflow() -> RehearsalAIWorkflow:
     if settings.ai_mode != "live":
@@ -131,11 +132,6 @@ def get_rehearsal_ai_workflow() -> RehearsalAIWorkflow:
     )
 
 
-RehearsalAIWorkflowDependency = Annotated[
-    RehearsalAIWorkflow, Depends(get_rehearsal_ai_workflow)
-]
-
-
 @lru_cache
 def get_slide_planner() -> SlidePlanner:
     if settings.ai_mode != "live":
@@ -146,9 +142,6 @@ def get_slide_planner() -> SlidePlanner:
             retryable=False,
         )
     return AIEngineSlidePlanner(get_ai_engine())
-
-
-SlidePlannerDependency = Annotated[SlidePlanner, Depends(get_slide_planner)]
 
 
 @lru_cache
@@ -243,6 +236,45 @@ async def get_workspace_id(current_user: CurrentUser) -> uuid.UUID:
 
 
 WorkspaceId = Annotated[uuid.UUID, Depends(get_workspace_id)]
+
+
+async def get_workspace_ai_engine(session: DatabaseSession, workspace_id: WorkspaceId) -> AIEngine:
+    try:
+        return await workspace_ai_engine(session, workspace_id)
+    except (ModelClientError, ValueError) as exc:
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "当前工作区的 AI API 未配置或不可用",
+            status_code=503,
+            retryable=False,
+        ) from exc
+
+
+async def get_workspace_rehearsal_ai_workflow(
+    session: DatabaseSession, workspace_id: WorkspaceId
+) -> RehearsalAIWorkflow:
+    try:
+        return await workspace_rehearsal_workflow(session, workspace_id)
+    except (ModelClientError, ValueError) as exc:
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "当前工作区的 AI API 未配置或不可用",
+            status_code=503,
+            retryable=False,
+        ) from exc
+
+
+async def get_workspace_slide_planner(
+    ai_engine: Annotated[AIEngine, Depends(get_workspace_ai_engine)],
+) -> SlidePlanner:
+    return AIEngineSlidePlanner(ai_engine)
+
+
+AIEngineDependency = Annotated[AIEngine, Depends(get_workspace_ai_engine)]
+RehearsalAIWorkflowDependency = Annotated[
+    RehearsalAIWorkflow, Depends(get_workspace_rehearsal_ai_workflow)
+]
+SlidePlannerDependency = Annotated[SlidePlanner, Depends(get_workspace_slide_planner)]
 
 
 def get_auth_service(

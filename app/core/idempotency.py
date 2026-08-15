@@ -17,7 +17,7 @@ from app.db.database import get_session_factory
 from app.db.models import IdempotencyRecord
 
 IDEMPOTENCY_TTL = timedelta(hours=24)
-IDEMPOTENT_METHODS = {"POST", "PATCH"}
+IDEMPOTENT_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 ResponseHandler = Callable[[], Awaitable[Response]]
 
 

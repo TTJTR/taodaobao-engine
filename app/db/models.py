@@ -322,6 +322,39 @@ class User(EntityMixin, WorkspaceMixin, Base):
     )
 
 
+class WorkspaceModelConnection(EntityMixin, WorkspaceMixin, Base):
+    """Workspace-selected live API route; secrets are encrypted at rest."""
+
+    __tablename__ = "workspace_model_connections"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "capability", name="uq_workspace_model_connections_capability"
+        ),
+        CheckConstraint(
+            "capability IN ('ai', 'interactive-html')",
+            name="ck_workspace_model_connections_capability",
+        ),
+        CheckConstraint(
+            "provider IN ('dashscope', 'deepseek')",
+            name="ck_workspace_model_connections_provider",
+        ),
+    )
+
+    capability: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    api_key: Mapped[str] = mapped_column(EncryptedTokenText(), nullable=False)
+    updated_by_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    last_test_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="ok", server_default="ok"
+    )
+    last_test_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_latency_ms: Mapped[int | None] = mapped_column(Integer)
+
+
 class CustomerProfile(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "customer_profiles"
     __table_args__ = (
@@ -938,9 +971,7 @@ class StyleTemplateVersion(EntityMixin, WorkspaceMixin, Base):
     )
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    style_profile: Mapped["VisualStyleProfile"] = relationship(
-        back_populates="template_versions"
-    )
+    style_profile: Mapped["VisualStyleProfile"] = relationship(back_populates="template_versions")
     confirmed_by: Mapped["User | None"] = relationship(foreign_keys=[confirmed_by_id])
 
 
@@ -1173,13 +1204,9 @@ class InvitationRedemption(Base):
 
 class InvitationRedemptionUse(Base):
     __tablename__ = "invitation_redemption_uses"
-    __table_args__ = (
-        UniqueConstraint("token_id_hash", "redemption_number"),
-    )
+    __table_args__ = (UniqueConstraint("token_id_hash", "redemption_number"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     token_id_hash: Mapped[str] = mapped_column(
         String(64),
         ForeignKey("invitation_redemptions.token_id_hash", ondelete="CASCADE"),

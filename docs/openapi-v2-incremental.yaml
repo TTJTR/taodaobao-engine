@@ -62,11 +62,35 @@ paths:
     get:
       operationId: listModelConnections
       responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+  /model-connections/catalog:
+    get:
+      operationId: getModelConnectionCatalog
+      responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+  /model-connections/{capability}/credential:
+    put:
+      operationId: configureModelConnectionCredential
+      parameters:
+        - {name: capability, in: path, required: true, schema: {enum: [ai, interactive-html]}}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ConfigureModelConnectionRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/ItemResponse'}
+        '503': {$ref: '#/components/responses/ErrorResponse'}
+    delete:
+      operationId: deleteModelConnectionCredential
+      parameters:
+        - {name: capability, in: path, required: true, schema: {enum: [ai, interactive-html]}}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
   /model-connections/{provider}/test:
     post:
       operationId: testModelConnection
       parameters:
-        - {name: provider, in: path, required: true, schema: {enum: [ai, deep-research, presentation, worker, feishu]}}
+        - {name: provider, in: path, required: true, schema: {enum: [ai, deep-research, presentation, interactive-html, embedding, worker, feishu]}}
         - {$ref: '#/components/parameters/IdempotencyKey'}
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}, '503': {$ref: '#/components/responses/ErrorResponse'}}
   /intelligence/search-runs:
@@ -398,6 +422,14 @@ components:
     MatrixId: {name: matrix_id, in: path, required: true, schema: {type: string, format: uuid}}
     RehearsalId: {name: rehearsal_id, in: path, required: true, schema: {type: string, format: uuid}}
   schemas:
+    ConfigureModelConnectionRequest:
+      type: object
+      additionalProperties: false
+      required: [provider, model, api_key]
+      properties:
+        provider: {enum: [dashscope, deepseek]}
+        model: {type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9._:/-]+$'}
+        api_key: {type: string, minLength: 8, maxLength: 4096, writeOnly: true}
     EnrichRawArtifactRequest:
       type: object
       additionalProperties: false

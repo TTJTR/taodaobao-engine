@@ -1,0 +1,108 @@
+{
+  "status": "passed",
+  "index_provider": "text-embedding-v4:1024:v1",
+  "workspace_id": "00000000-0000-4000-8000-000000000099",
+  "fixture_notice": "全部内容均为虚构测试资料，只用于验证真实索引与检索链路，不代表企业事实或能力。",
+  "cases": [
+    {
+      "key": "exp-retail-bluewhale",
+      "query": "蓝鲸巡检试点如何接入门店摄像头",
+      "expected_title": "内置样例｜华东零售门店蓝鲸巡检试点复盘",
+      "top_title": "内置样例｜华东零售门店蓝鲸巡检试点复盘",
+      "passed": true,
+      "match_reasons": [
+        "lexical_hits=0/1",
+        "semantic_similarity=0.8889",
+        "source_freshness=current"
+      ],
+      "source_snapshot": {
+        "source_version": "1",
+        "reviewed_version": "1",
+        "permission_snapshot_id": "7d96f9d2-d505-4edb-8da2-2e94c352a7a0:1:2026-08-14T20:12:18.769093+00:00",
+        "permission_valid": true,
+        "available": true,
+        "invalid_reason": null,
+        "title": "内置样例｜华东零售门店蓝鲸巡检试点复盘",
+        "url": "builtin://index-fixture/exp-retail-bluewhale",
+        "author": "内置测试资料",
+        "source_updated_at": null,
+        "last_synced_at": null
+      }
+    },
+    {
+      "key": "cap-falcon-eye",
+      "query": "FalconEye可以输出什么",
+      "expected_title": "内置样例｜FalconEye视觉质检能力PRD",
+      "top_title": "内置样例｜FalconEye视觉质检能力PRD",
+      "passed": true,
+      "match_reasons": [
+        "lexical_hits=0/1",
+        "semantic_similarity=0.7045",
+        "source_freshness=current"
+      ],
+      "source_snapshot": {
+        "source_version": "1",
+        "reviewed_version": "1",
+        "permission_snapshot_id": "75392282-3383-49ff-a031-e41e3ab7c93d:1:2026-08-14T20:12:19.210619+00:00",
+        "permission_valid": true,
+        "available": true,
+        "invalid_reason": null,
+        "title": "内置样例｜FalconEye视觉质检能力PRD",
+        "url": "builtin://index-fixture/cap-falcon-eye",
+        "author": "内置测试资料",
+        "source_updated_at": null,
+        "last_synced_at": null
+      }
+    },
+    {
+      "key": "exp-orion-knowledge",
+      "query": "猎户座知识助手如何保证答案可核验",
+      "expected_title": "内置样例｜猎户座园区知识助手复盘",
+      "top_title": "内置样例｜猎户座园区知识助手复盘",
+      "passed": true,
+      "match_reasons": [
+        "lexical_hits=0/1",
+        "semantic_similarity=0.7366",
+        "source_freshness=current"
+      ],
+      "source_snapshot": {
+        "source_version": "1",
+        "reviewed_version": "1",
+        "permission_snapshot_id": "019daa92-0a6c-4ff8-a1db-23804baa7be6:1:2026-08-14T20:12:19.598587+00:00",
+        "permission_valid": true,
+        "available": true,
+        "invalid_reason": null,
+        "title": "内置样例｜猎户座园区知识助手复盘",
+        "url": "builtin://index-fixture/exp-orion-knowledge",
+        "author": "内置测试资料",
+        "source_updated_at": null,
+        "last_synced_at": null
+      }
+    },
+    {
+      "key": "cap-minute-structure",
+      "query": "会议纪要可以提取负责人和截止日期吗",
+      "expected_title": "内置样例｜会议纪要结构化能力PRD",
+      "top_title": "内置样例｜会议纪要结构化能力PRD",
+      "passed": true,
+      "match_reasons": [
+        "lexical_hits=0/1",
+        "semantic_similarity=0.8290",
+        "source_freshness=current"
+      ],
+      "source_snapshot": {
+        "source_version": "1",
+        "reviewed_version": "1",
+        "permission_snapshot_id": "64fe4e9e-d9a5-4dbc-8eaf-85b71d33a95f:1:2026-08-14T20:12:19.996221+00:00",
+        "permission_valid": true,
+        "available": true,
+        "invalid_reason": null,
+        "title": "内置样例｜会议纪要结构化能力PRD",
+        "url": "builtin://index-fixture/cap-minute-structure",
+        "author": "内置测试资料",
+        "source_updated_at": null,
+        "last_synced_at": null
+      }
+    }
+  ]
+}

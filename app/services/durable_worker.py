@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import or_, select, text
 
-from app.api.deps import get_ai_engine, get_embedding_provider
+from app.api.deps import get_embedding_provider
 from app.db.database import get_session_factory
 from app.db.models import (
     MessageRole,
@@ -19,6 +19,7 @@ from app.db.models import (
     WorkflowTaskStatus,
 )
 from app.db.repositories import MessageRepository
+from app.services.model_connection_service import workspace_ai_engine
 from app.services.solution_pipeline import run_solution_pipeline
 from app.services.trust_gate import GATE_POLICY_VERSION, THRESHOLD_VERSION
 
@@ -81,10 +82,13 @@ async def process_claimed_task(
     target_id: uuid.UUID,
 ) -> None:
     if kind == "solution_run":
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            ai_engine = await workspace_ai_engine(session, workspace_id)
         await run_solution_pipeline(
             target_id,
             workspace_id,
-            get_ai_engine(),
+            ai_engine,
             get_embedding_provider(),
             task_id=task_id,
         )
@@ -107,11 +111,13 @@ async def _reschedule_retryable_failure(task_id: uuid.UUID, workspace_id: uuid.U
     session_factory = get_session_factory()
     async with session_factory() as session:
         task = await session.scalar(
-            select(WorkflowTask).where(
+            select(WorkflowTask)
+            .where(
                 WorkflowTask.id == task_id,
                 WorkflowTask.workspace_id == workspace_id,
                 WorkflowTask.is_deleted.is_(False),
-            ).with_for_update()
+            )
+            .with_for_update()
         )
         if task is None or task.status != WorkflowTaskStatus.FAILED:
             return

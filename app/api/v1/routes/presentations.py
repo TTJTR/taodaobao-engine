@@ -1,6 +1,7 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import HTMLResponse
 
 from app.api.deps import CurrentUser, DatabaseSession, WorkspaceId
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
@@ -177,6 +178,37 @@ async def get_presentation(
         presentation_id
     )
     return success_response(request, item)
+
+
+@presentations_router.get("/{presentation_id}/artifact", response_class=HTMLResponse)
+async def open_interactive_html(
+    presentation_id: uuid.UUID,
+    session: DatabaseSession,
+    workspace_id: WorkspaceId,
+    current_user: CurrentUser,
+    download: bool = Query(default=False),
+) -> HTMLResponse:
+    document = await PresentationService(
+        session, workspace_id, current_user.id
+    ).get_interactive_html(presentation_id)
+    disposition = "attachment" if download else "inline"
+    return HTMLResponse(
+        document,
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": (
+                f'{disposition}; filename="taodaobao-presentation-{presentation_id}.html"'
+            ),
+            "Content-Security-Policy": (
+                "sandbox allow-scripts; default-src 'none'; style-src 'unsafe-inline'; "
+                "script-src 'unsafe-inline'; img-src data:; connect-src 'none'; "
+                "form-action 'none'; base-uri 'none'; object-src 'none'; "
+                "frame-ancestors 'self'"
+            ),
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @presentations_router.patch("/{presentation_id}/blocks/{block_id}")
