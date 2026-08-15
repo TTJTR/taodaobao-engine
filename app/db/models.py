@@ -331,7 +331,7 @@ class WorkspaceModelConnection(EntityMixin, WorkspaceMixin, Base):
             "workspace_id", "capability", name="uq_workspace_model_connections_capability"
         ),
         CheckConstraint(
-            "capability IN ('ai', 'interactive-html')",
+            "capability IN ('ai', 'interactive-html', 'web-search')",
             name="ck_workspace_model_connections_capability",
         ),
         CheckConstraint(

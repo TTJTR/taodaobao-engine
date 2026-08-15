@@ -32,7 +32,9 @@ from app.db.models import (
     WorkflowTask,
     WorkflowTaskStatus,
 )
+from app.integrations.web_scraper import WebScrapeArtifact
 from app.schemas.intelligence_provider import EnrichmentJobRequest, EnrichmentJobResult
+from app.schemas.search_provider import SearchSource
 from app.schemas.v2 import ManualIntelligenceSource
 
 MAX_AI_FACTS = 50
@@ -664,6 +666,172 @@ class IntelligenceService:
         await self.session.commit()
         await self.session.refresh(task)
         return task
+
+    async def queue_automatic_search(
+        self,
+        *,
+        query: str,
+        purpose: str,
+        profile_id: uuid.UUID | None,
+        max_results: int,
+        language: str,
+        country: str | None,
+    ) -> tuple[SearchRun, WorkflowTask]:
+        if profile_id is not None:
+            await self._get(CustomerProfile, profile_id)
+        if purpose == "customer_profile" and profile_id is None:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "客户画像情报搜索必须绑定客户画像",
+                status_code=422,
+            )
+        now = datetime.now(UTC)
+        run = SearchRun(
+            workspace_id=self.workspace_id,
+            created_by_id=self.user_id,
+            query=query.strip(),
+            purpose=purpose,
+            provider="bailian_web_search",
+            status=SearchRunStatus.QUEUED,
+            trace_id=str(uuid.uuid4()),
+            input_snapshot={
+                "query": query.strip(),
+                "profile_id": str(profile_id) if profile_id else None,
+                "max_results": max_results,
+                "language": language,
+                "country": country,
+                "provider": "bailian_web_search",
+                "trust_boundary": "source_discovery_only",
+            },
+            result_summary={},
+        )
+        self.session.add(run)
+        await self.session.flush()
+        task = WorkflowTask(
+            workspace_id=self.workspace_id,
+            kind="intelligence_search",
+            target_id=run.id,
+            status=WorkflowTaskStatus.QUEUED,
+            stage="queued",
+            trace_id=run.trace_id,
+            payload={
+                "profile_id": str(profile_id) if profile_id else None,
+                "user_id": str(self.user_id),
+                "query": query.strip(),
+                "purpose": purpose,
+                "max_results": max_results,
+                "language": language,
+                "country": country,
+            },
+            attempt_count=0,
+            max_attempts=3,
+            available_at=now,
+            deadline_at=now + timedelta(minutes=10),
+        )
+        self.session.add(task)
+        await self.session.commit()
+        await self.session.refresh(run)
+        await self.session.refresh(task)
+        return run, task
+
+    async def accept_discovered_sources(
+        self,
+        *,
+        run_id: uuid.UUID,
+        sources: list[tuple[SearchSource, WebScrapeArtifact]],
+        provider_request_id: str,
+    ) -> tuple[list[RawArtifact], list[IntelligenceItem]]:
+        run = await self._get(SearchRun, run_id)
+        artifacts: list[RawArtifact] = []
+        items: list[IntelligenceItem] = []
+        for source, captured in sources:
+            artifact_key = hashlib.sha256(
+                f"{run.id}\n{captured.normalized_url}\n{captured.content_sha256}".encode()
+            ).hexdigest()
+            artifact = await self.session.scalar(
+                select(RawArtifact).where(
+                    RawArtifact.workspace_id == self.workspace_id,
+                    RawArtifact.artifact_key == artifact_key,
+                    RawArtifact.is_deleted.is_(False),
+                )
+            )
+            if artifact is None:
+                fields = captured.as_raw_artifact()
+                artifact = RawArtifact(
+                    workspace_id=self.workspace_id,
+                    search_run_id=run.id,
+                    artifact_key=artifact_key,
+                    kind=RawArtifactKind.WEB_PAGE,
+                    status=RawArtifactStatus(str(fields["status"])),
+                    provider="bailian_web_search+web_scraper",
+                    source_url=str(fields["source_url"]),
+                    normalized_url=str(fields["normalized_url"]),
+                    mime_type=str(fields["mime_type"]) if fields["mime_type"] else None,
+                    http_status=int(fields["http_status"]),
+                    content_sha256=str(fields["content_sha256"]),
+                    byte_size=int(fields["byte_size"]),
+                    text_content=str(fields["text_content"]),
+                    captured_at=fields["captured_at"],
+                    security_report=dict(fields["security_report"]),
+                    metadata_snapshot={
+                        **dict(fields["metadata_snapshot"]),
+                        "title": source.title,
+                        "site_name": source.site_name,
+                        "search_position": source.position,
+                        "search_snippet": source.snippet,
+                        "provider_request_id": provider_request_id,
+                        "discovery_provider": "bailian_web_search",
+                        "content_source": "direct_public_fetch",
+                    },
+                )
+                self.session.add(artifact)
+                await self.session.flush()
+            artifacts.append(artifact)
+            item_fingerprint = hashlib.sha256(
+                f"public-source\n{captured.normalized_url}\n{captured.content_sha256}".encode()
+            ).hexdigest()
+            item = await self.session.scalar(
+                select(IntelligenceItem).where(
+                    IntelligenceItem.workspace_id == self.workspace_id,
+                    IntelligenceItem.fingerprint == item_fingerprint,
+                    IntelligenceItem.is_deleted.is_(False),
+                )
+            )
+            if item is None:
+                item = IntelligenceItem(
+                    workspace_id=self.workspace_id,
+                    search_run_id=run.id,
+                    title=source.title,
+                    source_url=captured.normalized_url,
+                    source_domain=urlparse(captured.normalized_url).hostname or "unknown",
+                    published_at=None,
+                    captured_at=captured.captured_at,
+                    content=captured.text_content,
+                    summary=captured.text_content[:1000],
+                    facts=[],
+                    fingerprint=item_fingerprint,
+                    freshness=IntelligenceFreshness.CURRENT,
+                    review_status=IntelligenceReviewStatus.PENDING,
+                    metadata_snapshot={
+                        "provider": "bailian_web_search",
+                        "provider_request_id": provider_request_id,
+                        "raw_artifact_id": str(artifact.id),
+                        "content_sha256": captured.content_sha256,
+                        "captured_at": captured.captured_at.isoformat(),
+                        "boundary": "external_public_information",
+                        "fact_status": "not_extracted",
+                    },
+                )
+                self.session.add(item)
+                await self.session.flush()
+            await self._link_artifacts(item, {artifact.id: artifact}, corroborating=False)
+            items.append(item)
+        await self.session.commit()
+        for artifact in artifacts:
+            await self.session.refresh(artifact)
+        for item in items:
+            await self.session.refresh(item)
+        return artifacts, items
 
     async def create_run(
         self,

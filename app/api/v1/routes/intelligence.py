@@ -9,6 +9,7 @@ from app.core.responses import success_response
 from app.db.models import IntelligenceFreshness, ProposalStatus
 from app.schemas.intelligence_provider import EnrichmentJobRequest
 from app.schemas.v2 import (
+    CreateAutomaticSearchRunRequest,
     CreateIntelligenceSearchTemplateRequest,
     CreateIntelligenceSnapshotRequest,
     CreateProfileProposalRequest,
@@ -162,6 +163,39 @@ async def create_search_run(
         sources=payload.sources,
     )
     return success_response(request, _run(row))
+
+
+@router.post("/search-runs/automatic", status_code=status.HTTP_202_ACCEPTED)
+async def create_automatic_search_run(
+    payload: CreateAutomaticSearchRunRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict:
+    run, task = await IntelligenceService(
+        session, workspace_id, current_user.id
+    ).queue_automatic_search(
+        query=payload.query,
+        purpose=payload.purpose,
+        profile_id=payload.profile_id,
+        max_results=payload.max_results,
+        language=payload.language,
+        country=payload.country,
+    )
+    return success_response(
+        request,
+        {
+            "run": _run(run),
+            "task": {
+                "id": str(task.id),
+                "status": task.status.value,
+                "stage": task.stage,
+                "trace_id": task.trace_id,
+            },
+        },
+    )
 
 
 @router.get("/search-runs")

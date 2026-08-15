@@ -8,6 +8,7 @@ from sqlalchemy.engine import make_url
 from app.api.deps import bailian_is_configured
 from app.core.config import settings
 from app.core.responses import success_response
+from app.services.model_connection_service import bailian_search_is_configured
 
 router = APIRouter()
 
@@ -101,6 +102,7 @@ async def health_check(request: Request) -> dict[str, Any]:
         if settings.interactive_html_mode == "live" and settings.interactive_html_api_key
         else "not_configured"
     )
+    web_search_status = "configured" if bailian_search_is_configured() else "not_configured"
     status = (
         "ok"
         if database_status in {"ok", "not_configured"}
@@ -123,6 +125,7 @@ async def health_check(request: Request) -> dict[str, Any]:
             "presentation_mode": settings.presentation_mode,
             "interactive_html": interactive_html_status,
             "interactive_html_mode": settings.interactive_html_mode,
+            "web_search": web_search_status,
             "sidecar_status": sidecar_status,
             "workflow_queue": workflow_queue,
         },

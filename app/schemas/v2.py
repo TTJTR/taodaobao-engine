@@ -19,6 +19,21 @@ class CreateSearchRunRequest(BaseModel):
     sources: list[ManualIntelligenceSource] = Field(min_length=1, max_length=20)
 
 
+class CreateAutomaticSearchRunRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    purpose: Literal["customer_profile", "solution", "tender"]
+    profile_id: uuid.UUID | None = None
+    max_results: int = Field(default=5, ge=1, le=10)
+    language: str = Field(default="zh-CN", min_length=2, max_length=16)
+    country: str | None = Field(default="CN", min_length=2, max_length=2)
+
+    @model_validator(mode="after")
+    def require_profile_for_profile_search(self) -> "CreateAutomaticSearchRunRequest":
+        if self.purpose == "customer_profile" and self.profile_id is None:
+            raise ValueError("profile_id is required for customer_profile search")
+        return self
+
+
 class CreateIntelligenceSearchTemplateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     purpose: Literal["customer_profile", "solution", "tender"]

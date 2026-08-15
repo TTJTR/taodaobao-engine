@@ -9,6 +9,7 @@ from app.schemas.intelligence_provider import (
     EnrichmentJobResult,
     EnrichmentJobStatus,
 )
+from app.schemas.search_provider import SearchDiscoveryResult
 
 DocumentLocation = dict[str, Any]
 
@@ -66,6 +67,20 @@ class IntelligenceProvider(Protocol):
     async def fetch_results(self, provider_job_id: str) -> EnrichmentJobResult: ...
 
     async def cancel_job(self, provider_job_id: str) -> None: ...
+
+
+@runtime_checkable
+class SearchProvider(Protocol):
+    provider_name: str
+
+    async def search(
+        self,
+        query: str,
+        *,
+        max_results: int = 5,
+        language: str = "zh-CN",
+        country: str | None = "CN",
+    ) -> SearchDiscoveryResult: ...
 
 
 @dataclass(frozen=True, slots=True)

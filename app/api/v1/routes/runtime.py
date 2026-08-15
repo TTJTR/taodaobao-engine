@@ -23,12 +23,14 @@ from app.core.responses import success_response
 from app.schemas.model_connections import ConfigureModelConnectionRequest
 from app.services.model_connection_service import (
     CAPABILITIES,
+    bailian_search_is_configured,
     catalog_payload,
     configure_workspace_connection,
     connection_payload,
     delete_workspace_connection,
     get_workspace_connection,
     test_candidate,
+    workspace_search_provider,
 )
 from app.services.runtime_service import RuntimeService
 
@@ -124,6 +126,15 @@ async def _connections(session: DatabaseSession, workspace_id: uuid.UUID) -> lis
             else "not_configured",
             "configurable": True,
             "source": "default",
+        },
+        {
+            "provider": "web-search",
+            "label": "公开情报搜索",
+            "mode": "live",
+            "status": "configured" if bailian_search_is_configured() else "not_configured",
+            "configurable": True,
+            "source": "default",
+            "note": "百炼只负责发现公开来源；正文抓取、哈希、快照与人工审批由本系统完成。",
         },
         {
             "provider": "embedding",
@@ -247,6 +258,7 @@ async def test_model_connection(
                 selected.provider,
                 selected.model,
                 selected.api_key,
+                selected.capability,
             )
         elif provider == "ai":
             ai_engine = get_ai_engine()
@@ -297,6 +309,14 @@ async def test_model_connection(
                     headers={"Authorization": f"Bearer {settings.interactive_html_api_key}"},
                 )
                 response.raise_for_status()
+        elif provider == "web-search":
+            search_provider = await workspace_search_provider(session, current_user.workspace_id)
+            if search_provider is None:
+                raise RuntimeError("web search is not configured")
+            try:
+                await search_provider.search("阿里云官网", max_results=1)
+            finally:
+                await search_provider.aclose()
         else:
             raise RuntimeError("provider is not configured or not independently testable")
     except Exception as exc:

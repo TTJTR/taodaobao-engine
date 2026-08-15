@@ -34,6 +34,7 @@ RETRYABLE_CODES = {
     "PRESENTATION_RENDER_FAILED",
     "TENDER_PARSE_TIMEOUT",
     "PROVIDER_UNAVAILABLE",
+    "SOURCE_TEMPORARILY_UNAVAILABLE",
 }
 
 
@@ -100,6 +101,10 @@ async def process_claimed_task(
         from app.services.intelligence_task_worker import run_open_enrich_task
 
         await run_open_enrich_task(task_id, workspace_id, target_id)
+    elif kind == "intelligence_search":
+        from app.services.intelligence_search_worker import run_intelligence_search_task
+
+        await run_intelligence_search_task(task_id, workspace_id, target_id)
     else:
         from app.services.presentation_worker import run_presentation_task
 

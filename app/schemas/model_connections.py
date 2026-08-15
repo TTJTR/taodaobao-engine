@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-ModelCapability = Literal["ai", "interactive-html"]
+ModelCapability = Literal["ai", "interactive-html", "web-search"]
 ModelProvider = Literal["dashscope", "deepseek"]
 
 

@@ -70,7 +70,7 @@ paths:
     put:
       operationId: configureModelConnectionCredential
       parameters:
-        - {name: capability, in: path, required: true, schema: {enum: [ai, interactive-html]}}
+        - {name: capability, in: path, required: true, schema: {enum: [ai, interactive-html, web-search]}}
         - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody:
         required: true
@@ -83,14 +83,14 @@ paths:
     delete:
       operationId: deleteModelConnectionCredential
       parameters:
-        - {name: capability, in: path, required: true, schema: {enum: [ai, interactive-html]}}
+        - {name: capability, in: path, required: true, schema: {enum: [ai, interactive-html, web-search]}}
         - {$ref: '#/components/parameters/IdempotencyKey'}
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}}
   /model-connections/{provider}/test:
     post:
       operationId: testModelConnection
       parameters:
-        - {name: provider, in: path, required: true, schema: {enum: [ai, deep-research, presentation, interactive-html, embedding, worker, feishu]}}
+        - {name: provider, in: path, required: true, schema: {enum: [ai, deep-research, presentation, interactive-html, web-search, embedding, worker, feishu]}}
         - {$ref: '#/components/parameters/IdempotencyKey'}
       responses: {'200': {$ref: '#/components/responses/ItemResponse'}, '503': {$ref: '#/components/responses/ErrorResponse'}}
   /intelligence/search-runs:
@@ -102,6 +102,18 @@ paths:
     get:
       operationId: listSearchRuns
       responses: {'200': {$ref: '#/components/responses/ListResponse'}}
+  /intelligence/search-runs/automatic:
+    post:
+      operationId: createAutomaticSearchRun
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateAutomaticSearchRunRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/ItemResponse'}
+        '503': {$ref: '#/components/responses/ErrorResponse'}
   /intelligence/search-runs/{run_id}:
     get:
       operationId: getSearchRun
@@ -422,6 +434,16 @@ components:
     MatrixId: {name: matrix_id, in: path, required: true, schema: {type: string, format: uuid}}
     RehearsalId: {name: rehearsal_id, in: path, required: true, schema: {type: string, format: uuid}}
   schemas:
+    CreateAutomaticSearchRunRequest:
+      type: object
+      required: [query, purpose]
+      properties:
+        query: {type: string, minLength: 1, maxLength: 2000}
+        purpose: {enum: [customer_profile, solution, tender]}
+        profile_id: {type: [string, 'null'], format: uuid}
+        max_results: {type: integer, minimum: 1, maximum: 10, default: 5}
+        language: {type: string, default: zh-CN}
+        country: {type: [string, 'null'], default: CN}
     ConfigureModelConnectionRequest:
       type: object
       additionalProperties: false

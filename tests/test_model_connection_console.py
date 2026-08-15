@@ -15,12 +15,18 @@ from app.services import model_connection_service as service
 def test_catalog_only_exposes_allowlisted_live_providers() -> None:
     catalog = service.catalog_payload()
 
-    assert {item["capability"] for item in catalog} == {"ai", "interactive-html"}
+    assert {item["capability"] for item in catalog} == {
+        "ai",
+        "interactive-html",
+        "web-search",
+    }
     assert {provider["provider"] for item in catalog for provider in item["providers"]} == {
         "dashscope",
         "deepseek",
     }
     assert "base_url" not in str(catalog)
+    search = next(item for item in catalog if item["capability"] == "web-search")
+    assert [provider["provider"] for provider in search["providers"]] == ["dashscope"]
 
 
 def test_all_model_connection_writes_are_idempotent() -> None:

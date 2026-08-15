@@ -1,3 +1,4 @@
+import os
 import time
 import uuid
 from datetime import UTC, datetime
@@ -13,13 +14,18 @@ from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.core.token_crypto import get_token_cipher
 from app.db.models import WorkspaceModelConnection
+from app.integrations.bailian_web_search import BailianWebSearchAdapter
 from app.services.interactive_html_service import LiveInteractiveHTMLProvider
 
 PROVIDER_CATALOG = {
     "dashscope": {
         "label": "阿里云百炼",
         "base_url": BAILIAN_BEIJING_BASE_URL,
-        "default_models": {"ai": "qwen-plus", "interactive-html": "qwen-plus"},
+        "default_models": {
+            "ai": "qwen-plus",
+            "interactive-html": "qwen-plus",
+            "web-search": "qwen-plus",
+        },
     },
     "deepseek": {
         "label": "DeepSeek",
@@ -32,6 +38,10 @@ CAPABILITIES = {
     "interactive-html": {
         "label": "互动 HTML 生成",
         "providers": ["deepseek", "dashscope"],
+    },
+    "web-search": {
+        "label": "公开情报搜索",
+        "providers": ["dashscope"],
     },
 }
 
@@ -90,9 +100,29 @@ def _candidate_settings(provider: str, model: str, api_key: str) -> BailianSetti
     )
 
 
-async def test_candidate(provider: str, model: str, api_key: str) -> int:
+async def test_candidate(
+    provider: str,
+    model: str,
+    api_key: str,
+    capability: str = "ai",
+) -> int:
     started = time.perf_counter()
     try:
+        if capability == "web-search":
+            if provider != "dashscope":
+                raise ValueError("web search only supports dashscope")
+            adapter = BailianWebSearchAdapter(
+                api_key,
+                model=model,
+                base_url=settings.bailian_search_base_url,
+                strategy=settings.bailian_search_strategy,
+                timeout_seconds=settings.bailian_search_timeout_seconds,
+            )
+            try:
+                await adapter.search("阿里云官网", max_results=1)
+            finally:
+                await adapter.aclose()
+            return round((time.perf_counter() - started) * 1000)
         client = BailianChatClient(_candidate_settings(provider, model, api_key))
         result = await client.generate_json(
             "你是 API 连通性检查器，只返回 JSON 对象。",
@@ -132,7 +162,7 @@ async def configure_workspace_connection(
             "服务端未配置密钥加密能力，拒绝保存 API Key",
             status_code=503,
         )
-    latency_ms = await test_candidate(provider, model, api_key)
+    latency_ms = await test_candidate(provider, model, api_key, capability)
     row = await get_workspace_connection(session, workspace_id, capability)
     now = datetime.now(UTC)
     if row is None:
@@ -236,3 +266,36 @@ async def workspace_interactive_provider(
             settings.interactive_html_timeout_seconds,
         )
     return None
+
+
+def default_bailian_search_api_key() -> str | None:
+    return (settings.bailian_search_api_key or os.getenv("DASHSCOPE_API_KEY") or "").strip() or None
+
+
+def bailian_search_is_configured() -> bool:
+    return default_bailian_search_api_key() is not None
+
+
+async def workspace_search_provider(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+) -> BailianWebSearchAdapter | None:
+    row = await get_workspace_connection(session, workspace_id, "web-search")
+    if row is not None:
+        return BailianWebSearchAdapter(
+            row.api_key,
+            model=row.model,
+            base_url=settings.bailian_search_base_url,
+            strategy=settings.bailian_search_strategy,
+            timeout_seconds=settings.bailian_search_timeout_seconds,
+        )
+    api_key = default_bailian_search_api_key()
+    if api_key is None:
+        return None
+    return BailianWebSearchAdapter(
+        api_key,
+        model=settings.bailian_search_model,
+        base_url=settings.bailian_search_base_url,
+        strategy=settings.bailian_search_strategy,
+        timeout_seconds=settings.bailian_search_timeout_seconds,
+    )

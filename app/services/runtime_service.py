@@ -204,18 +204,23 @@ class RuntimeService:
             workflow = await self.session.scalar(
                 select(WorkflowTask).where(
                     WorkflowTask.target_id == task_id,
-                    WorkflowTask.kind == "open_enrich",
+                    WorkflowTask.kind.in_(["open_enrich", "intelligence_search"]),
                     *self._filters(WorkflowTask),
                 )
             )
             if workflow:
+                executor = (
+                    "bailian_search_worker"
+                    if workflow.kind == "intelligence_search"
+                    else "open_enrich_worker"
+                )
                 return [
                     {
                         "id": str(workflow.id),
                         "sequence": 1,
                         "stage": workflow.stage,
-                        "executor": "open_enrich_worker",
-                        "is_agent": True,
+                        "executor": executor,
+                        "is_agent": False,
                         "status": _value(workflow.status),
                         "attempt": workflow.attempt_count,
                         "output_summary": workflow.payload,

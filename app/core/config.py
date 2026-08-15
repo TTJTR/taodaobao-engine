@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     open_enrich_svc_url: str | None = None
     open_enrich_svc_token: str | None = None
     open_enrich_poll_seconds: int = 10
+    bailian_search_api_key: str | None = None
+    bailian_search_model: str = "qwen-plus"
+    bailian_search_base_url: str = (
+        "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
+    )
+    bailian_search_strategy: Literal["turbo", "max", "agent", "agent_max"] = "turbo"
+    bailian_search_timeout_seconds: float = 45.0
+    bailian_search_max_results: int = 8
 
     @model_validator(mode="after")
     def validate_security_configuration(self) -> "Settings":
@@ -81,6 +89,10 @@ class Settings(BaseSettings):
             raise ValueError("APP_OPEN_ENRICH_POLL_SECONDS must be positive")
         if self.interactive_html_timeout_seconds <= 0:
             raise ValueError("APP_INTERACTIVE_HTML_TIMEOUT_SECONDS must be positive")
+        if self.bailian_search_timeout_seconds <= 0:
+            raise ValueError("APP_BAILIAN_SEARCH_TIMEOUT_SECONDS must be positive")
+        if not 1 <= self.bailian_search_max_results <= 20:
+            raise ValueError("APP_BAILIAN_SEARCH_MAX_RESULTS must be between 1 and 20")
         return self
 
 
