@@ -7,13 +7,37 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /auth/invitation/status:
+    get:
+      operationId: getInvitationStatus
+      description: >-
+        Returns only whether the deployment requires an invitation before
+        Feishu OAuth. It never exposes invitation codes, signing secrets,
+        redemption counts, or token policy internals.
+      responses:
+        '200':
+          description: 邀请码门禁状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [request_id, data]
+                properties:
+                  request_id: {type: string}
+                  data:
+                    type: object
+                    required: [required]
+                    properties:
+                      required: {type: boolean}
   /auth/invitation/verify:
     post:
       operationId: verifyInvitation
       description: >-
-        Verifies a signed invitation. New tokens may declare 1-100 total
-        redemptions; legacy tokens default to one. Every successful redemption
-        still creates a distinct, short-lived, single-use OAuth proof.
+        Verifies either a server-registered short code in the tdb-xxxxx format
+        or a backward-compatible signed invitation. Registered codes and new
+        signed tokens may declare 1-100 total redemptions; legacy tokens default
+        to one. Every successful redemption still creates a distinct,
+        short-lived, single-use OAuth proof.
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
         required: true
@@ -25,8 +49,8 @@ paths:
               properties:
                 invitation_code: {type: string, minLength: 1, maxLength: 256}
       responses:
-        '200': {description: 签名邀请码验证成功、令牌摘要完成服务端登记，并建立限时且单次使用的 HttpOnly Cookie}
-        '401': {description: 邀请码签名无效、已过期、超过最长有效期或已经使用；响应不会泄露具体原因或正确值}
+        '200': {description: 签名邀请码验证成功、令牌摘要完成服务端登记，并为当前使用者建立限时且单次使用的 HttpOnly Cookie}
+        '401': {description: 邀请码签名无效、已过期、超过最长有效期或共享兑换额度已用完；响应不会泄露具体原因或正确值}
   /feishu/resources:
     get:
       operationId: listFeishuResources

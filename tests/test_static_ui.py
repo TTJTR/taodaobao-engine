@@ -21,15 +21,26 @@ def test_static_index_is_served_at_root() -> None:
     assert "Services.listExperiences(),Services.listCapabilities()" in response.text
     assert "retry-source" in response.text
     assert 'apiFetch("/auth/invitation/verify"' in response.text
+    assert 'apiFetch("/auth/invitation/status")' in response.text
     assert 'data-action="verify-invitation"' in response.text
     assert "function verifyInvitationAndContinue()" in response.text
-    assert "邀请码无效、已使用或已过期" in response.text
+    assert "邀请码无效、已过期或共享额度已用完" in response.text
+    assert "评委共享邀请码" in response.text
+    assert 'maxlength="9" placeholder="tdb-xxxxx"' in response.text
+    assert "短码不区分大小写" in response.text
+    assert 'placeholder="tdb1.……"' not in response.text
+    assert "这是服务端返回的真实门禁状态" in response.text
+    assert "未启用邀请码？直接使用飞书登录" not in response.text
     assert "function createIdempotencyKey()" in response.text
     assert 'headers["Idempotency-Key"]=createIdempotencyKey()' in response.text
     assert "apiFetch(`/feishu/resources?${query}`)" in response.text
     assert "function runtimeLabel(status)" in response.text
-    assert "AI ${runtimeLabel(s.runtime.ai)}" in response.text
-    assert "飞书 ${runtimeLabel(s.runtime.feishu)}" in response.text
+    assert "服务 ${serviceCount}/3" in response.text
+    runtime_status_title = (
+        "AI ${runtimeLabel(s.runtime.ai)} · 演示 "
+        "${runtimeLabel(s.runtime.interactive_html)} · 飞书 ${runtimeLabel(s.runtime.feishu)}"
+    )
+    assert runtime_status_title in response.text
     assert "前端已停止渲染，不会使用固定文案补齐结果" in response.text
     assert "当前页面全部为结构演示数据" not in response.text
     assert "reset-demo" not in response.text
@@ -59,6 +70,9 @@ def test_static_index_is_served_at_root() -> None:
     assert "V2Integrated.renderRehearsals()" in response.text
     assert "function renderRuntime()" in response.text
     assert "function renderModels()" in response.text
+    assert 'data-theme-toggle' in response.text
+    assert '/theme.css' in response.text
+    assert '/theme.js' in response.text
     assert "apiFetch(`/style-profiles/${id}`)" in response.text
     assert "V1.0 规划能力，不进入当前MVP主流程" not in response.text
 
@@ -68,8 +82,25 @@ def test_truthful_youthful_shell_styles_are_served() -> None:
 
     assert response.status_code == 200
     assert "TRUSTED PRESALES" not in response.text
-    assert ".home-hero" in response.text
-    assert ".journey-grid" in response.text
+    assert ".home-welcome" in response.text
+    assert ".action-grid" in response.text
+    assert ".journey-grid" not in response.text
+
+
+def test_dark_theme_assets_are_served_and_persist_the_preference() -> None:
+    client = TestClient(app)
+    css = client.get("/theme.css")
+    script = client.get("/theme.js")
+
+    assert css.status_code == 200
+    assert 'html[data-theme="dark"]' in css.text
+    assert 'html[data-theme="dark"] .login-visual' in css.text
+    assert 'html[data-theme="dark"] .mechanism' in css.text
+    assert ".theme-toggle" in css.text
+    assert script.status_code == 200
+    assert 'taodaobao-color-scheme' in script.text
+    assert 'localStorage.setItem(STORAGE_KEY, resolved)' in script.text
+    assert 'prefers-color-scheme: dark' in script.text
 
 
 def test_static_mount_does_not_shadow_api_routes() -> None:
@@ -121,8 +152,11 @@ def test_v2_business_workbenches_are_served_with_real_api_contracts() -> None:
     assert "/v2_tender.html?embedded=1" in integrated.text
     assert 'request("/rehearsals?page=1&page_size=100")' in integrated.text
     assert 'request(`/rehearsals/${item.id}/start`' in integrated.text
-    assert "磋商前 · 识别机会" in integrated.text
+    assert "客户情报" in integrated.text
+    assert "function sceneMap" not in integrated.text
     assert "关于我们" in index.text
+    assert '/theme.css' in intelligence.text
+    assert '/theme.js' in tender.text
 
 
 def test_profile_intelligence_proposals_have_a_read_route() -> None:

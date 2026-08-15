@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from app.api.v1.routes import runtime as runtime_routes
 from app.core.errors import AppError, ErrorCode
 from app.core.idempotency import IDEMPOTENT_METHODS
 from app.core.token_crypto import EncryptedTokenText
@@ -100,3 +101,21 @@ def test_frontend_console_never_stores_api_key() -> None:
     assert 'type="password"' in frontend
     assert "API Key 必须完整填写" in frontend
     assert "apiKey:" not in frontend
+
+
+@pytest.mark.asyncio
+async def test_connection_console_exposes_interactive_html_but_not_legacy_presentation() -> None:
+    session = AsyncMock()
+    session.scalar.return_value = None
+    items = await runtime_routes._connections(session, uuid4())
+    providers = {item["provider"] for item in items}
+
+    assert "interactive-html" in providers
+    assert "presentation" not in providers
+
+
+def test_frontend_uses_a_friendly_workspace_label() -> None:
+    frontend = open("static/index.html", encoding="utf-8").read()
+
+    assert 'workspace:"淘到宝演示工作区"' in frontend
+    assert "workspace:data.workspace_id" not in frontend

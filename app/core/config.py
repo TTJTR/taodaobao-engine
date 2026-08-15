@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     invitation_signing_secret: str | None = None
     invitation_cookie_name: str = "taodaobao_invitation"
     invitation_ttl_seconds: int = 10 * 60
-    invitation_max_token_ttl_seconds: int = 7 * 24 * 60 * 60
+    invitation_max_token_ttl_seconds: int = 30 * 24 * 60 * 60
     public_base_url: str = "http://127.0.0.1:8000"
     frontend_redirect_url: str = "http://127.0.0.1:8000/"
     demo_workspace_id: UUID = UUID("00000000-0000-4000-8000-000000000001")

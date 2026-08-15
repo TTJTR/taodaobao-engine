@@ -11,13 +11,18 @@ from app.core.invitations import generate_invitation_token
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--secret-file", type=Path, required=True)
-    parser.add_argument("--hours", type=int, default=24, help="validity in hours (default: 24)")
-    parser.add_argument("--count", type=int, default=1, help="number of single-use tokens")
+    parser.add_argument(
+        "--hours",
+        type=int,
+        default=480,
+        help="validity in hours (default: 480 / 20 days for judges)",
+    )
+    parser.add_argument("--count", type=int, default=1, help="number of tokens")
     parser.add_argument(
         "--max-uses",
         type=int,
-        default=1,
-        help="maximum successful redemptions per token (default: 1)",
+        default=100,
+        help="maximum successful redemptions per token (default: 100 for judges)",
     )
     args = parser.parse_args()
     if not 1 <= args.hours <= 720:

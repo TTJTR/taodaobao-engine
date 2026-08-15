@@ -19,7 +19,11 @@ from app.api.deps import (
 from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
-from app.core.invitations import InvitationClaims, verify_invitation_token
+from app.core.invitations import (
+    InvitationClaims,
+    hash_short_invitation_code,
+    verify_invitation_token,
+)
 from app.core.responses import success_response
 
 router = APIRouter(route_class=IdempotencyRoute)
@@ -31,6 +35,11 @@ _invitation_proof_lock = Lock()
 
 class VerifyInvitationRequest(BaseModel):
     invitation_code: str = Field(min_length=1, max_length=256)
+
+
+@router.get("/auth/invitation/status", summary="查询邀请码门禁状态")
+async def get_invitation_status(request: Request) -> dict[str, object]:
+    return success_response(request, {"required": settings.invitation_required})
 
 
 def _invitation_signing_key() -> bytes:
@@ -131,24 +140,39 @@ async def verify_invitation(
 ) -> dict[str, object]:
     claims: InvitationClaims | None = None
     redemption_number: int | None = None
+    proof_token_hash: str | None = None
     if settings.invitation_signing_secret:
-        claims = verify_invitation_token(
+        short_code_hash = hash_short_invitation_code(
             payload.invitation_code,
             settings.invitation_signing_secret,
-            max_ttl_seconds=settings.invitation_max_token_ttl_seconds,
         )
-        if claims is not None:
+        if short_code_hash is not None:
+            registered = await redemption_store.redeem_registered(short_code_hash)
+            if registered is not None:
+                proof_token_hash = short_code_hash
+                redemption_number = registered.redemption_number
+        else:
+            claims = verify_invitation_token(
+                payload.invitation_code,
+                settings.invitation_signing_secret,
+                max_ttl_seconds=settings.invitation_max_token_ttl_seconds,
+            )
+        if claims is not None and proof_token_hash is None:
             expires_at = datetime.fromtimestamp(claims.expires_at, tz=UTC)
             redemption_number = await redemption_store.redeem(
                 claims.token_id_hash, expires_at, claims.max_uses
             )
-            if redemption_number is None:
-                claims = None
+            if redemption_number is not None:
+                proof_token_hash = claims.token_id_hash
     else:
         configured = settings.invitation_code or ""
         if configured and hmac.compare_digest(configured, payload.invitation_code):
             claims = InvitationClaims("legacy", int(time.time()), int(time.time()) + 60)
-    if claims is None:
+    if claims is not None and claims.token_id == "legacy":
+        valid_invitation = True
+    else:
+        valid_invitation = proof_token_hash is not None and redemption_number is not None
+    if not valid_invitation:
         raise AppError(
             ErrorCode.INVITE_CODE_INVALID,
             "邀请码无效",
@@ -157,7 +181,7 @@ async def verify_invitation(
     response.set_cookie(
         settings.invitation_cookie_name,
         create_invitation_proof(
-            None if claims.token_id == "legacy" else claims.token_id_hash,
+            proof_token_hash,
             redemption_number,
         ),
         max_age=settings.invitation_ttl_seconds,

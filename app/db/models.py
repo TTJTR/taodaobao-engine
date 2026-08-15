@@ -1184,7 +1184,7 @@ class InvitationRedemption(Base):
             name="ck_invitation_redemptions_max_uses",
         ),
         CheckConstraint(
-            "redeemed_count >= 1 AND redeemed_count <= max_uses",
+            "redeemed_count >= 0 AND redeemed_count <= max_uses",
             name="ck_invitation_redemptions_redeemed_count",
         ),
     )

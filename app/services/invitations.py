@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -12,10 +13,19 @@ from app.db.database import get_session_factory
 from app.db.models import InvitationRedemption, InvitationRedemptionUse
 
 
+@dataclass(frozen=True)
+class RegisteredInvitationRedemption:
+    redemption_number: int
+    expires_at: datetime
+
+
 class InvitationRedemptionStore(Protocol):
     async def redeem(
         self, token_id_hash: str, expires_at: datetime, max_uses: int
     ) -> int | None: ...
+    async def redeem_registered(
+        self, token_id_hash: str
+    ) -> RegisteredInvitationRedemption | None: ...
     async def consume(self, token_id_hash: str, redemption_number: int) -> bool: ...
 
 
@@ -58,6 +68,43 @@ class PostgresInvitationRedemptionStore:
             )
             await session.commit()
             return redemption_number
+
+    async def redeem_registered(
+        self, token_id_hash: str
+    ) -> RegisteredInvitationRedemption | None:
+        factory = get_session_factory()
+        async with factory() as session:
+            now = datetime.now(UTC)
+            statement = (
+                update(InvitationRedemption)
+                .where(
+                    InvitationRedemption.token_id_hash == token_id_hash,
+                    InvitationRedemption.expires_at >= now,
+                    InvitationRedemption.redeemed_count
+                    < InvitationRedemption.max_uses,
+                )
+                .values(redeemed_count=InvitationRedemption.redeemed_count + 1)
+                .returning(
+                    InvitationRedemption.redeemed_count,
+                    InvitationRedemption.expires_at,
+                )
+            )
+            row = (await session.execute(statement)).one_or_none()
+            if row is None:
+                await session.rollback()
+                return None
+            redemption_number, expires_at = row
+            session.add(
+                InvitationRedemptionUse(
+                    token_id_hash=token_id_hash,
+                    redemption_number=redemption_number,
+                )
+            )
+            await session.commit()
+            return RegisteredInvitationRedemption(
+                redemption_number=redemption_number,
+                expires_at=expires_at,
+            )
 
     async def consume(self, token_id_hash: str, redemption_number: int) -> bool:
         factory = get_session_factory()

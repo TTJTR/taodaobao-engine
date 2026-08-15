@@ -55,6 +55,12 @@ def test_invitation_configuration_rejects_required_blank_code() -> None:
         Settings(_env_file=None, invitation_required=True, invitation_code=None)
 
 
+def test_default_invitation_window_supports_twenty_day_judge_tokens() -> None:
+    configured = Settings(_env_file=None)
+
+    assert configured.invitation_max_token_ttl_seconds == 30 * 24 * 60 * 60
+
+
 def test_invitation_proof_is_signed_and_expires(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "session_secret", "test-secret-at-least-16-characters")
     monkeypatch.setattr(settings, "invitation_code", "private-invite")
@@ -232,6 +238,22 @@ def test_invitation_must_be_verified_before_oauth_and_is_single_use(
             )
         assert replayed.status_code == 401
         assert replayed.json()["error"]["code"] == "INVITE_CODE_INVALID"
+
+
+def test_invitation_status_reflects_the_runtime_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "invitation_required", False)
+    client = TestClient(create_app())
+
+    disabled = client.get("/api/v1/auth/invitation/status")
+    assert disabled.status_code == 200
+    assert disabled.json()["data"] == {"required": False}
+
+    monkeypatch.setattr(settings, "invitation_required", True)
+    enabled = client.get("/api/v1/auth/invitation/status")
+    assert enabled.status_code == 200
+    assert enabled.json()["data"] == {"required": True}
 
 
 def test_me_requires_session_cookie() -> None:

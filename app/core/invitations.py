@@ -6,12 +6,17 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 from dataclasses import dataclass
 
 TOKEN_PREFIX = "tdb1"
 TOKEN_AUDIENCE = "taodaobao"
+SHORT_CODE_PREFIX = "tdb-"
+SHORT_CODE_LENGTH = 5
+SHORT_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+SHORT_CODE_PATTERN = re.compile(r"^tdb-[a-hj-km-np-z2-9]{5}$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -36,6 +41,29 @@ def _decode(value: str) -> bytes:
 
 def _key(secret: str) -> bytes:
     return hashlib.sha256(("taodaobao-invitation-v1:" + secret).encode()).digest()
+
+
+def generate_short_invitation_code() -> str:
+    """Return a memorable server-registered code such as ``tdb-k7m2q``."""
+    suffix = "".join(secrets.choice(SHORT_CODE_ALPHABET) for _ in range(SHORT_CODE_LENGTH))
+    return f"{SHORT_CODE_PREFIX}{suffix}"
+
+
+def normalize_short_invitation_code(code: str) -> str | None:
+    normalized = code.strip().lower()
+    return normalized if SHORT_CODE_PATTERN.fullmatch(normalized) else None
+
+
+def hash_short_invitation_code(code: str, secret: str) -> str | None:
+    """Hash a short code with the deployment secret before database lookup."""
+    normalized = normalize_short_invitation_code(code)
+    if normalized is None or len(secret) < 32:
+        return None
+    return hmac.new(
+        _key(secret),
+        f"taodaobao-short-invitation-v1:{normalized}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def generate_invitation_token(

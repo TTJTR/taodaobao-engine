@@ -108,16 +108,6 @@ async def _connections(session: DatabaseSession, workspace_id: uuid.UUID) -> lis
             "source": "inherits-ai",
         },
         {
-            "provider": "presentation",
-            "label": "展示稿服务",
-            "mode": settings.presentation_mode,
-            "status": "configured"
-            if settings.presentation_mode == "live" and settings.presentation_service_url
-            else "not_configured",
-            "configurable": False,
-            "source": "server",
-        },
-        {
             "provider": "interactive-html",
             "label": "互动 HTML 生成",
             "mode": settings.interactive_html_mode,
