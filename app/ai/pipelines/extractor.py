@@ -31,6 +31,7 @@ PROFILE_LIST_FIELDS = {
     "existing_systems",
     "information_gaps",
 }
+PROFILE_UNKNOWN_CUSTOMER_NAME = "待确认客户"
 HISTORICAL_RECORD_MARKERS = (
     "完成试点验收",
     "完成验收",
@@ -60,6 +61,24 @@ def validate_raw_text(raw_text: str) -> str:
 
 def normalize_profile_result(result: dict) -> dict:
     normalized = dict(result)
+    if "customer_name" in normalized:
+        customer_name = normalized.get("customer_name")
+        if isinstance(customer_name, list):
+            customer_name = "、".join(
+                item.strip() for item in customer_name if isinstance(item, str) and item.strip()
+            )
+        if not isinstance(customer_name, str) or not customer_name.strip():
+            customer_name = PROFILE_UNKNOWN_CUSTOMER_NAME
+        normalized["customer_name"] = customer_name.strip()
+
+    for field in ("industry", "background"):
+        value = normalized.get(field)
+        if isinstance(value, list):
+            value = "、".join(
+                item.strip() for item in value if isinstance(item, str) and item.strip()
+            )
+        normalized[field] = value.strip() if isinstance(value, str) and value.strip() else None
+
     industry = normalized.get("industry")
     if isinstance(industry, list):
         normalized["industry"] = "、".join(

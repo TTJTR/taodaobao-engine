@@ -39,6 +39,16 @@ from app.schemas.v2 import ManualIntelligenceSource
 
 MAX_AI_FACTS = 50
 MAX_AI_FIELD_CHARS = 10_000
+AI_PROFILE_META_FIELDS = {
+    "source_ids",
+    "title",
+    "summary",
+    "customer_name",
+    "profile_status",
+    "profile_summary",
+    "fact_sources",
+    "conflicts",
+}
 
 
 def validate_public_source_url(url: str) -> str:
@@ -94,7 +104,7 @@ def _extract_facts(content: str) -> list[dict[str, str]]:
 def _normalize_ai_facts(ai_output: dict, artifact: RawArtifact) -> list[dict]:
     facts: list[dict] = []
     for field, value in sorted(ai_output.items()):
-        if field in {"source_ids", "title", "summary"} or value in (None, "", [], {}):
+        if field in AI_PROFILE_META_FIELDS or value in (None, "", [], {}):
             continue
         safe_value = _bounded_json_value(value)
         facts.append(
@@ -117,7 +127,7 @@ def _profile_diff(profile_data: dict, ai_output: dict) -> dict:
     current = profile_data.get("external_intelligence", {})
     patch: dict[str, dict] = {}
     for field, proposed in sorted(ai_output.items()):
-        if field in {"source_ids", "title", "summary"} or proposed in (None, "", [], {}):
+        if field in AI_PROFILE_META_FIELDS or proposed in (None, "", [], {}):
             continue
         proposed = _bounded_json_value(proposed)
         previous = current.get(field)
