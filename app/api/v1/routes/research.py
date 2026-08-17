@@ -13,6 +13,7 @@ from app.api.deps import (
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.db.models import ResearchTaskStatus
+from app.schemas.presentations import CreateInteractivePresentationRequest
 from app.schemas.v1 import (
     CancelResearchTaskRequest,
     CreateResearchTaskRequest,
@@ -21,6 +22,7 @@ from app.schemas.v1 import (
     ResearchTaskDetail,
     ResearchTaskRead,
 )
+from app.services.presentation_service import PresentationService
 from app.services.research_pipeline import run_research_pipeline
 from app.services.research_service import ResearchTaskService
 
@@ -29,6 +31,46 @@ router = APIRouter(route_class=IdempotencyRoute)
 
 def serialize_task(task) -> dict:
     return ResearchTaskRead.model_validate(task).model_dump(mode="json")
+
+
+@router.get("/{task_id}/interactive-presentations/latest")
+async def get_latest_research_interactive_presentation(
+    task_id: uuid.UUID,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+) -> dict[str, object]:
+    item = await PresentationService(
+        session, workspace_id, current_user.id
+    ).get_latest_research_presentation(task_id)
+    return success_response(request, item)
+
+
+@router.post("/{task_id}/interactive-presentations", status_code=status.HTTP_202_ACCEPTED)
+async def create_research_interactive_presentation(
+    task_id: uuid.UUID,
+    payload: CreateInteractivePresentationRequest,
+    request: Request,
+    session: DatabaseSession,
+    current_user: CurrentUser,
+    workspace_id: WorkspaceId,
+    _: str = Depends(require_idempotency_key),
+) -> dict[str, object]:
+    item = await PresentationService(
+        session, workspace_id, current_user.id
+    ).create_research_interactive_presentation(task_id, payload)
+    return success_response(
+        request,
+        {
+            "presentation_id": str(item.id),
+            "status": item.status.value,
+            "trace_id": item.trace_id,
+            "poll_after_ms": 1000,
+            "render_mode": "interactive",
+            "source": "deep_research",
+        },
+    )
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)

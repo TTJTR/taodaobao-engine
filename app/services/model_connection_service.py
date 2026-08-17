@@ -94,7 +94,10 @@ def _candidate_settings(provider: str, model: str, api_key: str) -> BailianSetti
         api_key=api_key,
         chat_model=model,
         base_url=str(config["base_url"]),
-        timeout_seconds=20.0,
+        # The quick workflow has a 60-second shared deadline. Allow the first
+        # structured generation enough time to finish while the outer budget
+        # still caps the complete generation-and-verification workflow.
+        timeout_seconds=40.0,
         max_retries=0,
         temperature=0.0,
     )

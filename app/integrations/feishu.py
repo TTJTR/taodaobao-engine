@@ -9,6 +9,8 @@ from urllib.parse import urlencode
 import httpx
 
 from app.integrations.protocols import (
+    FeishuBitable,
+    FeishuCollaborator,
     FeishuCreatedDocument,
     FeishuCreatedGroup,
     FeishuDocument,
@@ -113,6 +115,23 @@ class MockFeishuAdapter:
     ) -> str:
         del chat_id, content, access_token, idempotency_key
         return f"mock-message-{uuid.uuid4()}"
+
+    async def create_bitable(
+        self, name: str, access_token: str | None
+    ) -> FeishuBitable:
+        del name, access_token
+        token = f"mock-base-{uuid.uuid4()}"
+        return FeishuBitable(token, "mock-table", f"{self.public_base_url}/mock/{token}")
+
+    async def append_bitable_records(
+        self,
+        app_token: str,
+        table_id: str,
+        records: list[dict[str, Any]],
+        access_token: str | None,
+    ) -> int:
+        del app_token, table_id, access_token
+        return len(records)
 
 
 class LiveFeishuAdapter:
@@ -226,7 +245,12 @@ class LiveFeishuAdapter:
         minute_id = self._minute_id(url)
         if minute_id:
             return await self._fetch_minute(url, minute_id, token)
-        document_id = self._document_id(url)
+        wiki_node_token = self._wiki_node_token(url)
+        document_id = (
+            await self._resolve_wiki_document_id(wiki_node_token, token)
+            if wiki_node_token
+            else self._document_id(url)
+        )
         metadata_payload = await self._request(
             "GET",
             f"/docx/v1/documents/{document_id}",
@@ -239,13 +263,90 @@ class LiveFeishuAdapter:
         )
         document = metadata_payload.get("data", {}).get("document", {})
         data = content_payload.get("data", {})
+        collaborators = await self._document_collaborators(document_id, token)
+        owners = [item.name for item in collaborators if item.is_owner]
+        visible_authors = owners or [item.name for item in collaborators]
         return FeishuDocument(
             title=str(document.get("title") or f"Feishu document {document_id}"),
             content=str(data.get("content") or ""),
-            author="飞书文档",
+            author="、".join(dict.fromkeys(visible_authors)) or "飞书文档",
             source_url=url,
             source_updated_at=None,
+            collaborators=collaborators,
         )
+
+    async def _document_collaborators(
+        self, document_id: str, access_token: str
+    ) -> tuple[FeishuCollaborator, ...]:
+        """Read visible human collaborators without making document import depend on it.
+
+        Feishu allows a document owner to hide the collaborator list. In that case the
+        document remains importable and the expert workflow falls back to the requester.
+        """
+        try:
+            payload = await self._request(
+                "GET",
+                f"/drive/v1/permissions/{document_id}/members",
+                access_token,
+                params={"type": "docx", "fields": "name,type,avatar"},
+            )
+        except (httpx.HTTPError, RuntimeError):
+            return ()
+        data = payload.get("data", {})
+        raw_items = data.get("items") or data.get("members") or []
+        current_user_id: str | None = None
+        current_user_name: str | None = None
+        if any(not str(item.get("name") or "").strip() for item in raw_items):
+            current_user_id, current_user_name = await self._current_user_identity(access_token)
+        result: list[FeishuCollaborator] = []
+        seen: set[str] = set()
+        restricted_name_index = 0
+        for item in raw_items:
+            member_type = str(item.get("member_type") or item.get("type") or "")
+            member_id = str(
+                item.get("member_id")
+                or item.get("open_id")
+                or item.get("user_id")
+                or ""
+            )
+            name = str(item.get("name") or "").strip()
+            if member_type not in {"openid", "user", ""} or not member_id:
+                continue
+            if member_id in seen:
+                continue
+            seen.add(member_id)
+            if not name and member_id == current_user_id and current_user_name:
+                name = f"{current_user_name}（当前授权用户）"
+            elif not name:
+                restricted_name_index += 1
+                name = f"文档协作者{restricted_name_index}（姓名受限）"
+            permission = str(item.get("perm") or item.get("permission") or "") or None
+            result.append(
+                FeishuCollaborator(
+                    feishu_user_id=member_id,
+                    name=name,
+                    permission=permission,
+                    is_owner=bool(item.get("is_owner") or permission == "full_access"),
+                )
+            )
+        return tuple(result)
+
+    async def _current_user_identity(
+        self, access_token: str
+    ) -> tuple[str | None, str | None]:
+        """Resolve the signed-in user without requiring contact-directory scopes."""
+        try:
+            payload = await self._request(
+                "GET",
+                "/authen/v1/user_info",
+                access_token,
+            )
+        except (httpx.HTTPError, RuntimeError):
+            return None, None
+        data = payload.get("data", payload)
+        user_id = data.get("open_id") or data.get("user_id")
+        name = str(data.get("name") or "").strip()
+        return (str(user_id) if user_id else None, name or None)
 
     async def list_resources(
         self,
@@ -382,6 +483,76 @@ class LiveFeishuAdapter:
         )
         return str(payload.get("data", {}).get("message_id") or "")
 
+    async def create_bitable(
+        self, name: str, access_token: str | None
+    ) -> FeishuBitable:
+        token = self._require_access_token(access_token)
+        created = await self._request(
+            "POST",
+            "/bitable/v1/apps",
+            token,
+            json_body={"name": name, "time_zone": "Asia/Shanghai"},
+        )
+        app = created.get("data", {}).get("app", {})
+        app_token = str(app.get("app_token") or "")
+        url = str(app.get("url") or "")
+        if not app_token:
+            raise RuntimeError("Feishu create bitable response omitted app_token")
+        table_payload = await self._request(
+            "POST",
+            f"/bitable/v1/apps/{app_token}/tables",
+            token,
+            json_body={
+                "table": {
+                    "name": "今日战情",
+                    "default_view_name": "全部",
+                    "fields": [
+                        {"field_name": "主题", "type": 1},
+                        {"field_name": "类型", "type": 1},
+                        {"field_name": "状态", "type": 1},
+                        {"field_name": "摘要", "type": 1},
+                        {"field_name": "来源ID", "type": 1},
+                        {"field_name": "更新时间", "type": 1},
+                    ],
+                }
+            },
+        )
+        table_data = table_payload.get("data", {})
+        table = table_data.get("table", {})
+        # The current Feishu API returns data.table_id. Older fixtures and
+        # some SDK-shaped responses wrap it in data.table.table_id.
+        table_id = str(table_data.get("table_id") or table.get("table_id") or "")
+        if not table_id:
+            raise RuntimeError("Feishu create table response omitted table_id")
+        return FeishuBitable(
+            app_token=app_token,
+            table_id=table_id,
+            url=url or f"https://feishu.cn/base/{app_token}",
+        )
+
+    async def append_bitable_records(
+        self,
+        app_token: str,
+        table_id: str,
+        records: list[dict[str, Any]],
+        access_token: str | None,
+    ) -> int:
+        if not records:
+            return 0
+        token = self._require_access_token(access_token)
+        total = 0
+        for offset in range(0, len(records), 100):
+            batch = records[offset : offset + 100]
+            payload = await self._request(
+                "POST",
+                f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/batch_create",
+                token,
+                json_body={"records": [{"fields": item} for item in batch]},
+            )
+            items = payload.get("data", {}).get("records") or []
+            total += len(items) if items else len(batch)
+        return total
+
     async def _get_tenant_access_token(self) -> str:
         now = datetime.now(UTC)
         if (
@@ -448,6 +619,27 @@ class LiveFeishuAdapter:
         if not match:
             raise ValueError("unsupported Feishu document URL")
         return match.group(1)
+
+    @staticmethod
+    def _wiki_node_token(url: str) -> str | None:
+        match = re.search(r"/wiki/([A-Za-z0-9_-]+)", url)
+        return match.group(1) if match else None
+
+    async def _resolve_wiki_document_id(self, node_token: str, access_token: str) -> str:
+        payload = await self._request(
+            "GET",
+            "/wiki/v2/spaces/get_node",
+            access_token,
+            params={"token": node_token},
+        )
+        node = payload.get("data", {}).get("node", {})
+        object_type = str(node.get("obj_type") or "")
+        object_token = str(node.get("obj_token") or "")
+        if object_type != "docx" or not object_token:
+            raise ValueError(
+                f"unsupported Feishu wiki object type: {object_type or 'unknown'}"
+            )
+        return object_token
 
     @staticmethod
     def _minute_id(url: str) -> str | None:

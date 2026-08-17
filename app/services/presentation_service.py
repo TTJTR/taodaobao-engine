@@ -1,4 +1,6 @@
 import copy
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -18,6 +20,8 @@ from app.db.models import (
     PresentationStatus,
     ReferenceDeck,
     ReferenceDeckStatus,
+    ResearchTask,
+    ResearchTaskStatus,
     SolutionRun,
     Source,
     SourceFreshness,
@@ -200,6 +204,84 @@ class PresentationService:
             visual_direction=payload.visual_direction,
         )
 
+    async def create_research_interactive_presentation(
+        self, task_id: uuid.UUID, payload: CreateInteractivePresentationRequest
+    ) -> PresentationRun:
+        """Create an interactive HTML artifact from a completed Deep Research report."""
+
+        task = await self._get(ResearchTask, task_id, "Deep Research 任务不存在")
+        if task.status != ResearchTaskStatus.COMPLETED or not task.report:
+            raise AppError(
+                ErrorCode.PRESENTATION_UPSTREAM_NOT_RELEASED,
+                "Deep Research 尚未完成，不能生成正式互动展示",
+                status_code=409,
+                details={"research_status": task.status.value, "progress": task.progress},
+            )
+        claims = self._research_claims(task)
+        if not claims:
+            raise AppError(
+                ErrorCode.PRESENTATION_UPSTREAM_NOT_RELEASED,
+                "Deep Research 报告没有可展示的已审计结论",
+                status_code=409,
+            )
+        profile = (
+            await self.get_style(payload.style_profile_id)
+            if payload.style_profile_id is not None
+            else await self._create_interactive_style_profile(
+                payload.visual_direction,
+                payload.language,
+            )
+        )
+        fingerprint = self._research_fingerprint(task)
+        run = PresentationRun(
+            workspace_id=self.workspace_id,
+            solution_run_id=None,
+            research_task_id=task.id,
+            solution_version=None,
+            style_profile_id=profile.id,
+            style_version=profile.version,
+            created_by_id=self.user_id,
+            status=PresentationStatus.QUEUED,
+            trace_id=str(uuid.uuid4()),
+            mode=payload.mode,
+            audience=payload.audience,
+            language=payload.language,
+            requested_outputs=["html"],
+            locked_block_ids=[],
+            version=1,
+            upstream_trust_version=None,
+            upstream_fingerprint=fingerprint,
+        )
+        self.session.add(run)
+        await self.session.flush()
+        self.session.add(
+            PresentationInputSnapshot(
+                workspace_id=self.workspace_id,
+                presentation_id=run.id,
+                version=1,
+                schema_version="research-presentation-input-v1",
+                snapshot_data={
+                    "schema_version": "research-presentation-input-v1",
+                    "title": task.title,
+                    "research_task_id": str(task.id),
+                    "research_fingerprint": fingerprint,
+                    "research_question": task.question,
+                    "report": task.report,
+                    "audit": task.audit or {},
+                    "knowledge_gaps": task.knowledge_gaps,
+                    "audience": payload.audience,
+                    "language": payload.language,
+                    "render_mode": "interactive",
+                    "visual_direction": payload.visual_direction,
+                    "released_claims": claims,
+                    "evidence": self._research_evidence(task),
+                },
+            )
+        )
+        await self._queue_render(run, {"operation": "initial", "source": "deep_research"})
+        await self.session.commit()
+        return run
+
     async def _create_interactive_style_profile(
         self,
         visual_direction: str,
@@ -307,6 +389,22 @@ class PresentationService:
 
     async def get_presentation(self, presentation_id: uuid.UUID) -> dict:
         run = await self._get(PresentationRun, presentation_id, "演示稿不存在")
+        if run.research_task_id is not None:
+            task = await self._get(ResearchTask, run.research_task_id, "Deep Research 任务不存在")
+            if task.status in {ResearchTaskStatus.FAILED, ResearchTaskStatus.CANCELLED}:
+                run.status = PresentationStatus.BLOCKED
+            elif (
+                run.status == PresentationStatus.READY
+                and self._research_fingerprint(task) != run.upstream_fingerprint
+            ):
+                run.status = PresentationStatus.STALE
+            artifact = (
+                None
+                if run.status in {PresentationStatus.BLOCKED, PresentationStatus.STALE}
+                else await self._latest_artifact(run.id)
+            )
+            await self.session.commit()
+            return self._serialize_presentation(run, artifact)
         decision = await self._latest_trust_decision(run.solution_run_id)
         if decision is None or decision.action == TrustAction.BLOCK:
             run.status = PresentationStatus.BLOCKED
@@ -331,6 +429,86 @@ class PresentationService:
         )
         await self.session.commit()
         return self._serialize_presentation(run, artifact)
+
+    async def get_latest_research_presentation(self, task_id: uuid.UUID) -> dict | None:
+        """Return the newest interactive presentation for a Deep Research task."""
+
+        await self._get(ResearchTask, task_id, "Deep Research 任务不存在")
+        run = await self.session.scalar(
+            select(PresentationRun)
+            .where(
+                PresentationRun.workspace_id == self.workspace_id,
+                PresentationRun.research_task_id == task_id,
+                PresentationRun.is_deleted.is_(False),
+            )
+            .order_by(PresentationRun.created_at.desc())
+            .limit(1)
+        )
+        if run is None:
+            return None
+        return await self.get_presentation(run.id)
+
+    @staticmethod
+    def _research_fingerprint(task: ResearchTask) -> str:
+        payload = {
+            "report": task.report,
+            "findings": task.findings,
+            "audit": task.audit,
+            "evidence_snapshot": task.evidence_snapshot,
+        }
+        return hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+
+    @staticmethod
+    def _research_claims(task: ResearchTask) -> list[dict]:
+        claims: list[dict] = []
+        for index, finding in enumerate(task.findings or [], start=1):
+            text_value = str(finding.get("text") or "").strip()
+            if not text_value:
+                continue
+            claims.append(
+                {
+                    "claim_id": str(finding.get("finding_id") or f"research-finding-{index}"),
+                    "text": text_value,
+                    "boundary": str(finding.get("boundary") or "pending_confirmation"),
+                    "risk_level": "high"
+                    if str(finding.get("boundary")) == "pending_confirmation"
+                    else "medium",
+                }
+            )
+        return claims
+
+    @staticmethod
+    def _research_evidence(task: ResearchTask) -> list[dict]:
+        snapshot = task.evidence_snapshot or {}
+        result: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for collection in ("experiences", "capabilities"):
+            for item in snapshot.get(collection, []) or []:
+                data = item.get("data") or {}
+                source = item.get("source_snapshot") or {}
+                source_id = str(item.get("source_id") or data.get("source_id") or "")
+                quote = str(data.get("source_quote") or "").strip()
+                if not source_id or not quote:
+                    continue
+                key = (source_id, quote)
+                if key in seen:
+                    continue
+                seen.add(key)
+                result.append(
+                    {
+                        "evidence_id": f"research:{source_id}:{len(result) + 1}",
+                        "source_id": source_id,
+                        "source_version": source.get("source_version") or "1",
+                        "quote": quote,
+                        "location": data.get("source_anchor") or source.get("title") or collection,
+                        "source_title": source.get("title"),
+                        "source_url": source.get("url"),
+                        "source_author": source.get("author"),
+                    }
+                )
+        return result
 
     async def get_interactive_html(self, presentation_id: uuid.UUID) -> str:
         serialized = await self.get_presentation(presentation_id)
@@ -853,7 +1031,8 @@ class PresentationService:
     def _serialize_presentation(run: PresentationRun, artifact: HtmlArtifact | None) -> dict:
         return {
             "id": str(run.id),
-            "solution_run_id": str(run.solution_run_id),
+            "solution_run_id": str(run.solution_run_id) if run.solution_run_id else None,
+            "research_task_id": str(run.research_task_id) if run.research_task_id else None,
             "solution_version": run.solution_version,
             "style_profile_id": str(run.style_profile_id),
             "style_version": run.style_version,

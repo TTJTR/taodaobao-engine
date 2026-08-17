@@ -95,12 +95,21 @@ class FeishuUserInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class FeishuCollaborator:
+    feishu_user_id: str
+    name: str
+    permission: str | None = None
+    is_owner: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class FeishuDocument:
     title: str
     content: str
     author: str
     source_url: str
     source_updated_at: str | None = None
+    collaborators: tuple[FeishuCollaborator, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +121,13 @@ class FeishuCreatedDocument:
 @dataclass(frozen=True, slots=True)
 class FeishuCreatedGroup:
     chat_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class FeishuBitable:
+    app_token: str
+    table_id: str
+    url: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +183,18 @@ class FeishuAdapter(Protocol):
         access_token: str | None,
         idempotency_key: str | None = None,
     ) -> str: ...
+
+    async def create_bitable(
+        self, name: str, access_token: str | None
+    ) -> FeishuBitable: ...
+
+    async def append_bitable_records(
+        self,
+        app_token: str,
+        table_id: str,
+        records: list[dict[str, Any]],
+        access_token: str | None,
+    ) -> int: ...
 
 
 @runtime_checkable

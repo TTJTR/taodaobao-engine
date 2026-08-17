@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -26,6 +27,8 @@ from app.integrations.presentation import (
 from app.schemas.presentation import PositionedPresentationSpec, VisualStyleProfileData
 from app.services.model_connection_service import workspace_interactive_provider
 from app.services.pptx_renderer import PPTXRenderer
+
+logger = logging.getLogger(__name__)
 
 
 async def run_presentation_task(
@@ -70,6 +73,9 @@ async def run_presentation_task(
             task.lease_expires_at = None
             await session.commit()
         except Exception as exc:
+            logger.exception(
+                "presentation workflow failed kind=%s target_id=%s", kind, target_id
+            )
             await session.rollback()
             task = await session.scalar(
                 select(WorkflowTask).where(
@@ -82,7 +88,7 @@ async def run_presentation_task(
             task.status = WorkflowTaskStatus.FAILED
             task.stage = "failed"
             task.error_code = _error_code(kind, exc).value
-            task.error_summary = type(exc).__name__
+            task.error_summary = f"{type(exc).__name__}: {exc}"[:2000]
             task.finished_at = datetime.now(UTC)
             task.lease_owner = None
             task.lease_expires_at = None

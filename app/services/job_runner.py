@@ -27,6 +27,7 @@ from app.db.repositories import (
     UserRepository,
 )
 from app.integrations import FeishuAdapter
+from app.integrations.protocols import FeishuCollaborator
 from app.services.ai_run_service import persist_last_ai_run
 
 
@@ -49,6 +50,7 @@ async def run_source_job(
 
         try:
             await _set_stage(session, job, source, "fetching", SourceStatus.FETCHING)
+            collaborators: tuple[FeishuCollaborator, ...] = ()
             if source.type == SourceType.FEISHU_DOC:
                 if access_token is None:
                     document = await feishu_adapter.fetch_document(source.source_url or "")
@@ -56,9 +58,18 @@ async def run_source_job(
                     document = await feishu_adapter.fetch_document(
                         source.source_url or "", access_token
                     )
+                collaborators = await _resolve_collaborator_names(
+                    session,
+                    workspace_id,
+                    document.collaborators,
+                )
                 source.title = document.title
                 source.content = document.content
-                source.author = document.author
+                visible_authors = [item.name for item in collaborators if item.is_owner]
+                source.author = (
+                    "、".join(dict.fromkeys(visible_authors))
+                    or document.author
+                )
                 source.source_url = document.source_url
                 source.source_updated_at = _parse_datetime(document.source_updated_at)
                 source.synced_at = datetime.now(UTC)
@@ -129,7 +140,7 @@ async def run_source_job(
                 for stale in existing[len(drafts) :]:
                     stale.is_deleted = True
 
-            await _record_source_contributor(session, workspace_id, source)
+            await _record_source_contributors(session, workspace_id, source, collaborators)
 
             source.status = SourceStatus.PENDING_REVIEW
             job.status = ProcessStatus.COMPLETED
@@ -280,28 +291,69 @@ def _normalize_capability(draft: dict) -> dict:
     return normalized
 
 
-async def _record_source_contributor(session, workspace_id, source) -> None:
-    user_id = None
-    role = None
-    if source.type == SourceType.PASTED_TEXT:
-        user_id = source.imported_by_id
-        role = ContributionRole.ASSET_CONTRIBUTOR
-    elif source.author:
-        author = await UserRepository(session, workspace_id).get_by_name(source.author)
+async def _record_source_contributors(
+    session,
+    workspace_id,
+    source,
+    collaborators: tuple[FeishuCollaborator, ...] = (),
+) -> None:
+    users = UserRepository(session, workspace_id)
+    records: list[tuple[uuid.UUID, ContributionRole]] = []
+    for collaborator in collaborators:
+        user = await users.get_by_feishu_user_id(collaborator.feishu_user_id)
+        if user is None:
+            user = await users.create(
+                feishu_user_id=collaborator.feishu_user_id,
+                name=collaborator.name,
+                avatar=None,
+            )
+        role = (
+            ContributionRole.SOURCE_AUTHOR
+            if collaborator.is_owner
+            else ContributionRole.ASSET_CONTRIBUTOR
+        )
+        records.append((user.id, role))
+    if not records and source.author:
+        author = await users.get_by_name(source.author)
         if author is not None:
-            user_id = author.id
-            role = ContributionRole.SOURCE_AUTHOR
-    if user_id is None or role is None:
-        return
+            records.append((author.id, ContributionRole.SOURCE_AUTHOR))
+    if not records:
+        records.append((source.imported_by_id, ContributionRole.ASSET_CONTRIBUTOR))
+
     repository = ExpertContributionRepository(session, workspace_id)
-    existing = await repository.get_for_user_source_role(user_id, source.id, role)
     values = {
         "asset_type": source.purpose.value,
         "asset_id": None,
         "title": source.title,
         "tags": source.tags,
     }
-    if existing is None:
-        await repository.create(user_id=user_id, source_id=source.id, role=role, **values)
-    else:
-        await repository.update(existing, **values)
+    for user_id, role in dict.fromkeys(records):
+        existing = await repository.get_for_user_source_role(user_id, source.id, role)
+        if existing is None:
+            await repository.create(user_id=user_id, source_id=source.id, role=role, **values)
+        else:
+            await repository.update(existing, **values)
+
+
+async def _resolve_collaborator_names(
+    session,
+    workspace_id,
+    collaborators: tuple[FeishuCollaborator, ...],
+) -> tuple[FeishuCollaborator, ...]:
+    """Prefer previously verified workspace names over Feishu's restricted placeholders."""
+    users = UserRepository(session, workspace_id)
+    resolved: list[FeishuCollaborator] = []
+    for collaborator in collaborators:
+        known_user = await users.get_by_feishu_user_id(collaborator.feishu_user_id)
+        name = collaborator.name
+        if known_user is not None and "姓名受限" in name:
+            name = known_user.name
+        resolved.append(
+            FeishuCollaborator(
+                feishu_user_id=collaborator.feishu_user_id,
+                name=name,
+                permission=collaborator.permission,
+                is_owner=collaborator.is_owner,
+            )
+        )
+    return tuple(resolved)

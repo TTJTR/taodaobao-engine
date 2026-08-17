@@ -99,11 +99,35 @@ def normalize_profile_result(result: dict) -> dict:
         ]
     conflicts = normalized.get("conflicts")
     if isinstance(conflicts, list):
-        normalized["conflicts"] = [
-            item
-            for item in conflicts
-            if isinstance(item, dict) and item.get("field") in PROFILE_FACT_FIELDS
-        ]
+        valid_conflicts = []
+        downgraded_questions = []
+        for item in conflicts:
+            if not isinstance(item, dict) or item.get("field") not in PROFILE_FACT_FIELDS:
+                continue
+            conflict = {
+                key: item[key]
+                for key in (
+                    "field",
+                    "conflicting_values",
+                    "source_ids",
+                    "clarification_question",
+                )
+                if key in item
+            }
+            conflicting_values = list(dict.fromkeys(conflict.get("conflicting_values") or []))
+            conflict_source_ids = list(dict.fromkeys(conflict.get("source_ids") or []))
+            if len(conflicting_values) < 2 or len(conflict_source_ids) < 2:
+                question = conflict.get("clarification_question")
+                if isinstance(question, str) and question.strip():
+                    downgraded_questions.append(question.strip())
+                continue
+            conflict["conflicting_values"] = conflicting_values
+            conflict["source_ids"] = conflict_source_ids
+            valid_conflicts.append(conflict)
+        normalized["conflicts"] = valid_conflicts
+        normalized["information_gaps"] = list(
+            dict.fromkeys([*normalized.get("information_gaps", []), *downgraded_questions])
+        )
     return normalized
 
 

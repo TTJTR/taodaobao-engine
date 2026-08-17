@@ -51,6 +51,19 @@ paths:
       responses:
         '200': {description: 签名邀请码验证成功、令牌摘要完成服务端登记，并为当前使用者建立限时且单次使用的 HttpOnly Cookie}
         '401': {description: 邀请码签名无效、已过期、超过最长有效期或共享兑换额度已用完；响应不会泄露具体原因或正确值}
+  /auth/demo/start:
+    post:
+      operationId: startSharedDemoSession
+      description: >-
+        消费当前浏览器中已验证且单次有效的邀请码证明，为评委创建独立体验身份，
+        并进入固定的共享比赛演示工作区。该接口不执行或伪装跨租户飞书 OAuth，
+        也不会授予访问任何个人飞书云盘、通讯录或多维表格的权限。
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200':
+          description: 已建立共享 Demo 会话并写入 HttpOnly Session Cookie
+        '401':
+          description: 邀请码证明无效、过期或已被消费
   /feishu/resources:
     get:
       operationId: listFeishuResources
@@ -64,6 +77,44 @@ paths:
           schema: {type: [string, 'null']}
       responses:
         '200': {description: 当前用户有权限访问的飞书文档或妙记列表}
+  /feishu/bitable/sync-daily:
+    post:
+      operationId: syncDailyWorkspaceToFeishuBitable
+      description: >-
+        将当前工作区的客户画像、资料来源、已校验经验、原子能力、招标项目与
+        Deep Research 状态单向写入当前登录用户的真实飞书多维表格。首次调用
+        创建“淘到宝·今日战情”，后续调用复用同一 app_token/table_id；该接口
+        不反向覆盖长期画像或可信资产，也不产生 Mock 业务记录。
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200':
+          description: 多维表格同步完成
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [request_id, data]
+                properties:
+                  request_id: {type: string}
+                  data:
+                    type: object
+                    required: [status, created, record_count, url, synced_at]
+                    properties:
+                      status: {const: synced}
+                      created: {type: boolean}
+                      record_count: {type: integer, minimum: 0}
+                      url: {type: string}
+                      app_token: {type: string}
+                      table_id: {type: string}
+                      synced_at: {type: string, format: date-time}
+        '503': {description: 飞书权限、授权状态或 OpenAPI 暂不可用}
+  /feishu/bitable/sync-status:
+    get:
+      operationId: getFeishuBitableSyncStatus
+      description: 读取当前工作区持久化的真实多维表格目标，不触发重复写入。
+      responses:
+        '200':
+          description: 返回是否已连接、真实多维表格地址和最近持久化时间
   /research-tasks:
     post:
       operationId: createResearchTask

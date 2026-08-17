@@ -77,6 +77,10 @@ async def run_research_pipeline(
                     input_summary={"stage": "search_intent"},
                 )
                 task.evidence_snapshot = normalize_retrieval_snapshot(raw_snapshot)
+                task.evidence_snapshot["display_evidence"] = {
+                    "experiences": raw_snapshot.get("experiences", []),
+                    "capabilities": raw_snapshot.get("capabilities", []),
+                }
                 if external_context:
                     task.evidence_snapshot["external_context"] = external_context
                 await session.commit()
@@ -178,7 +182,12 @@ async def _run_stage(session, task, steps, stage, ai_engine, expert_answers) -> 
             "external_context": (task.evidence_snapshot or {}).get("external_context"),
         }
     )
-    result = await ai_engine.generate_solution(context, task.evidence_snapshot)
+    ai_evidence_snapshot = {
+        key: value
+        for key, value in (task.evidence_snapshot or {}).items()
+        if key != "display_evidence"
+    }
+    result = await ai_engine.generate_solution(context, ai_evidence_snapshot)
     persist_last_ai_run(
         session,
         task.workspace_id,

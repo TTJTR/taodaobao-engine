@@ -39,7 +39,8 @@ class Settings(BaseSettings):
     feishu_encrypt_key: str | None = None
     feishu_token_encryption_key: str | None = None
     feishu_scopes: str = (
-        "offline_access docx:document space:document:retrieve "
+        "offline_access docx:document space:document:retrieve wiki:wiki:readonly "
+        "docs:permission.member:retrieve bitable:app "
         "minutes:minutes.search:read minutes:minutes.basic:read "
         "minutes:minutes.transcript:export"
     )
@@ -69,6 +70,8 @@ class Settings(BaseSettings):
     bailian_search_strategy: Literal["turbo", "max", "agent", "agent_max"] = "turbo"
     bailian_search_timeout_seconds: float = 45.0
     bailian_search_max_results: int = 8
+    usage_monitor_token: str | None = None
+    integration_state_dir: Path = Path(".local/integrations")
 
     @model_validator(mode="after")
     def validate_security_configuration(self) -> "Settings":
@@ -93,6 +96,8 @@ class Settings(BaseSettings):
             raise ValueError("APP_BAILIAN_SEARCH_TIMEOUT_SECONDS must be positive")
         if not 1 <= self.bailian_search_max_results <= 20:
             raise ValueError("APP_BAILIAN_SEARCH_MAX_RESULTS must be between 1 and 20")
+        if self.usage_monitor_token and len(self.usage_monitor_token) < 32:
+            raise ValueError("APP_USAGE_MONITOR_TOKEN must contain at least 32 characters")
         return self
 
 

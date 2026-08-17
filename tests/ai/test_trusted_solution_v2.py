@@ -8,6 +8,7 @@ from app.ai.pipelines.solution import generate_solution
 from app.ai.pipelines.trust import (
     _compatible_evidence_ids,
     build_evidence_candidates,
+    deterministic_claim_drafts,
     generate_trusted_solution,
 )
 from app.ai.schemas import (
@@ -312,6 +313,87 @@ def test_solution_v2_rejects_verifier_evidence_outside_bundle() -> None:
                 max_revisions=0,
             )
         )
+
+
+def test_solution_v2_ignores_incompatible_evidence_on_uncited_inference() -> None:
+    class InferenceEvidenceVerifier(SemanticVerifier):
+        async def generate_json(self, system_prompt: str, user_prompt: str) -> dict:
+            result = await super().generate_json(system_prompt, user_prompt)
+            bundle = json.loads(user_prompt[user_prompt.index("{") : user_prompt.rindex("}") + 1])
+            evidence_id = bundle["evidence_candidates"][0]["evidence_id"]
+            inference = next(
+                review
+                for review, claim in zip(
+                    result["reviews"], bundle["claims"], strict=True
+                )
+                if claim["boundary"] == "ai_inference"
+            )
+            inference["evidence_refs"] = [evidence_id]
+            return result
+
+    snapshot = make_snapshot()
+    trusted = asyncio.run(
+        generate_trusted_solution(
+            make_context(),
+            snapshot,
+            asyncio.run(initial_solution(snapshot)),
+            ClaimClient(),
+            InferenceEvidenceVerifier(),
+            RevisionClient(),
+            max_revisions=0,
+        )
+    )
+
+    inference_claim = next(claim for claim in trusted.claims if claim.boundary == "ai_inference")
+    assert inference_claim.evidence_refs == []
+
+
+def test_solution_v2_maps_pending_verifier_label_to_insufficient() -> None:
+    class PendingLabelVerifier(SemanticVerifier):
+        async def generate_json(self, system_prompt: str, user_prompt: str) -> dict:
+            result = await super().generate_json(system_prompt, user_prompt)
+            bundle = json.loads(user_prompt[user_prompt.index("{") : user_prompt.rindex("}") + 1])
+            index = next(
+                index
+                for index, claim in enumerate(bundle["claims"])
+                if claim["boundary"] == "historical_fact"
+            )
+            result["reviews"][index]["status"] = "pending_confirmation"
+            result["reviews"][index]["evidence_refs"] = []
+            return result
+
+    snapshot = make_snapshot()
+    trusted = asyncio.run(
+        generate_trusted_solution(
+            make_context(),
+            snapshot,
+            asyncio.run(initial_solution(snapshot)),
+            ClaimClient(),
+            PendingLabelVerifier(),
+            RevisionClient(),
+            max_revisions=0,
+        )
+    )
+
+    historical = next(claim for claim in trusted.claims if claim.boundary == "historical_fact")
+    assert historical.verification_status == "insufficient"
+
+
+def test_pending_numeric_item_remains_low_risk_confirmation() -> None:
+    solution = asyncio.run(initial_solution(make_snapshot()))
+    item = solution.pending_confirmations[0].model_copy(
+        update={"text": "预算260万元是否含硬件"}
+    )
+    solution = solution.model_copy(update={"pending_confirmations": [item]})
+
+    draft = next(
+        item
+        for item in deterministic_claim_drafts(solution)
+        if item["boundary"] == "pending_confirmation"
+    )
+
+    assert draft["claim_type"] == "pending_confirmation"
+    assert draft["risk_level"] == "medium"
 
 
 def test_solution_v2_trace_ids_do_not_share_metadata() -> None:

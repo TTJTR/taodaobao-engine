@@ -1,4 +1,5 @@
 import uuid
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -38,6 +39,26 @@ class GateResult:
     action: TrustAction
     reason_codes: tuple[str, ...]
     released_claim_ids: frozenset[str]
+
+
+def _quote_is_reproducible(quote: str, item: dict[str, Any] | None) -> bool:
+    """Match evidence against raw fields instead of JSON-escaped text alone."""
+    if not quote or item is None:
+        return False
+    snapshot_quote = str(item.get("evidence_quote") or "")
+    if quote in snapshot_quote:
+        return True
+
+    def contains(value: Any) -> bool:
+        if isinstance(value, str):
+            return quote == value or quote in value
+        if isinstance(value, dict):
+            return any(contains(child) for child in value.values())
+        if isinstance(value, list):
+            return any(contains(child) for child in value)
+        return False
+
+    return contains(item.get("data") or {})
 
 
 def evaluate_trust_gate(
@@ -145,7 +166,6 @@ class TrustPersistenceService:
             if location.get("value") and not location.get("path"):
                 location = {**location, "path": location["value"]}
             quote = str(evidence.quote or (item or {}).get("evidence_quote") or "")
-            snapshot_quote = str((item or {}).get("evidence_quote") or "")
             source_version_value = evidence.source_version or (item or {}).get("source_version")
             reviewed_version_value = evidence.reviewed_version or (item or {}).get(
                 "reviewed_source_version"
@@ -173,8 +193,7 @@ class TrustPersistenceService:
                 in_snapshot=item is not None,
                 location_reproducible=bool(
                     quote
-                    and snapshot_quote
-                    and quote in snapshot_quote
+                    and _quote_is_reproducible(quote, item)
                     and location.get("kind")
                     and location.get("path")
                 ),
@@ -301,17 +320,20 @@ def build_safe_solution(
 ) -> dict[str, Any]:
     solution = payload.solution.model_dump(mode="json")
     if gate.action in {TrustAction.RELEASE, TrustAction.DOWNGRADE}:
-        allowed = {claim.claim_key for claim in claims if claim.released}
-        by_section: dict[str, list[ClaimRecord]] = {}
+        allowed_texts: dict[str, Counter[str]] = defaultdict(Counter)
         for claim in claims:
-            by_section.setdefault(claim.section, []).append(claim)
+            if claim.released:
+                allowed_texts[claim.section][claim.claim_text] += 1
         used_pairs: set[tuple[str, str]] = set()
-        for section in by_section:
+        for section in allowed_texts:
+            if section not in solution or not isinstance(solution[section], list):
+                continue
             kept = []
-            for index, item in enumerate(solution.get(section, []), start=1):
-                claim_key = f"{section}:{index}"
-                if claim_key in allowed:
+            for item in solution.get(section, []):
+                text_value = item.get("text") if isinstance(item, dict) else None
+                if text_value and allowed_texts[section][text_value] > 0:
                     kept.append(item)
+                    allowed_texts[section][text_value] -= 1
                     if item.get("asset_id") and item.get("source_id"):
                         used_pairs.add((item["asset_id"], item["source_id"]))
             solution[section] = kept

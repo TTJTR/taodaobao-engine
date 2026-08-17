@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import (
     AuthServiceDependency,
     CurrentUser,
+    DatabaseSession,
     FeishuAdapterDependency,
     InvitationRedemptionStoreDependency,
     SessionCodecDependency,
@@ -25,6 +26,8 @@ from app.core.invitations import (
     verify_invitation_token,
 )
 from app.core.responses import success_response
+from app.core.security import InvalidSessionError
+from app.db.repositories import UserRepository
 
 router = APIRouter(route_class=IdempotencyRoute)
 
@@ -188,9 +191,79 @@ async def verify_invitation(
         httponly=True,
         secure=settings.cookie_secure,
         samesite="strict",
-        path=f"{settings.api_prefix}/auth/feishu/start",
+        path=f"{settings.api_prefix}/auth",
     )
     return success_response(request, {"success": True})
+
+
+@router.post("/auth/demo/start", summary="使用已验证邀请码进入共享演示工作区")
+async def start_demo_session(
+    request: Request,
+    response: Response,
+    session: DatabaseSession,
+    codec: SessionCodecDependency,
+    redemption_store: InvitationRedemptionStoreDependency,
+    invitation: str | None = Cookie(default=None, alias=settings.invitation_cookie_name),
+    _: str = Depends(require_idempotency_key),
+) -> dict[str, object]:
+    """Create an isolated judge identity inside the shared demo workspace.
+
+    This is deliberately not presented as cross-tenant Feishu OAuth. It only
+    grants access to the pre-populated contest workspace after the invitation
+    proof has been redeemed and consumed exactly once.
+    """
+    token_hash = invitation_proof_token_hash(invitation)
+    redemption_number = invitation_proof_redemption_number(invitation)
+    accepted = (
+        await redemption_store.consume(token_hash, redemption_number)
+        if token_hash is not None and redemption_number is not None
+        else consume_invitation_proof(invitation)
+    )
+    if not accepted:
+        raise AppError(
+            ErrorCode.INVITE_CODE_INVALID,
+            "邀请码验证已失效，请重新输入",
+            status_code=401,
+        )
+
+    identity_seed = token_hash or hashlib.sha256((invitation or "").encode()).hexdigest()
+    suffix = redemption_number or 1
+    demo_identity = f"demo-judge:{identity_seed[:24]}:{suffix}"
+    users = UserRepository(session, settings.demo_workspace_id)
+    user = await users.get_by_feishu_user_id(demo_identity)
+    if user is None:
+        user = await users.create(
+            feishu_user_id=demo_identity,
+            name=f"评委体验用户 {suffix:02d}",
+            avatar=None,
+        )
+        await session.commit()
+        await session.refresh(user)
+
+    response.set_cookie(
+        settings.session_cookie_name,
+        codec.encode(user.id, user.workspace_id),
+        max_age=settings.session_ttl_seconds,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+    response.delete_cookie(
+        settings.invitation_cookie_name,
+        path=f"{settings.api_prefix}/auth",
+        secure=settings.cookie_secure,
+        httponly=True,
+        samesite="strict",
+    )
+    return success_response(
+        request,
+        {
+            "success": True,
+            "access_mode": "shared_demo",
+            "requires_feishu_oauth": False,
+        },
+    )
 
 
 def get_redirect_uri() -> str:
@@ -201,10 +274,19 @@ def get_redirect_uri() -> str:
 async def start_feishu_authorization(
     request: Request,
     adapter: FeishuAdapterDependency,
+    codec: SessionCodecDependency,
     redemption_store: InvitationRedemptionStoreDependency,
     invitation: str | None = Cookie(default=None, alias=settings.invitation_cookie_name),
+    session_token: str | None = Cookie(default=None, alias=settings.session_cookie_name),
 ) -> JSONResponse:
-    if settings.invitation_required:
+    has_valid_session = False
+    if session_token:
+        try:
+            codec.decode(session_token)
+            has_valid_session = True
+        except InvalidSessionError:
+            pass
+    if settings.invitation_required and not has_valid_session:
         token_hash = invitation_proof_token_hash(invitation)
         redemption_number = invitation_proof_redemption_number(invitation)
         accepted = (
@@ -231,10 +313,10 @@ async def start_feishu_authorization(
         samesite="lax",
         path=f"{settings.api_prefix}/auth/feishu/callback",
     )
-    if settings.invitation_required:
+    if settings.invitation_required and not has_valid_session:
         response.delete_cookie(
             settings.invitation_cookie_name,
-            path=f"{settings.api_prefix}/auth/feishu/start",
+            path=f"{settings.api_prefix}/auth",
             secure=settings.cookie_secure,
             httponly=True,
             samesite="strict",

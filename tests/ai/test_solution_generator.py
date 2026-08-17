@@ -166,16 +166,49 @@ def test_generate_solution_repairs_unknown_boundary_labels_by_section() -> None:
         generate_solution(make_context(), make_snapshot(), StaticJsonModelClient(result))
     )
 
-    assert solution.requirement_understanding[0].boundary == "ai_inference"
+    assert solution.requirement_understanding[0].boundary == "pending_confirmation"
     assert solution.historical_evidence[0].boundary == "historical_fact"
     assert solution.capability_composition[0].boundary == "enterprise_capability"
     assert solution.pending_confirmations[0].boundary == "pending_confirmation"
+
+
+def test_generate_solution_conservatively_repairs_bare_string_items() -> None:
+    result = valid_model_result()
+    result["initial_recommendations"] = ["先验证一条产线"]
+    result["pending_confirmations"] = ["MES 接口权限待确认"]
+    result["historical_evidence"] = ["未经结构化引用的历史描述"]
+
+    solution = asyncio.run(
+        generate_solution(make_context(), make_snapshot(), StaticJsonModelClient(result))
+    )
+
+    assert solution.initial_recommendations[0].boundary == "ai_inference"
+    assert solution.pending_confirmations[0].boundary == "pending_confirmation"
+    assert not solution.historical_evidence
+    moved = next(
+        item for item in solution.pending_confirmations if item.text == "未经结构化引用的历史描述"
+    )
+    assert moved.boundary == "pending_confirmation"
+    assert moved.asset_id is None
 
 
 def test_generate_solution_keeps_uncited_pending_requirement_as_pending() -> None:
     result = valid_model_result()
     result["requirement_understanding"][0].update(
         {"text": "三个月是否足够仍待确认。", "boundary": "unknown_label"}
+    )
+
+    solution = asyncio.run(
+        generate_solution(make_context(), make_snapshot(), StaticJsonModelClient(result))
+    )
+
+    assert solution.requirement_understanding[0].boundary == "pending_confirmation"
+
+
+def test_generate_solution_marks_numeric_customer_requirement_pending() -> None:
+    result = valid_model_result()
+    result["requirement_understanding"][0].update(
+        {"text": "客户希望在90天内完成试点", "boundary": "ai_inference"}
     )
 
     solution = asyncio.run(
@@ -200,7 +233,7 @@ def test_generate_solution_removes_customer_source_from_requirement_understandin
     )
 
     item = solution.requirement_understanding[0]
-    assert item.boundary == "ai_inference"
+    assert item.boundary == "pending_confirmation"
     assert item.asset_id is None
     assert item.source_id is None
 

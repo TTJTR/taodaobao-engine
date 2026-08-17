@@ -9,7 +9,12 @@ from app.ai.engine import MockAIEngine
 from app.db.models import SourceFreshness, SourceStatus, TrustAction
 from app.schemas.trust import SolutionV2Payload
 from app.services.solution_trust_service import _evidence_still_visible
-from app.services.trust_gate import EvidenceState, evaluate_trust_gate
+from app.services.trust_gate import (
+    EvidenceState,
+    _quote_is_reproducible,
+    build_safe_solution,
+    evaluate_trust_gate,
+)
 
 
 def _payload(*, label: str = "entailed", risk: str = "high") -> SolutionV2Payload:
@@ -94,6 +99,34 @@ def test_gate_releases_only_when_all_hard_rules_pass() -> None:
     result = evaluate_trust_gate(_payload(), _state())
     assert result.action == TrustAction.RELEASE
     assert result.released_claim_ids == {"historical_evidence:1"}
+
+
+def test_multiline_quote_is_reproducible_from_structured_asset_data() -> None:
+    quote = "第一行\n第二行"
+    item = {
+        "evidence_quote": '{"source_quote":"第一行\\n第二行"}',
+        "data": {"source_quote": quote},
+    }
+
+    assert _quote_is_reproducible(quote, item)
+
+
+def test_safe_solution_maps_released_hashed_claim_by_section_and_text() -> None:
+    payload = _payload()
+    gate = SimpleNamespace(action=TrustAction.RELEASE)
+    claims = [
+        SimpleNamespace(
+            claim_key="clm_hashed_identifier",
+            section="historical_evidence",
+            claim_text=payload.solution.historical_evidence[0].text,
+            released=True,
+        )
+    ]
+
+    result = build_safe_solution(payload, gate, claims)
+
+    assert len(result["historical_evidence"]) == 1
+    assert len(result["sources"]) == 1
 
 
 def test_gate_downgrades_unverified_high_risk_claim_even_if_ai_recommends_release() -> None:

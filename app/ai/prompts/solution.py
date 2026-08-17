@@ -28,6 +28,8 @@ SOLUTION_SYSTEM_PROMPT = """你是企业售前方案报告的起草员。
 14. 前六个字段都是 CitedItem 数组，每项只能包含 text, boundary, asset_id, source_id；
     没有编号时填 null。
     suggested_questions 是字符串数组。不要返回 sources，系统会根据检索快照生成资料目录。
+15. 快速方案必须精炼：前六个字段每个最多 2 项，每项 text 最多 120 个汉字；
+    suggested_questions 最多 3 项。优先保留最相关证据、主要路径、关键风险和关键待确认项。
 """
 
 

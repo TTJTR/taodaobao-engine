@@ -71,6 +71,8 @@ def infer_uncited_boundary(field: str, text: object) -> EvidenceBoundary:
     if field in {"requirement_understanding", "prerequisites_and_risks"} and isinstance(text, str):
         if any(marker in text for marker in PENDING_TEXT_MARKERS):
             return EvidenceBoundary.PENDING_CONFIRMATION
+        if field == "requirement_understanding" and any(character.isdigit() for character in text):
+            return EvidenceBoundary.PENDING_CONFIRMATION
     return FIXED_SECTION_BOUNDARIES.get(field, EvidenceBoundary.AI_INFERENCE)
 
 
@@ -116,6 +118,53 @@ def normalize_model_boundaries(result: dict, snapshot: RetrievalSnapshot) -> Non
                     item["boundary"] = expected_boundary.value
             else:
                 item["boundary"] = infer_uncited_boundary(field, item.get("text")).value
+
+
+def normalize_string_items(result: dict) -> None:
+    """Conservatively repair a common JSON-mode shape drift.
+
+    A bare string never becomes a sourced enterprise fact. It is retained only
+    as an uncited inference or pending confirmation, so downstream verification
+    and the Trust Gate keep full authority.
+    """
+    additional_pending: list[dict] = []
+    for field in SOLUTION_CONTENT_FIELDS:
+        items = result.get(field)
+        if not isinstance(items, list):
+            continue
+        normalized = []
+        for item in items:
+            if not isinstance(item, str):
+                normalized.append(item)
+                continue
+            text = item.strip()
+            if not text:
+                continue
+            if field in {"historical_evidence", "capability_composition"}:
+                additional_pending.append(
+                    {
+                        "text": text,
+                        "boundary": EvidenceBoundary.PENDING_CONFIRMATION.value,
+                        "asset_id": None,
+                        "source_id": None,
+                    }
+                )
+                continue
+            boundary = (
+                EvidenceBoundary.PENDING_CONFIRMATION
+                if field == "pending_confirmations"
+                else infer_uncited_boundary(field, text)
+            )
+            normalized.append(
+                {
+                    "text": text,
+                    "boundary": boundary.value,
+                    "asset_id": None,
+                    "source_id": None,
+                }
+            )
+        result[field] = normalized
+    result["pending_confirmations"].extend(additional_pending)
 
 
 def validate_model_citations(result: dict, snapshot: RetrievalSnapshot) -> None:
@@ -284,6 +333,7 @@ def finalize_solution_result(
     if set(result) != MODEL_SOLUTION_FIELDS:
         raise ValueError("model output does not match the required solution fields")
 
+    normalize_string_items(result)
     normalize_model_boundaries(result, retrieval_snapshot)
     insert_opening_line_once(result, context.opening_line)
     if not retrieval_snapshot.can_generate_solution:

@@ -45,6 +45,7 @@ async def test_solution_pipeline_rejects_legacy_solution_without_claim_ledger(
     )
     db = SimpleNamespace(
         add=Mock(),
+        scalar=AsyncMock(return_value=None),
         commit=AsyncMock(),
         rollback=AsyncMock(),
     )
@@ -79,3 +80,39 @@ async def test_solution_pipeline_rejects_legacy_solution_without_claim_ledger(
     }
     assert run.result is None
     message_repository.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retrieval_snapshot_is_updated_on_same_version_retry() -> None:
+    workspace_id = uuid.uuid4()
+    run = SimpleNamespace(id=uuid.uuid4(), result_version=3)
+    existing = SimpleNamespace(
+        snapshot_data={"old": True},
+        source_versions={},
+        permission_snapshot={},
+        embedding_version=None,
+    )
+    db = SimpleNamespace(scalar=AsyncMock(return_value=existing), add=Mock())
+    snapshot = {
+        "experiences": [
+            {
+                "source_id": "src-1",
+                "source_version": "v2",
+                "permission_status": "granted",
+                "permission_checked_at": "2026-08-16T00:00:00Z",
+            }
+        ],
+        "capabilities": [],
+    }
+
+    await module._persist_retrieval_snapshot(
+        db,
+        workspace_id=workspace_id,
+        run=run,
+        raw_snapshot=snapshot,
+    )
+
+    db.add.assert_not_called()
+    assert existing.snapshot_data == snapshot
+    assert existing.source_versions == {"src-1": "v2"}
+    assert existing.permission_snapshot["src-1"]["status"] == "granted"

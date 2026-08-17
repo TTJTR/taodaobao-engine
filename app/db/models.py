@@ -977,12 +977,23 @@ class StyleTemplateVersion(EntityMixin, WorkspaceMixin, Base):
 
 class Presentation(EntityMixin, WorkspaceMixin, Base):
     __tablename__ = "presentation_runs"
-    __table_args__ = (Index("ix_presentation_solution_status", "solution_run_id", "status"),)
-
-    solution_run_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("solution_runs.id", ondelete="RESTRICT"), nullable=False
+    __table_args__ = (
+        CheckConstraint(
+            "(solution_run_id IS NOT NULL AND research_task_id IS NULL) OR "
+            "(solution_run_id IS NULL AND research_task_id IS NOT NULL)",
+            name="ck_presentation_exactly_one_upstream",
+        ),
+        Index("ix_presentation_solution_status", "solution_run_id", "status"),
+        Index("ix_presentation_research_status", "research_task_id", "status"),
     )
-    solution_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    solution_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("solution_runs.id", ondelete="RESTRICT")
+    )
+    research_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("research_tasks.id", ondelete="RESTRICT")
+    )
+    solution_version: Mapped[int | None] = mapped_column(Integer)
     style_profile_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("style_profiles.id", ondelete="RESTRICT"), nullable=False
     )
@@ -1001,11 +1012,13 @@ class Presentation(EntityMixin, WorkspaceMixin, Base):
     spec: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     locked_block_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    upstream_trust_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    upstream_trust_version: Mapped[int | None] = mapped_column(Integer)
+    upstream_fingerprint: Mapped[str | None] = mapped_column(String(64))
     error_code: Mapped[str | None] = mapped_column(String(64))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    solution_run: Mapped["SolutionRun"] = relationship()
+    solution_run: Mapped["SolutionRun | None"] = relationship()
+    research_task: Mapped["ResearchTask | None"] = relationship()
     style_profile: Mapped["VisualStyleProfile"] = relationship(back_populates="presentations")
     created_by: Mapped["User"] = relationship(foreign_keys=[created_by_id])
     input_snapshots: Mapped[list["PresentationInputSnapshot"]] = relationship(

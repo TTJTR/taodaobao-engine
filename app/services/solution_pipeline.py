@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -30,6 +31,7 @@ from app.services.retrieval_service import RetrievalService
 from app.services.trust_gate import TrustPersistenceService, build_safe_solution
 
 SOLUTION_DEADLINE_SECONDS = 60
+logger = logging.getLogger(__name__)
 
 
 async def run_solution_pipeline(
@@ -99,31 +101,11 @@ async def run_solution_pipeline(
             if external_context:
                 ai_snapshot["external_context"] = external_context
             run.retrieval_snapshot = ai_snapshot
-            session.add(
-                RetrievalSnapshotRecord(
-                    workspace_id=workspace_id,
-                    solution_run_id=run.id,
-                    version=run.result_version,
-                    snapshot_data=raw_snapshot,
-                    source_versions={
-                        item["source_id"]: item.get("source_version")
-                        for item in [
-                            *raw_snapshot.get("experiences", []),
-                            *raw_snapshot.get("capabilities", []),
-                        ]
-                    },
-                    permission_snapshot={
-                        item["source_id"]: {
-                            "status": item.get("permission_status"),
-                            "checked_at": item.get("permission_checked_at"),
-                        }
-                        for item in [
-                            *raw_snapshot.get("experiences", []),
-                            *raw_snapshot.get("capabilities", []),
-                        ]
-                    },
-                    embedding_version=_embedding_version(raw_snapshot),
-                )
+            await _persist_retrieval_snapshot(
+                session,
+                workspace_id=workspace_id,
+                run=run,
+                raw_snapshot=raw_snapshot,
             )
             await _set_stage(session, run, task, "generating")
             async with asyncio.timeout(_remaining_seconds(run.deadline_at)):
@@ -184,6 +166,12 @@ async def run_solution_pipeline(
             await _finish_task(session, task)
             await session.commit()
         except Exception as exc:
+            logger.exception(
+                "quick solution pipeline failed run_id=%s stage=%s attempt=%s",
+                run_id,
+                getattr(run, "stage", "unknown"),
+                getattr(run, "attempt_count", "unknown"),
+            )
             await session.rollback()
             run = await runs.get(run_id)
             task = await _get_task(session, workspace_id, task_id)
@@ -214,6 +202,52 @@ async def _set_stage(session, run, task, stage: str) -> None:
         task.heartbeat_at = now
         task.lease_expires_at = now + timedelta(seconds=180)
     await session.commit()
+
+
+async def _persist_retrieval_snapshot(session, *, workspace_id, run, raw_snapshot) -> None:
+    """Persist one mutable candidate snapshot per run version.
+
+    A retry keeps the same ``result_version``. Reusing the existing row avoids a
+    unique-key failure after a previous attempt committed the retrieval stage.
+    """
+    record = await session.scalar(
+        select(RetrievalSnapshotRecord).where(
+            RetrievalSnapshotRecord.workspace_id == workspace_id,
+            RetrievalSnapshotRecord.solution_run_id == run.id,
+            RetrievalSnapshotRecord.version == run.result_version,
+            RetrievalSnapshotRecord.is_deleted.is_(False),
+        )
+    )
+    items = [
+        *raw_snapshot.get("experiences", []),
+        *raw_snapshot.get("capabilities", []),
+    ]
+    values = {
+        "snapshot_data": raw_snapshot,
+        "source_versions": {
+            item["source_id"]: item.get("source_version") for item in items
+        },
+        "permission_snapshot": {
+            item["source_id"]: {
+                "status": item.get("permission_status"),
+                "checked_at": item.get("permission_checked_at"),
+            }
+            for item in items
+        },
+        "embedding_version": _embedding_version(raw_snapshot),
+    }
+    if record is None:
+        session.add(
+            RetrievalSnapshotRecord(
+                workspace_id=workspace_id,
+                solution_run_id=run.id,
+                version=run.result_version,
+                **values,
+            )
+        )
+        return
+    for key, value in values.items():
+        setattr(record, key, value)
 
 
 async def _get_task(session, workspace_id, task_id):

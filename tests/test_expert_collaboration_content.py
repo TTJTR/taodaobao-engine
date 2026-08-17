@@ -55,6 +55,31 @@ def test_opening_message_contains_business_summary_document_and_trust_boundary()
     assert str(item.research_task_id) in opening
 
 
+def test_ai_research_context_excludes_frontend_only_display_evidence() -> None:
+    service = object.__new__(ExpertCollaborationService)
+    task = SimpleNamespace(
+        id=uuid.uuid4(),
+        conversation_snapshot=[],
+        report=None,
+        findings=[],
+        audit=None,
+        profile_snapshot={"customer_name": "东岳智行"},
+        evidence_snapshot={
+            "experiences": [],
+            "capabilities": [],
+            "created_at": "2026-08-16T00:00:00+00:00",
+            "display_evidence": {"experiences": [{"raw": "仅用于前端"}]},
+        },
+        knowledge_gaps=["试点接口责任人待确认"],
+        expert_questions=[],
+    )
+
+    context = service._ai_research_context(task)
+
+    assert "display_evidence" not in context["evidence_snapshot"]
+    assert context["knowledge_gaps"] == ["试点接口责任人待确认"]
+
+
 @pytest.mark.asyncio
 async def test_confirm_rejects_empty_expert_selection_before_feishu_side_effects() -> None:
     service = object.__new__(ExpertCollaborationService)

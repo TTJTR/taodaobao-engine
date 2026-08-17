@@ -16,10 +16,12 @@ from app.db.models import (
     HtmlArtifact,
     HumanReviewRecord,
     Job,
+    JobType,
     Message,
     PresentationInputSnapshot,
     PresentationRenderSnapshot,
     PresentationRun,
+    ProcessStatus,
     QualityAttemptRecord,
     RawArtifact,
     ReferenceDeck,
@@ -525,6 +527,15 @@ class ExportArtifactRepository(BaseRepository[ExportArtifact]):
 
 class JobRepository(BaseRepository[Job]):
     model = Job
+
+    async def has_active_for_target(self, target_id, job_type: JobType) -> bool:
+        statement = select(Job.id).where(
+            Job.target_id == target_id,
+            Job.type == job_type,
+            Job.status.in_((ProcessStatus.PENDING, ProcessStatus.RUNNING)),
+            *self._active_filters(),
+        )
+        return await self.session.scalar(statement) is not None
 
 
 class ReviewRecordRepository(BaseRepository[ReviewRecord]):

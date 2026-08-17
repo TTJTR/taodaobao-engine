@@ -18,6 +18,7 @@ from app.api.v1.routes import (
     solutions,
     sources,
     tenders,
+    usage_monitor,
 )
 
 api_router = APIRouter()
@@ -66,3 +67,6 @@ api_router.include_router(
     tenders.matrix_router, prefix="/response-matrices", tags=["V2 Response Matrices"]
 )
 api_router.include_router(rehearsals.router, prefix="/rehearsals", tags=["V2 Rehearsals"])
+api_router.include_router(
+    usage_monitor.router, prefix="/operations/api-usage", tags=["V2 Operations"]
+)

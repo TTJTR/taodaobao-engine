@@ -285,10 +285,20 @@ class BailianAIEngine:
                     validated_snapshot,
                     None,
                     self._model_client,
-                    self._model_client,
-                    self._model_client,
-                    generation_client=client,
-                ),
+                self._model_client,
+                self._model_client,
+                generation_client=client,
+                # Quick solutions have one shared 60-second deadline. Preserve
+                # generation, claim splitting and verification, then let the
+                # backend Trust Gate publish/degrade/review without an extra
+                # model-driven revision round.
+                max_revisions=0,
+                # Section/item boundaries are already structural in the frozen
+                # solution schema. Avoid spending a second model call merely
+                # to copy those items into the claim ledger; semantic evidence
+                # verification still runs through the verifier model.
+                deterministic_split=True,
+            ),
                 stage="trusted_solution",
                 prompt_version="solution-v2",
                 trace_id=validated_context.trace_id,

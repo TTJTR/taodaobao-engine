@@ -484,7 +484,10 @@ class LiveInteractiveHTMLProvider:
                     chunk = str(choice["message"]["content"])
                     chunks.append(chunk)
                     raw_usage = payload.get("usage") or {}
-                    usage = dict(raw_usage) if isinstance(raw_usage, dict) else {}
+                    if isinstance(raw_usage, dict):
+                        for key, value in raw_usage.items():
+                            if isinstance(value, int | float) and value >= 0:
+                                usage[key] = int(usage.get(key, 0)) + int(value)
                     if "</html>" in "".join(chunks).lower():
                         break
                     if choice.get("finish_reason") != "length":

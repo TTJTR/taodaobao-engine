@@ -6,11 +6,47 @@ info:
     本文件仅描述冻结 openapi.yaml 之外的演示渲染增量能力。基础路径、鉴权、
     Idempotency-Key、统一成功/错误信封以及既有字段语义继续引用冻结主契约。
 paths:
+  /api/v1/research-tasks/{task_id}/interactive-presentations:
+    post:
+      summary: 基于已完成 Deep Research 创建可信互动 HTML 演示任务
+      description: >-
+        仅接受状态为 completed 且已有研究报告的 Deep Research。服务端冻结研究报告、
+        事实审计、知识缺口、证据与来源快照后创建异步渲染任务。AI 只负责视觉编排，
+        业务文字仍须通过逐字事实绑定与静态安全审计。
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInteractivePresentationRequest'
+      responses:
+        '202': {description: 已创建互动演示任务，使用统一成功信封}
+        '409': {description: Deep Research 尚未完成或没有可展示研究结论}
+  /api/v1/research-tasks/{task_id}/interactive-presentations/latest:
+    get:
+      summary: 获取 Deep Research 最新互动演示
+      description: >-
+        用于业务前端恢复已生成产物，避免刷新页面后重复调用视觉模型。没有历史产物时
+        统一成功信封中的 data 为 null。
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': {description: 最新互动演示或 null，使用统一成功信封}
   /api/v1/solution-runs/{run_id}/interactive-presentations:
     post:
-      summary: 基于已发布主张创建可信互动 HTML 演示任务
+      summary: 基于已发布快速方案创建互动 HTML（兼容接口）
       description: >-
-        仅接受 Trust Gate 已 RELEASE/DOWNGRADE 的方案。AI 可生成内联 HTML/CSS 视觉结构，
+        保留给既有调用方，业务前端不再提供入口；正式演示从已完成 Deep Research 发起。
+        本接口仍只接受 Trust Gate 已 RELEASE/DOWNGRADE 的方案。AI 可生成内联 HTML/CSS 视觉结构，
         交互由平台注入固定运行时；所有业务文字必须逐字绑定输入快照中的 Claim/Evidence，
         产物还必须通过静态安全审计。
       parameters:

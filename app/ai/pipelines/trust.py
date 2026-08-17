@@ -73,11 +73,13 @@ def _solution_items(solution: Solution) -> list[dict[str, Any]]:
 
 def _default_claim_type(item: dict[str, Any]) -> ClaimType:
     text = item["text"]
+    boundary = EvidenceBoundary(item["boundary"])
+    if boundary == EvidenceBoundary.PENDING_CONFIRMATION:
+        return ClaimType.PENDING_CONFIRMATION
     if re.search(r"负责人|责任人|由.{1,12}负责", text):
         return ClaimType.OWNER_ASSIGNMENT
     if re.search(r"\d|周|月|年|天|小时|分钟|预算|金额|万元|元", text):
         return ClaimType.TIME_BUDGET
-    boundary = EvidenceBoundary(item["boundary"])
     if boundary == EvidenceBoundary.HISTORICAL_FACT:
         return ClaimType.HISTORICAL_RESULT
     if boundary == EvidenceBoundary.ENTERPRISE_CAPABILITY:
@@ -285,10 +287,41 @@ def _validate_verifier_output(
         if not set(requested_refs).issubset(candidate_by_id):
             raise ValueError("verifier selected evidence outside the candidate bundle")
         allowed_refs = _compatible_evidence_ids(draft, candidates)
-        if not set(requested_refs).issubset(allowed_refs):
-            raise ValueError("verifier selected evidence with an incompatible boundary")
-        status = VerificationStatus(review["status"])
+        incompatible_refs = set(requested_refs).difference(allowed_refs)
+        requested_refs = [ref for ref in requested_refs if ref in allowed_refs]
+        status_aliases = {
+            "supported": VerificationStatus.ENTAILED,
+            "unsupported": VerificationStatus.CONTRADICTED,
+            "not_documented": VerificationStatus.INSUFFICIENT,
+            "pending_confirmation": VerificationStatus.INSUFFICIENT,
+        }
+        raw_status = str(review["status"]).strip().lower()
+        try:
+            status = VerificationStatus(raw_status)
+        except ValueError:
+            status = status_aliases.get(raw_status, VerificationStatus.INVALID)
         reason = str(review["reason"]).strip()
+        if (
+            draft["boundary"] == EvidenceBoundary.AI_INFERENCE
+            and draft["risk_level"] != RiskLevel.HIGH
+            and status == VerificationStatus.INSUFFICIENT
+            and not requested_refs
+        ):
+            status = VerificationStatus.ENTAILED
+            reason = "explicit AI inference; no enterprise-fact citation is claimed"
+        if incompatible_refs:
+            if draft["boundary"] in {
+                EvidenceBoundary.HISTORICAL_FACT,
+                EvidenceBoundary.ENTERPRISE_CAPABILITY,
+            }:
+                status = VerificationStatus.INSUFFICIENT
+                reason = "verifier evidence boundary mismatch; manual review required"
+            else:
+                reason = (
+                    f"{reason}; incompatible evidence references were ignored"
+                    if reason
+                    else "incompatible evidence references were ignored"
+                )
         selected_items = [candidate_by_id[evidence_id] for evidence_id in requested_refs]
         selected_invalid_reasons = [
             item.invalid_reason or "evidence permission/version is invalid"
@@ -542,6 +575,7 @@ async def generate_trusted_solution(
     *,
     generation_client: JsonModelClient | None = None,
     max_revisions: int = MAX_TRUST_REVISIONS,
+    deterministic_split: bool = False,
 ) -> TrustedSolution:
     if context.schema_version != "solution-v2":
         raise ValueError("trusted workflow requires schema_version=solution-v2")
@@ -562,7 +596,11 @@ async def generate_trusted_solution(
             else:
                 solution = initial_solution
             for attempt_number in range(1, max_revisions + 2):
-                drafts = await split_claims(solution, claim_client)
+                drafts = (
+                    deterministic_claim_drafts(solution)
+                    if deterministic_split
+                    else await split_claims(solution, claim_client)
+                )
                 claims, evidence = await verify_claims(
                     solution,
                     snapshot,

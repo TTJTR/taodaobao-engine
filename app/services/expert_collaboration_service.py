@@ -103,7 +103,9 @@ class ExpertCollaborationService:
             target_id=task.id,
             input_summary={"candidate_count": len(candidate_records)},
         )
-        ranked = routing.get("ranked_candidate_ids", [])
+        ranked = routing.get("ranked_candidate_ids", []) or [
+            item["candidate_id"] for item in candidate_records
+        ]
         reasons = {
             item["candidate_id"]: item
             for item in routing.get("candidate_reasons", [])
@@ -114,6 +116,7 @@ class ExpertCollaborationService:
             for item in candidate_records
             if item["candidate_id"] in ranked
         ]
+        candidates.sort(key=lambda value: ranked.index(value["candidate_id"]))
         questions = routing.get("expert_questions") or task.expert_questions
         context["pending_questions"] = questions
         context.update(
@@ -129,7 +132,7 @@ class ExpertCollaborationService:
             status=CollaborationStatus.AWAITING_CONFIRMATION,
             group_name=self._default_group_name(context, task.title),
             candidate_records=candidates,
-            selected_expert_ids=[],
+            selected_expert_ids=[item["candidate_id"] for item in candidates[:3]],
             questions=questions,
             context_snapshot=context,
             content_bundle=None,
@@ -401,7 +404,7 @@ class ExpertCollaborationService:
         grouped: dict[uuid.UUID, list[ExpertContribution]] = {}
         for contribution in contributions:
             grouped.setdefault(contribution.user_id, []).append(contribution)
-        return [
+        candidates = [
             {
                 "candidate_id": str(user_id),
                 "display_name": users_by_id[user_id].name,
@@ -421,6 +424,29 @@ class ExpertCollaborationService:
             for user_id, records in grouped.items()
             if user_id in users_by_id
         ]
+        if candidates:
+            return candidates
+        requester = await self.users.get(task.created_by_id)
+        if requester is None or not requester.feishu_user_id:
+            return []
+        return [
+            {
+                "candidate_id": str(requester.id),
+                "display_name": requester.name,
+                "feishu_user_id": requester.feishu_user_id,
+                "contributions": [
+                    {
+                        "contribution_id": f"requester:{requester.id}",
+                        "source_id": None,
+                        "title": "研究发起人兜底",
+                        "tags": ["发起人"],
+                        "reviewed": False,
+                        "updated_at": task.updated_at.isoformat(),
+                    }
+                ],
+                "fallback_reason": "未读取到可用文档作者或协作者，按比赛演示规则回退到研究发起人",
+            }
+        ]
 
     def _ai_research_context(self, task: ResearchTask) -> dict[str, Any]:
         questions = task.expert_questions or [
@@ -432,6 +458,11 @@ class ExpertCollaborationService:
             }
             for index, gap in enumerate(task.knowledge_gaps, start=1)
         ]
+        evidence_snapshot = {
+            key: value
+            for key, value in (task.evidence_snapshot or {}).items()
+            if key != "display_evidence"
+        }
         return {
             "research_task_id": str(task.id),
             "conversation_summary": self._summary(task.conversation_snapshot, "暂无研究对话"),
@@ -439,7 +470,7 @@ class ExpertCollaborationService:
                 task.report or task.findings or task.audit, "研究仍在等待专家补充"
             ),
             "profile_summary": self._summary(task.profile_snapshot, "客户画像已确认"),
-            "evidence_snapshot": task.evidence_snapshot,
+            "evidence_snapshot": evidence_snapshot,
             "knowledge_gaps": task.knowledge_gaps,
             "questions": questions,
         }

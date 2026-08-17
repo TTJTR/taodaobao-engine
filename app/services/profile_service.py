@@ -111,6 +111,20 @@ class CustomerProfileService:
         profile = await self.get(profile_id)
         if self.user_id is None:
             raise AppError(ErrorCode.AUTH_REQUIRED, "缺少画像确认人", status_code=401)
+        if await self.jobs.has_active_for_target(profile.id, JobType.PROFILE_GENERATION):
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "客户画像仍在 AI 分析中，请等待生成完成后再确认",
+                status_code=409,
+                retryable=True,
+            )
+        if not profile.profile or profile.profile.get("supplemental_text"):
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "客户画像尚未生成完成，不能确认原始输入文本",
+                status_code=409,
+                retryable=True,
+            )
         profile.status = ProfileStatus.CONFIRMED
         profile.confirmed_by_id = self.user_id
         profile.confirmed_at = datetime.now(UTC)

@@ -1,8 +1,11 @@
+import asyncio
 import time
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from fastapi import Response
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -254,6 +257,66 @@ def test_invitation_status_reflects_the_runtime_gate(
     enabled = client.get("/api/v1/auth/invitation/status")
     assert enabled.status_code == 200
     assert enabled.json()["data"] == {"required": True}
+
+
+def test_authenticated_user_can_restart_feishu_oauth_without_invitation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "invitation_required", True)
+    monkeypatch.setattr(settings, "cookie_secure", False)
+    app = create_app()
+    app.dependency_overrides[get_feishu_adapter] = lambda: MockFeishuAdapter(
+        settings.public_base_url
+    )
+    codec = SessionCodec(settings.session_secret, settings.session_ttl_seconds)
+    session_token = codec.encode(uuid.uuid4(), settings.demo_workspace_id)
+
+    with TestClient(app) as client:
+        client.cookies.set(settings.session_cookie_name, session_token)
+        started = client.get("/api/v1/auth/feishu/start")
+
+    assert started.status_code == 200
+    assert "authorization_url" in started.json()["data"]
+
+
+def test_demo_session_uses_distinct_user_in_shared_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "invitation_code", "private-invite")
+    monkeypatch.setattr(settings, "cookie_secure", False)
+    proof = auth_routes.create_invitation_proof("a" * 64, 7)
+    user = SimpleNamespace(id=uuid.uuid4(), workspace_id=settings.demo_workspace_id)
+
+    class DemoUsers:
+        def __init__(self, session, workspace_id) -> None:
+            assert workspace_id == settings.demo_workspace_id
+
+        async def get_by_feishu_user_id(self, feishu_user_id: str):
+            assert feishu_user_id == f"demo-judge:{'a' * 24}:7"
+            return user
+
+    class Store:
+        async def consume(self, token_hash: str, redemption_number: int) -> bool:
+            return token_hash == "a" * 64 and redemption_number == 7
+
+    monkeypatch.setattr(auth_routes, "UserRepository", DemoUsers)
+    request = SimpleNamespace(state=SimpleNamespace(request_id="req-demo"))
+    response = Response()
+    result = asyncio.run(
+        auth_routes.start_demo_session(
+            request,
+            response,
+            AsyncMock(),
+            SessionCodec(settings.session_secret, settings.session_ttl_seconds),
+            Store(),
+            proof,
+            "idempotency-key",
+        )
+    )
+
+    assert result["data"]["access_mode"] == "shared_demo"
+    assert result["data"]["requires_feishu_oauth"] is False
+    assert settings.session_cookie_name in response.headers["set-cookie"]
 
 
 def test_me_requires_session_cookie() -> None:

@@ -8,7 +8,6 @@ from app.api.deps import (
     AIEngineDependency,
     CurrentUser,
     DatabaseSession,
-    EmbeddingProviderDependency,
     FeishuAdapterDependency,
     WorkspaceId,
     get_embedding_provider,
@@ -242,8 +241,6 @@ async def receive_expert_reply(
     request: Request,
     background_tasks: BackgroundTasks,
     session: DatabaseSession,
-    ai_engine: AIEngineDependency,
-    embedding_provider: EmbeddingProviderDependency,
     feishu: FeishuAdapterDependency,
 ) -> dict[str, object]:
     if settings.feishu_mode == "live":
@@ -252,6 +249,8 @@ async def receive_expert_reply(
         if not configured or not hmac.compare_digest(configured, supplied):
             raise AppError(ErrorCode.AUTH_REQUIRED, "飞书事件校验失败", status_code=401)
     workspace_id, user_id = await resolve_collaboration_workspace(session, payload.collaboration_id)
+    ai_engine = await workspace_ai_engine(session, workspace_id)
+    embedding_provider = get_embedding_provider()
     reply, task = await ExpertCollaborationService(
         session, workspace_id, user_id, ai_engine, feishu
     ).record_reply(

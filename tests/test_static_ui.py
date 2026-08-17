@@ -10,6 +10,12 @@ def test_static_index_is_served_at_root() -> None:
     assert "淘到宝引擎" in response.text
     assert 'const API_BASE="/api/v1"' in response.text
     assert 'apiFetch("/customer-profiles?page=1&page_size=100")' in response.text
+    assert 'id="profile-name"' in response.text
+    assert (
+        "const accepted=await apiFetch(`/customer-profiles/${profile.id}/generate`" in response.text
+    )
+    assert "const job=await apiFetch(`/jobs/${accepted.job_id}`)" in response.text
+    assert 'background:p.background||"AI 分析尚未完成，请稍候刷新。"' in response.text
     assert 'apiFetch("/experiences?page=1&page_size=100")' in response.text
     assert 'apiFetch("/capabilities?page=1&page_size=100")' in response.text
     assert 'apiFetch("/sessions?page=1&page_size=100")' in response.text
@@ -21,11 +27,15 @@ def test_static_index_is_served_at_root() -> None:
     assert "Services.listExperiences(),Services.listCapabilities()" in response.text
     assert "retry-source" in response.text
     assert 'apiFetch("/auth/invitation/verify"' in response.text
+    assert 'apiFetch("/auth/demo/start"' in response.text
     assert 'apiFetch("/auth/invitation/status")' in response.text
     assert 'data-action="verify-invitation"' in response.text
     assert "function verifyInvitationAndContinue()" in response.text
     assert "邀请码无效、已过期或共享额度已用完" in response.text
-    assert "评委共享邀请码" in response.text
+    assert "共享演示工作区" in response.text
+    assert 'data-action="enter-shared-demo"' in response.text
+    assert "飞行社成员授权登录" in response.text
+    assert "外部评委进入演示区域" in response.text
     assert 'maxlength="9" placeholder="tdb-xxxxx"' in response.text
     assert "短码不区分大小写" in response.text
     assert 'placeholder="tdb1.……"' not in response.text
@@ -54,7 +64,8 @@ def test_static_index_is_served_at_root() -> None:
     assert "项目交付风险复盘" not in response.text
     assert "example.feishu.cn/docx/demoToken" not in response.text
     assert "async function bootstrap()" in response.text
-    assert "if(Store.state.loggedIn){try{await loadWorkspace()}" in response.text
+    assert "try{await loadWorkspace();Store.state.loggedIn=true;Store.save()}" in response.text
+    assert "if(Store.state.loggedIn){try{await loadWorkspace()}" not in response.text
     assert "function renderDeep()" in response.text
     assert "function renderExperts()" in response.text
     assert "function renderPresentations()" in response.text
@@ -66,6 +77,17 @@ def test_static_index_is_served_at_root() -> None:
     assert 'data-view="intelligence"' in response.text
     assert 'data-view="rehearsals"' in response.text
     assert 'data-view="about"' in response.text
+    assert "同步今日战情到多维表格" in response.text
+    assert "renderDashboardBase" in response.text
+    assert 'apiFetch("/feishu/bitable/sync-daily",{method:"POST"})' in response.text
+    assert 'data-action="sync-bitable"' in response.text
+    assert "原始证据与作者" in response.text
+    assert "打开原文" in response.text
+    assert "累计 ${esc(durationText(duration))}" in response.text
+    assert 'data-view="feishuCollab"' in response.text
+    assert 'case"feishuCollab":return renderFeishuCollaboration()' in response.text
+    assert "FEISHU CONNECT · 真实同步" in response.text
+    assert "点击后调用真实飞书 OpenAPI" in response.text
     assert "V2Integrated.renderBusiness()" in response.text
     assert "V2Integrated.renderRehearsals()" in response.text
     assert "function renderRuntime()" in response.text
