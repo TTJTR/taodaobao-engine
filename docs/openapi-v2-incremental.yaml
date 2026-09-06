@@ -514,9 +514,14 @@ components:
       additionalProperties: false
       required: [provider, model, api_key]
       properties:
-        provider: {enum: [dashscope, deepseek]}
+        provider: {enum: [dashscope, deepseek, openai-compatible]}
         model: {type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9._:/-]+$'}
         api_key: {type: string, minLength: 8, maxLength: 4096, writeOnly: true}
+        base_url:
+          type: [string, 'null']
+          minLength: 8
+          maxLength: 500
+          description: 自定义 OpenAI-compatible Provider 必填；公网地址必须使用 HTTPS。
     EnrichRawArtifactRequest:
       type: object
       additionalProperties: false

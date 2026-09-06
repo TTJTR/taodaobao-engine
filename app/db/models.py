@@ -335,7 +335,7 @@ class WorkspaceModelConnection(EntityMixin, WorkspaceMixin, Base):
             name="ck_workspace_model_connections_capability",
         ),
         CheckConstraint(
-            "provider IN ('dashscope', 'deepseek')",
+            "provider IN ('dashscope', 'deepseek', 'openai-compatible')",
             name="ck_workspace_model_connections_provider",
         ),
     )

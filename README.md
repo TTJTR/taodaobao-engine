@@ -39,6 +39,7 @@ git switch feat/local-deployment
 
 - PostgreSQL、Redis、上传文件和长任务状态真实持久化，容器重启不会主动清空 Volume。
 - Chat 与 Embedding 分开配置，支持兼容 OpenAI Schema 的服务端 Provider。
+- 默认镜像使用轻量文档解析器，不包含 PyTorch/Docling；仅在复杂 PDF/OCR 场景按需启用增强镜像。
 - AI、飞书、公开情报和外部展示服务未配置时明确显示 `not_configured` 或 `disabled`，不会返回 Mock 成功。
 - 示例资料明确标记 `is_demo=true`，但走与真实资料相同的导入、提取和审核流程。
 - 默认只监听 `127.0.0.1`；局域网访问必须主动配置，当前方案不适合直接暴露公网。

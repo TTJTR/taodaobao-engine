@@ -98,6 +98,7 @@ async def _connections(session: DatabaseSession, workspace_id: uuid.UUID) -> lis
             else "not_configured",
             "configurable": True,
             "source": "default",
+            "requires_restart": False,
         },
         {
             "provider": "deep-research",
@@ -106,6 +107,7 @@ async def _connections(session: DatabaseSession, workspace_id: uuid.UUID) -> lis
             "status": "configured",
             "configurable": False,
             "source": "inherits-ai",
+            "requires_restart": False,
         },
         {
             "provider": "interactive-html",
@@ -116,6 +118,7 @@ async def _connections(session: DatabaseSession, workspace_id: uuid.UUID) -> lis
             else "not_configured",
             "configurable": True,
             "source": "default",
+            "requires_restart": False,
         },
         {
             "provider": "web-search",
@@ -128,6 +131,8 @@ async def _connections(session: DatabaseSession, workspace_id: uuid.UUID) -> lis
             else "not_configured",
             "configurable": True,
             "source": "default",
+            "requires_restart": not settings.enable_public_intelligence,
+            "system_config_keys": ["ENABLE_PUBLIC_INTELLIGENCE"],
             "note": "百炼只负责发现公开来源；正文抓取、哈希、快照与人工审批由本系统完成。",
         },
         {
@@ -139,6 +144,8 @@ async def _connections(session: DatabaseSession, workspace_id: uuid.UUID) -> lis
             else "not_configured",
             "configurable": False,
             "source": "server-fixed",
+            "requires_restart": True,
+            "system_config_keys": ["EMBEDDING_MODEL", "EMBEDDING_DIMENSIONS"],
             "note": "向量模型与历史索引维度绑定；切换前必须执行全量重建索引。",
         },
         {
@@ -148,6 +155,13 @@ async def _connections(session: DatabaseSession, workspace_id: uuid.UUID) -> lis
             "status": "configured" if settings.database_url else "not_configured",
             "configurable": False,
             "source": "server",
+            "requires_restart": True,
+            "system_config_keys": ["DATABASE_URL", "REDIS_URL", "TENDER_PARSER_BACKEND"],
+            "note": (
+                "当前使用轻量文档解析器，不包含 PyTorch/Docling。"
+                if settings.tender_parser_backend == "lightweight"
+                else "当前使用 Docling 增强解析 Worker。"
+            ),
         },
         {
             "provider": "feishu",
@@ -162,6 +176,13 @@ async def _connections(session: DatabaseSession, workspace_id: uuid.UUID) -> lis
             else "not_configured",
             "configurable": False,
             "source": "server",
+            "requires_restart": True,
+            "system_config_keys": [
+                "ENABLE_FEISHU",
+                "FEISHU_APP_ID",
+                "FEISHU_APP_SECRET",
+                "FEISHU_REDIRECT_URI",
+            ],
         },
     ]
     for capability in CAPABILITIES:
@@ -169,9 +190,13 @@ async def _connections(session: DatabaseSession, workspace_id: uuid.UUID) -> lis
         if selected is None:
             continue
         target = next(item for item in items if item["provider"] == capability)
+        globally_disabled = capability == "web-search" and not settings.enable_public_intelligence
         target.update(connection_payload(selected))
-        target["status"] = "configured"
+        target["status"] = "disabled" if globally_disabled else "configured"
         target["mode"] = "live"
+        if globally_disabled:
+            target["requires_restart"] = True
+            target["system_config_keys"] = ["ENABLE_PUBLIC_INTELLIGENCE"]
     return items
 
 
@@ -208,6 +233,7 @@ async def put_model_connection_credential(
         payload.provider,
         payload.model,
         payload.api_key,
+        payload.base_url,
     )
     return success_response(request, connection_payload(row))
 
@@ -255,6 +281,7 @@ async def test_model_connection(
                 selected.model,
                 selected.api_key,
                 selected.capability,
+                selected.base_url,
             )
         elif provider == "ai":
             ai_engine = get_ai_engine()

@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 8 * 60 * 60
     cookie_secure: bool = True
     tender_storage_root: Path = Path(".local/tender-artifacts")
+    tender_parser_backend: Literal["lightweight", "docling"] = "lightweight"
     open_enrich_svc_url: str | None = None
     open_enrich_svc_token: str | None = None
     open_enrich_poll_seconds: int = 10
@@ -105,12 +106,8 @@ class Settings(BaseSettings):
             if not (self.local_admin_username or "").strip():
                 raise ValueError("APP_LOCAL_ADMIN_USERNAME is required for local authentication")
             if len(self.local_admin_password or "") < 12:
-                raise ValueError(
-                    "APP_LOCAL_ADMIN_PASSWORD must contain at least 12 characters"
-                )
-            if self.env == "production" and "replace-with" in (
-                self.local_admin_password or ""
-            ):
+                raise ValueError("APP_LOCAL_ADMIN_PASSWORD must contain at least 12 characters")
+            if self.env == "production" and "replace-with" in (self.local_admin_password or ""):
                 raise ValueError("APP_LOCAL_ADMIN_PASSWORD still contains a placeholder")
         if self.env == "production" and self.session_secret == "development-only-change-me":
             raise ValueError("APP_SESSION_SECRET must be changed in production")

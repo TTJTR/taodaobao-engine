@@ -10,6 +10,7 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.db.models import TenderParseStatus, TenderRequirementStatus
 from app.db.repositories import (
@@ -19,6 +20,7 @@ from app.db.repositories import (
     TenderRequirementRepository,
 )
 from app.integrations.docling_adapter import DoclingAdapter
+from app.integrations.lightweight_document_parser import LightweightDocumentParser
 from app.integrations.protocols import DocumentIR, DocumentParserAdapter
 
 MAX_TENDER_FILE_BYTES = 50 * 1024 * 1024
@@ -44,7 +46,7 @@ class TenderParseWorker:
     ) -> None:
         self.session = session
         self.workspace_id = workspace_id
-        self.parser = parser or DoclingAdapter()
+        self.parser = parser or _configured_parser()
         self.timeout_seconds = timeout_seconds
         self.tenders = TenderDocumentRepository(session, workspace_id)
         self.artifacts = RawArtifactRepository(session, workspace_id)
@@ -153,9 +155,7 @@ class TenderParseWorker:
         parse_version.completed_at = datetime.now(UTC)
         await self.session.commit()
 
-    async def _fail(
-        self, parse_version_id, error_code: str, summary: str, started: float
-    ) -> None:
+    async def _fail(self, parse_version_id, error_code: str, summary: str, started: float) -> None:
         await self.session.rollback()
         parse_version = await self.parse_versions.get(parse_version_id)
         if parse_version is None:
@@ -223,9 +223,10 @@ def _validate_signature(payload: bytes, mime_type: str, filename: str | None) ->
 
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             entries = archive.infolist()
-            if len(entries) > MAX_TENDER_ARCHIVE_ENTRIES or sum(
-                entry.file_size for entry in entries
-            ) > MAX_TENDER_ARCHIVE_UNCOMPRESSED_BYTES:
+            if (
+                len(entries) > MAX_TENDER_ARCHIVE_ENTRIES
+                or sum(entry.file_size for entry in entries) > MAX_TENDER_ARCHIVE_UNCOMPRESSED_BYTES
+            ):
                 raise AppError(
                     ErrorCode.TENDER_FILE_UNSAFE,
                     "Office 文件解压后体积或条目数超过安全限制",
@@ -277,6 +278,12 @@ def _failure_code(error: AppError) -> str:
     if error.code == ErrorCode.TENDER_FILE_TOO_LARGE:
         return "FILE_TOO_LARGE"
     return error.code.value
+
+
+def _configured_parser() -> DocumentParserAdapter:
+    if settings.tender_parser_backend == "docling":
+        return DoclingAdapter()
+    return LightweightDocumentParser()
 
 
 def _docling_process(payload: bytes, mime_type: str, filename: str | None, output) -> None:

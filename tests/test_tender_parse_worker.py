@@ -6,14 +6,17 @@ import zipfile
 from types import SimpleNamespace
 
 import pytest
+from docx import Document
 
 from app.core.errors import AppError, ErrorCode
 from app.db.models import TenderParseStatus
 from app.integrations.docling_adapter import DoclingAdapter
+from app.integrations.lightweight_document_parser import LightweightDocumentParser
 from app.integrations.protocols import DocumentIR, DocumentNode
 from app.services.tender_parse_worker import (
     MAX_TENDER_FILE_BYTES,
     TenderParseWorker,
+    _configured_parser,
     read_and_validate_tender_source,
 )
 
@@ -216,9 +219,65 @@ def test_utf8_txt_is_parsed_with_verifiable_offsets() -> None:
     assert len(result.nodes) == 2
     assert result.nodes[0].location["kind"] == "plain_text"
     assert result.nodes[0].location["start_offset"] == 0
-    assert result.nodes[0].location["quote_hash"] == hashlib.sha256(
-        result.nodes[0].text.encode()
-    ).hexdigest()
+    assert (
+        result.nodes[0].location["quote_hash"]
+        == hashlib.sha256(result.nodes[0].text.encode()).hexdigest()
+    )
+
+
+def test_default_parser_does_not_require_docling_or_torch() -> None:
+    parser = _configured_parser()
+
+    assert isinstance(parser, LightweightDocumentParser)
+    assert parser.parser_name == "lightweight"
+
+
+def test_lightweight_parser_reads_docx_without_local_ml_models() -> None:
+    document = Document()
+    document.add_heading("采购要求", level=1)
+    document.add_paragraph("供应商必须提供三年成功案例。")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "指标"
+    table.cell(0, 1).text = "要求"
+    table.cell(1, 0).text = "并发"
+    table.cell(1, 1).text = "1000"
+    stream = io.BytesIO()
+    document.save(stream)
+
+    result = LightweightDocumentParser().parse(
+        stream.getvalue(),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename="requirements.docx",
+    )
+
+    assert any(node.node_type == "heading" and node.text == "采购要求" for node in result.nodes)
+    assert any(node.node_type == "table" and "1000" in node.text for node in result.nodes)
+
+
+def test_lightweight_parser_reads_xlsx_xml_without_openpyxl() -> None:
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr(
+            "xl/sharedStrings.xml",
+            '<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>必须支持国产化</t></si></sst>',
+        )
+        archive.writestr(
+            "xl/worksheets/sheet1.xml",
+            '<?xml version="1.0"?>'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/'
+            'spreadsheetml/2006/main"><sheetData><row r="1">'
+            '<c r="A1" t="s"><v>0</v></c><c r="B1"><v>1</v></c>'
+            "</row></sheetData></worksheet>",
+        )
+
+    result = LightweightDocumentParser().parse(
+        stream.getvalue(),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename="requirements.xlsx",
+    )
+
+    assert result.nodes[0].text == "必须支持国产化 | 1"
+    assert result.nodes[0].location["cell_range"] == "A1:B1"
 
 
 def test_txt_rejects_non_utf8_content() -> None:

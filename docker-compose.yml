@@ -61,6 +61,7 @@ services:
       APP_TENDER_STORAGE_ROOT: /app/data/uploads/tenders
       APP_PRESENTATION_EXPORT_DIR: /app/data/exports
       APP_INTEGRATION_STATE_DIR: /app/data/integrations
+      APP_TENDER_PARSER_BACKEND: ${TENDER_PARSER_BACKEND:-lightweight}
       APP_OPEN_ENRICH_SVC_URL: ${APP_OPEN_ENRICH_SVC_URL:-}
       APP_OPEN_ENRICH_SVC_TOKEN: ${APP_OPEN_ENRICH_SVC_TOKEN:-}
     depends_on:
@@ -114,6 +115,7 @@ services:
       APP_TENDER_STORAGE_ROOT: /app/data/uploads/tenders
       APP_PRESENTATION_EXPORT_DIR: /app/data/exports
       APP_INTEGRATION_STATE_DIR: /app/data/integrations
+      APP_TENDER_PARSER_BACKEND: ${TENDER_PARSER_BACKEND:-lightweight}
       APP_OPEN_ENRICH_SVC_URL: ${APP_OPEN_ENRICH_SVC_URL:-}
       APP_OPEN_ENRICH_SVC_TOKEN: ${APP_OPEN_ENRICH_SVC_TOKEN:-}
     depends_on:

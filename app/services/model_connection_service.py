@@ -32,12 +32,20 @@ PROVIDER_CATALOG = {
         "base_url": "https://api.deepseek.com",
         "default_models": {"ai": "deepseek-chat", "interactive-html": "deepseek-chat"},
     },
+    "openai-compatible": {
+        "label": "自定义 OpenAI-compatible",
+        "base_url": None,
+        "default_models": {"ai": "", "interactive-html": ""},
+    },
 }
 CAPABILITIES = {
-    "ai": {"label": "可信 AI 与研究", "providers": ["dashscope", "deepseek"]},
+    "ai": {
+        "label": "可信 AI 与研究",
+        "providers": ["dashscope", "deepseek", "openai-compatible"],
+    },
     "interactive-html": {
         "label": "互动 HTML 生成",
-        "providers": ["deepseek", "dashscope"],
+        "providers": ["deepseek", "dashscope", "openai-compatible"],
     },
     "web-search": {
         "label": "公开情报搜索",
@@ -56,6 +64,8 @@ def catalog_payload() -> list[dict]:
                     "provider": provider,
                     "label": PROVIDER_CATALOG[provider]["label"],
                     "default_model": PROVIDER_CATALOG[provider]["default_models"][capability],
+                    "base_url": PROVIDER_CATALOG[provider]["base_url"],
+                    "custom_base_url": provider == "openai-compatible",
                 }
                 for provider in values["providers"]
             ],
@@ -81,7 +91,12 @@ def mask_api_key(value: str) -> str:
     return f"••••••••{suffix}"
 
 
-def _candidate_settings(provider: str, model: str, api_key: str) -> BailianSettings:
+def _candidate_settings(
+    provider: str,
+    model: str,
+    api_key: str,
+    base_url: str | None = None,
+) -> BailianSettings:
     try:
         config = PROVIDER_CATALOG[provider]
     except KeyError as exc:
@@ -90,10 +105,17 @@ def _candidate_settings(provider: str, model: str, api_key: str) -> BailianSetti
             "不支持的模型 Provider",
             status_code=422,
         ) from exc
+    resolved_base_url = base_url if provider == "openai-compatible" else config["base_url"]
+    if not resolved_base_url:
+        raise AppError(
+            ErrorCode.VALIDATION_FAILED,
+            "自定义 Provider 必须填写 Base URL",
+            status_code=422,
+        )
     return BailianSettings(
         api_key=api_key,
         chat_model=model,
-        base_url=str(config["base_url"]),
+        base_url=str(resolved_base_url),
         # The quick workflow has a 60-second shared deadline. Allow the first
         # structured generation enough time to finish while the outer budget
         # still caps the complete generation-and-verification workflow.
@@ -108,6 +130,7 @@ async def test_candidate(
     model: str,
     api_key: str,
     capability: str = "ai",
+    base_url: str | None = None,
 ) -> int:
     started = time.perf_counter()
     try:
@@ -126,7 +149,7 @@ async def test_candidate(
             finally:
                 await adapter.aclose()
             return round((time.perf_counter() - started) * 1000)
-        client = BailianChatClient(_candidate_settings(provider, model, api_key))
+        client = BailianChatClient(_candidate_settings(provider, model, api_key, base_url))
         result = await client.generate_json(
             "你是 API 连通性检查器，只返回 JSON 对象。",
             '返回 {"status":"ok"}，不要添加其他字段。',
@@ -152,6 +175,7 @@ async def configure_workspace_connection(
     provider: str,
     model: str,
     api_key: str,
+    base_url: str | None = None,
 ) -> WorkspaceModelConnection:
     if capability not in CAPABILITIES or provider not in CAPABILITIES[capability]["providers"]:
         raise AppError(
@@ -165,7 +189,22 @@ async def configure_workspace_connection(
             "服务端未配置密钥加密能力，拒绝保存 API Key",
             status_code=503,
         )
-    latency_ms = await test_candidate(provider, model, api_key, capability)
+    resolved_base_url = (
+        base_url if provider == "openai-compatible" else PROVIDER_CATALOG[provider]["base_url"]
+    )
+    if not resolved_base_url:
+        raise AppError(
+            ErrorCode.VALIDATION_FAILED,
+            "自定义 Provider 必须填写 Base URL",
+            status_code=422,
+        )
+    latency_ms = await test_candidate(
+        provider,
+        model,
+        api_key,
+        capability,
+        str(resolved_base_url),
+    )
     row = await get_workspace_connection(session, workspace_id, capability)
     now = datetime.now(UTC)
     if row is None:
@@ -173,7 +212,7 @@ async def configure_workspace_connection(
             workspace_id=workspace_id,
             capability=capability,
             provider=provider,
-            base_url=str(PROVIDER_CATALOG[provider]["base_url"]),
+            base_url=str(resolved_base_url),
             model=model,
             api_key=api_key,
             updated_by_id=user_id,
@@ -184,7 +223,7 @@ async def configure_workspace_connection(
         session.add(row)
     else:
         row.provider = provider
-        row.base_url = str(PROVIDER_CATALOG[provider]["base_url"])
+        row.base_url = str(resolved_base_url)
         row.model = model
         row.api_key = api_key
         row.updated_by_id = user_id
@@ -213,6 +252,7 @@ def connection_payload(row: WorkspaceModelConnection) -> dict:
         "provider": row.capability,
         "selected_provider": row.provider,
         "provider_label": PROVIDER_CATALOG[row.provider]["label"],
+        "base_url": row.base_url,
         "model": row.model,
         "configured": True,
         "masked_value": mask_api_key(row.api_key),
@@ -231,7 +271,9 @@ def _default_ai_settings() -> BailianSettings:
 async def workspace_ai_engine(session: AsyncSession, workspace_id: uuid.UUID) -> BailianAIEngine:
     row = await get_workspace_connection(session, workspace_id, "ai")
     selected = (
-        _candidate_settings(row.provider, row.model, row.api_key) if row else _default_ai_settings()
+        _candidate_settings(row.provider, row.model, row.api_key, row.base_url)
+        if row
+        else _default_ai_settings()
     )
     return BailianAIEngine(BailianChatClient(selected))
 
@@ -241,7 +283,9 @@ async def workspace_rehearsal_workflow(
 ) -> RehearsalAIWorkflow:
     row = await get_workspace_connection(session, workspace_id, "ai")
     selected = (
-        _candidate_settings(row.provider, row.model, row.api_key) if row else _default_ai_settings()
+        _candidate_settings(row.provider, row.model, row.api_key, row.base_url)
+        if row
+        else _default_ai_settings()
     )
     return RehearsalAIWorkflow(
         BailianChatClient(selected),

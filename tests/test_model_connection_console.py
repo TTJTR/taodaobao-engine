@@ -24,8 +24,16 @@ def test_catalog_only_exposes_allowlisted_live_providers() -> None:
     assert {provider["provider"] for item in catalog for provider in item["providers"]} == {
         "dashscope",
         "deepseek",
+        "openai-compatible",
     }
-    assert "base_url" not in str(catalog)
+    custom = next(
+        provider
+        for item in catalog
+        for provider in item["providers"]
+        if provider["provider"] == "openai-compatible"
+    )
+    assert custom["base_url"] is None
+    assert custom["custom_base_url"] is True
     search = next(item for item in catalog if item["capability"] == "web-search")
     assert [provider["provider"] for provider in search["providers"]] == ["dashscope"]
 
@@ -49,6 +57,24 @@ def test_connection_request_rejects_unapproved_provider_and_model_name() -> None
         )
 
 
+def test_custom_base_url_requires_https_outside_private_networks() -> None:
+    with pytest.raises(ValidationError):
+        ConfigureModelConnectionRequest(
+            provider="openai-compatible",
+            model="local-model",
+            api_key="secret-key",
+            base_url="http://models.example.com/v1",
+        )
+
+    request = ConfigureModelConnectionRequest(
+        provider="openai-compatible",
+        model="local-model",
+        api_key="secret-key",
+        base_url="http://host.docker.internal:11434/v1/",
+    )
+    assert request.base_url == "http://host.docker.internal:11434/v1"
+
+
 def test_api_key_column_uses_encryption_type() -> None:
     column = WorkspaceModelConnection.__table__.c.api_key
 
@@ -66,6 +92,28 @@ async def test_candidate_must_return_real_expected_json(monkeypatch) -> None:
 
     assert captured.value.code == ErrorCode.MODEL_CONNECTION_UNAVAILABLE
     client.generate_json.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_custom_candidate_uses_validated_base_url(monkeypatch) -> None:
+    captured = {}
+    client = AsyncMock()
+    client.generate_json.return_value = {"status": "ok"}
+
+    def build_client(candidate_settings):
+        captured["settings"] = candidate_settings
+        return client
+
+    monkeypatch.setattr(service, "BailianChatClient", build_client)
+    await service.test_candidate(
+        "openai-compatible",
+        "local-model",
+        "secret-key",
+        base_url="http://host.docker.internal:11434/v1",
+    )
+
+    assert captured["settings"].base_url == "http://host.docker.internal:11434/v1"
+    assert captured["settings"].chat_model == "local-model"
 
 
 @pytest.mark.asyncio
@@ -98,6 +146,9 @@ def test_frontend_console_never_stores_api_key() -> None:
     assert "getModelConnectionCatalog" in frontend
     assert "configureModelConnection" in frontend
     assert "真实测试并保存" in frontend
+    assert "服务与集成配置" in frontend
+    assert 'id="model-base-url"' in frontend
+    assert "停用并撤销密钥" in frontend
     assert 'type="password"' in frontend
     assert "API Key 必须完整填写" in frontend
     assert "apiKey:" not in frontend
