@@ -50,7 +50,7 @@ def get_session_codec() -> SessionCodec:
 
 @lru_cache
 def get_feishu_adapter() -> FeishuAdapter:
-    if settings.feishu_mode != "live":
+    if not settings.enable_feishu or settings.feishu_mode != "live":
         raise AppError(
             ErrorCode.PROVIDER_UNAVAILABLE,
             "飞书服务未启用",

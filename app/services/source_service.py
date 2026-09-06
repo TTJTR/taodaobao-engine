@@ -85,6 +85,7 @@ class SourceService:
         content: str,
         purpose: SourcePurpose,
         customer_profile_id: uuid.UUID | None,
+        is_demo: bool = False,
     ) -> SourceImportResult:
         source = await self.sources.create(
             customer_profile_id=customer_profile_id,
@@ -96,6 +97,7 @@ class SourceService:
             source_url=None,
             tags=[],
             status=SourceStatus.PENDING,
+            is_demo=is_demo,
         )
         job = await self._create_job(source.id)
         await self.session.commit()

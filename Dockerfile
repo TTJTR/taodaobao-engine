@@ -60,8 +60,8 @@ COPY --chown=app:app alembic.ini ./alembic.ini
 COPY --chown=app:app static ./static
 COPY --from=pptx-builder --chown=app:app /renderer ./sidecar/pptx-renderer
 COPY --chown=app:app start.sh ./start.sh
-RUN mkdir -p /app/exports /app/tender-artifacts \
-    && chown app:app /app/exports /app/tender-artifacts \
+RUN mkdir -p /app/data/uploads /app/data/exports /app/data/integrations \
+    && chown -R app:app /app/data \
     && chmod 755 ./start.sh
 
 USER app

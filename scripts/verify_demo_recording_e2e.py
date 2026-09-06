@@ -149,7 +149,8 @@ async def main() -> None:
             raise AssertionError("interactive HTML artifact is missing expected research content")
         print(
             f"HTML_OK presentation={presentation_id} bytes={len(artifact.content)} "
-            f"url=http://8.218.59.190/api/v1/presentations/{presentation_id}/artifact"
+            f"url={settings.public_base_url.rstrip('/')}/api/v1/presentations/"
+            f"{presentation_id}/artifact"
         )
 
 

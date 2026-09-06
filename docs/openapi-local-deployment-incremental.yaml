@@ -1,0 +1,77 @@
+openapi: 3.1.0
+info:
+  title: 淘到宝引擎 Local First 增量契约
+  version: 1.0.0-local
+  description: >-
+    仅记录本地产品化新增接口。根目录 openapi.yaml 与既有增量契约保持冻结。
+servers:
+  - url: /api/v1
+paths:
+  /auth/modes:
+    get:
+      summary: 查询当前部署允许的登录方式
+      security: []
+      responses:
+        '200':
+          description: 登录能力状态；不返回用户名、密码或密钥
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthModesResponse'
+  /auth/local/login:
+    post:
+      summary: 使用服务端环境变量配置的本地管理员登录
+      security: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, minLength: 16, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocalLoginRequest'
+      responses:
+        '200':
+          description: 建立 HttpOnly 本地会话
+          headers:
+            Set-Cookie: {schema: {type: string}}
+        '401': {description: 凭据无效}
+        '503': {description: 本地登录未启用}
+  /sources/import-text:
+    post:
+      summary: 既有文本导入接口的本地演示资料标记增量
+      description: >-
+        请求体与冻结契约完全一致。只有 APP_ENABLE_DEMO_DATA=true 时允许传入
+        X-Demo-Data: true；数据仍走同一资料处理和 AI 提取流程，并持久化 is_demo=true。
+      parameters:
+        - name: X-Demo-Data
+          in: header
+          required: false
+          schema: {type: boolean, default: false}
+      responses:
+        '202': {description: 已接受真实处理任务}
+        '503': {description: 演示资料导入未启用或 AI Provider 未配置}
+components:
+  schemas:
+    LocalLoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: {type: string, minLength: 1, maxLength: 128}
+        password: {type: string, minLength: 1, maxLength: 512, writeOnly: true}
+    AuthModesResponse:
+      type: object
+      required: [request_id, data]
+      properties:
+        request_id: {type: string}
+        data:
+          type: object
+          required: [local, feishu, demo_data]
+          properties:
+            local: {type: boolean}
+            feishu: {type: boolean}
+            demo_data: {type: boolean}

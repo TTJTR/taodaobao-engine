@@ -1,4 +1,6 @@
+import asyncio
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 import asyncpg
 import httpx
@@ -22,6 +24,8 @@ def _sidecar_client() -> httpx.AsyncClient:
 
 
 async def probe_open_enrich_sidecar() -> str:
+    if not settings.enable_public_intelligence:
+        return "disabled"
     if not settings.open_enrich_svc_url:
         return "not_configured"
     try:
@@ -37,10 +41,47 @@ async def probe_open_enrich_sidecar() -> str:
         return "unreachable"
 
 
+async def probe_redis() -> str:
+    if not settings.redis_url:
+        return "not_configured"
+    writer = None
+    try:
+        parsed = urlsplit(settings.redis_url)
+        if parsed.scheme not in {"redis", "rediss"} or not parsed.hostname:
+            return "unavailable"
+        ssl = parsed.scheme == "rediss"
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(parsed.hostname, parsed.port or 6379, ssl=ssl),
+            timeout=2,
+        )
+        if parsed.password:
+            username = unquote(parsed.username or "default")
+            password = unquote(parsed.password)
+            command = (
+                f"*3\r\n$4\r\nAUTH\r\n${len(username)}\r\n{username}\r\n"
+                f"${len(password)}\r\n{password}\r\n"
+            )
+            writer.write(command.encode())
+            await writer.drain()
+            if not (await asyncio.wait_for(reader.readline(), timeout=2)).startswith(b"+OK"):
+                return "unavailable"
+        writer.write(b"*1\r\n$4\r\nPING\r\n")
+        await writer.drain()
+        reply = await asyncio.wait_for(reader.readline(), timeout=2)
+        return "ok" if reply.startswith(b"+PONG") else "unavailable"
+    except (OSError, TimeoutError, ValueError):
+        return "unavailable"
+    finally:
+        if writer is not None:
+            writer.close()
+            await writer.wait_closed()
+
+
 @router.get("/health", summary="服务健康检查")
 async def health_check(request: Request) -> dict[str, Any]:
     database_status = "not_configured"
     sidecar_status = await probe_open_enrich_sidecar()
+    redis_status = await probe_redis()
     workflow_queue: dict[str, int] | None = None
     if settings.database_url:
         connection = None
@@ -81,7 +122,9 @@ async def health_check(request: Request) -> dict[str, Any]:
         if settings.ai_mode == "live" and bailian_is_configured()
         else "not_configured"
     )
-    if settings.feishu_mode == "live":
+    if not settings.enable_feishu:
+        feishu_status = "disabled"
+    elif settings.feishu_mode == "live":
         required_feishu_settings = (
             settings.feishu_app_id,
             settings.feishu_app_secret,
@@ -102,13 +145,18 @@ async def health_check(request: Request) -> dict[str, Any]:
         if settings.interactive_html_mode == "live" and settings.interactive_html_api_key
         else "not_configured"
     )
-    web_search_status = "configured" if bailian_search_is_configured() else "not_configured"
+    web_search_status = (
+        "disabled"
+        if not settings.enable_public_intelligence
+        else "configured"
+        if bailian_search_is_configured()
+        else "not_configured"
+    )
     status = (
         "ok"
-        if database_status in {"ok", "not_configured"}
+        if database_status == "ok"
+        and redis_status in {"ok", "not_configured"}
         and ai_status == "ok"
-        and feishu_status == "configured"
-        and interactive_html_status == "configured"
         else "degraded"
     )
     return success_response(
@@ -117,6 +165,7 @@ async def health_check(request: Request) -> dict[str, Any]:
             "status": status,
             "service": "ok",
             "database": database_status,
+            "redis": redis_status,
             "ai": ai_status,
             "ai_mode": settings.ai_mode,
             "feishu": feishu_status,
@@ -127,6 +176,9 @@ async def health_check(request: Request) -> dict[str, Any]:
             "interactive_html_mode": settings.interactive_html_mode,
             "web_search": web_search_status,
             "sidecar_status": sidecar_status,
+            "auth_mode": settings.auth_mode,
+            "public_intelligence_enabled": settings.enable_public_intelligence,
+            "demo_data_enabled": settings.enable_demo_data,
             "workflow_queue": workflow_queue,
         },
     )

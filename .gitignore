@@ -23,6 +23,7 @@ dist/
 build/
 node_modules/
 *.log
+/backups/
 examples/**/result.json
 evals/latest_report.json
 

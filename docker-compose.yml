@@ -1,4 +1,4 @@
-name: xianjintuan-engine
+name: taodaobao-local
 
 services:
   db:
@@ -14,7 +14,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
-      retries: 12
+      retries: 20
       start_period: 10s
 
   redis:
@@ -27,7 +27,7 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 12
+      retries: 20
       start_period: 5s
 
   app:
@@ -36,31 +36,42 @@ services:
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
-    env_file:
-      - .env
+    env_file: [.env]
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      APP_FRONTEND_PORT: ${FRONTEND_PORT:-3000}
       APP_DATABASE_URL: >-
         postgresql+asyncpg://${POSTGRES_USER:-taodaobao}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-taodaobao}
-      APP_PUBLIC_BASE_URL: https://${DOMAIN:-localhost}
-      APP_FRONTEND_REDIRECT_URL: https://${DOMAIN:-localhost}/
-      APP_COOKIE_SECURE: "true"
+      APP_REDIS_URL: redis://redis:6379/0
+      APP_PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:3000}
+      APP_FRONTEND_REDIRECT_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:3000}/
+      APP_COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      APP_AUTH_MODE: ${AUTH_MODE:-local}
+      APP_ENABLE_FEISHU: ${ENABLE_FEISHU:-false}
+      APP_ENABLE_PUBLIC_INTELLIGENCE: ${ENABLE_PUBLIC_INTELLIGENCE:-false}
+      APP_ENABLE_DEMO_DATA: ${ENABLE_DEMO_DATA:-false}
       APP_SESSION_SECRET: ${APP_SESSION_SECRET:?APP_SESSION_SECRET is required}
+      APP_SECRET_ENCRYPTION_KEY: ${APP_SECRET_ENCRYPTION_KEY:?APP_SECRET_ENCRYPTION_KEY is required}
+      APP_LOCAL_ADMIN_USERNAME: ${APP_LOCAL_ADMIN_USERNAME:-admin}
+      APP_LOCAL_ADMIN_PASSWORD: ${APP_LOCAL_ADMIN_PASSWORD:?APP_LOCAL_ADMIN_PASSWORD is required}
+      APP_FILE_STORAGE_ROOT: /app/data/uploads
+      APP_TENDER_STORAGE_ROOT: /app/data/uploads/tenders
+      APP_PRESENTATION_EXPORT_DIR: /app/data/exports
+      APP_INTEGRATION_STATE_DIR: /app/data/integrations
       APP_OPEN_ENRICH_SVC_URL: ${APP_OPEN_ENRICH_SVC_URL:-}
       APP_OPEN_ENRICH_SVC_TOKEN: ${APP_OPEN_ENRICH_SVC_TOKEN:-}
-      APP_PRESENTATION_EXPORT_DIR: /app/exports
-      APP_TENDER_STORAGE_ROOT: /app/tender-artifacts
-      APP_INTEGRATION_STATE_DIR: /app/integration-state
     depends_on:
       db:
         condition: service_healthy
-    expose:
-      - "8000"
+      redis:
+        condition: service_healthy
+    ports:
+      - "${HOST:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
     volumes:
-      - presentation_exports:/app/exports
-      - tender_artifacts:/app/tender-artifacts
-      - integration_state:/app/integration-state
+      - local_files:/app/data
     healthcheck:
       test:
         - CMD
@@ -71,8 +82,8 @@ services:
           urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)
       interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 10
+      start_period: 60s
 
   worker:
     build:
@@ -81,30 +92,50 @@ services:
       target: runtime
     restart: unless-stopped
     entrypoint: ["python", "-m", "app.cli.worker"]
-    env_file:
-      - .env
+    env_file: [.env]
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
       APP_DATABASE_URL: >-
         postgresql+asyncpg://${POSTGRES_USER:-taodaobao}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-taodaobao}
-      APP_PUBLIC_BASE_URL: https://${DOMAIN:-localhost}
-      APP_FRONTEND_REDIRECT_URL: https://${DOMAIN:-localhost}/
-      APP_COOKIE_SECURE: "true"
+      APP_REDIS_URL: redis://redis:6379/0
+      APP_PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:3000}
+      APP_FRONTEND_REDIRECT_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:3000}/
+      APP_COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      APP_AUTH_MODE: ${AUTH_MODE:-local}
+      APP_ENABLE_FEISHU: ${ENABLE_FEISHU:-false}
+      APP_ENABLE_PUBLIC_INTELLIGENCE: ${ENABLE_PUBLIC_INTELLIGENCE:-false}
+      APP_ENABLE_DEMO_DATA: ${ENABLE_DEMO_DATA:-false}
       APP_SESSION_SECRET: ${APP_SESSION_SECRET:?APP_SESSION_SECRET is required}
+      APP_SECRET_ENCRYPTION_KEY: ${APP_SECRET_ENCRYPTION_KEY:?APP_SECRET_ENCRYPTION_KEY is required}
+      APP_LOCAL_ADMIN_USERNAME: ${APP_LOCAL_ADMIN_USERNAME:-admin}
+      APP_LOCAL_ADMIN_PASSWORD: ${APP_LOCAL_ADMIN_PASSWORD:?APP_LOCAL_ADMIN_PASSWORD is required}
+      APP_FILE_STORAGE_ROOT: /app/data/uploads
+      APP_TENDER_STORAGE_ROOT: /app/data/uploads/tenders
+      APP_PRESENTATION_EXPORT_DIR: /app/data/exports
+      APP_INTEGRATION_STATE_DIR: /app/data/integrations
       APP_OPEN_ENRICH_SVC_URL: ${APP_OPEN_ENRICH_SVC_URL:-}
       APP_OPEN_ENRICH_SVC_TOKEN: ${APP_OPEN_ENRICH_SVC_TOKEN:-}
-      APP_PRESENTATION_EXPORT_DIR: /app/exports
-      APP_INTEGRATION_STATE_DIR: /app/integration-state
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       app:
         condition: service_healthy
     volumes:
-      - presentation_exports:/app/exports
-      - tender_artifacts:/app/tender-artifacts
-      - integration_state:/app/integration-state
+      - local_files:/app/data
+
+  frontend:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${HOST:-127.0.0.1}:${FRONTEND_PORT:-3000}:80"
+    volumes:
+      - ./Caddyfile.local:/etc/caddy/Caddyfile:ro
 
   open-enrich-sidecar:
     profiles: ["intelligence-live"]
@@ -114,8 +145,8 @@ services:
     restart: unless-stopped
     environment:
       BRIGHT_DATA_API_KEY: ${BRIGHT_DATA_API_KEY:-}
-      BRIGHT_DATA_SERP_ZONE: ${BRIGHT_DATA_SERP_ZONE:-}
-      BRIGHT_DATA_UNLOCKER_ZONE: ${BRIGHT_DATA_UNLOCKER_ZONE:-}
+      BRIGHT_DATA_SERP_ZONE: ${BRIGHT_DATA_SERP_ZONE:-serp_api1}
+      BRIGHT_DATA_UNLOCKER_ZONE: ${BRIGHT_DATA_UNLOCKER_ZONE:-web_unlocker1}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPEN_ENRICH_MODEL: ${OPEN_ENRICH_MODEL:-qwen/qwen-plus}
       APP_OPEN_ENRICH_SVC_TOKEN: ${APP_OPEN_ENRICH_SVC_TOKEN:-}
@@ -124,44 +155,9 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    expose:
-      - "8090"
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - >-
-          fetch('http://127.0.0.1:8090/healthz').then(r => {
-            if (!r.ok) process.exit(1)
-          }).catch(() => process.exit(1))
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    environment:
-      DOMAIN: ${DOMAIN:-localhost}
-    depends_on:
-      app:
-        condition: service_healthy
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+    expose: ["8090"]
 
 volumes:
   postgres_data:
   redis_data:
-  caddy_data:
-  caddy_config:
-  presentation_exports:
-  tender_artifacts:
-  integration_state:
+  local_files:

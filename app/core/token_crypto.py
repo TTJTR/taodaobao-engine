@@ -15,14 +15,15 @@ class TokenEncryptionError(RuntimeError):
 
 @lru_cache
 def get_token_cipher() -> Fernet | None:
-    configured = settings.feishu_token_encryption_key
+    configured = settings.secret_encryption_key or settings.feishu_token_encryption_key
     if not configured:
         return None
     try:
         return Fernet(configured.encode())
     except (TypeError, ValueError) as exc:
         raise TokenEncryptionError(
-            "APP_FEISHU_TOKEN_ENCRYPTION_KEY must be a valid Fernet key"
+            "APP_SECRET_ENCRYPTION_KEY (or legacy APP_FEISHU_TOKEN_ENCRYPTION_KEY) "
+            "must be a valid Fernet key"
         ) from exc
 
 
@@ -31,9 +32,9 @@ def encrypt_token(value: str | None) -> str | None:
         return value
     cipher = get_token_cipher()
     if cipher is None:
-        if settings.feishu_mode == "live":
+        if settings.enable_feishu and settings.feishu_mode == "live":
             raise TokenEncryptionError(
-                "APP_FEISHU_TOKEN_ENCRYPTION_KEY is required in live Feishu mode"
+                "APP_SECRET_ENCRYPTION_KEY is required in live Feishu mode"
             )
         return value
     return TOKEN_PREFIX + cipher.encrypt(value.encode()).decode()
@@ -45,7 +46,7 @@ def decrypt_token(value: str | None) -> str | None:
     cipher = get_token_cipher()
     if cipher is None:
         raise TokenEncryptionError(
-            "APP_FEISHU_TOKEN_ENCRYPTION_KEY is required to decrypt stored Feishu tokens"
+            "APP_SECRET_ENCRYPTION_KEY is required to decrypt stored secrets"
         )
     try:
         return cipher.decrypt(value.removeprefix(TOKEN_PREFIX).encode()).decode()
@@ -56,9 +57,9 @@ def decrypt_token(value: str | None) -> str | None:
 
 
 def validate_live_token_encryption() -> None:
-    if settings.feishu_mode == "live" and get_token_cipher() is None:
+    if settings.enable_feishu and settings.feishu_mode == "live" and get_token_cipher() is None:
         raise TokenEncryptionError(
-            "APP_FEISHU_TOKEN_ENCRYPTION_KEY is required in live Feishu mode"
+            "APP_SECRET_ENCRYPTION_KEY is required in live Feishu mode"
         )
 
 

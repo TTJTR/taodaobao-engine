@@ -97,15 +97,25 @@ class BailianEmbeddingSettings:
     def from_env(cls, env_file: Path | None = None) -> "BailianEmbeddingSettings":
         if env_file is not None:
             load_env_file(env_file)
-        api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+        api_key = (
+            os.getenv("EMBEDDING_API_KEY")
+            or os.getenv("AI_API_KEY")
+            or os.getenv("DASHSCOPE_API_KEY")
+            or ""
+        ).strip()
         if not api_key:
-            raise ModelClientError("DASHSCOPE_API_KEY is not configured")
+            raise ModelClientError("EMBEDDING_API_KEY or AI_API_KEY is not configured")
         return cls(
             api_key=api_key,
             model=os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL).strip()
             or DEFAULT_EMBEDDING_MODEL,
             dimension=int(os.getenv("EMBEDDING_DIMENSION", str(DEFAULT_EMBEDDING_DIMENSION))),
-            base_url=os.getenv("BAILIAN_BASE_URL", BAILIAN_BEIJING_BASE_URL).rstrip("/"),
+            base_url=(
+                os.getenv("EMBEDDING_BASE_URL")
+                or os.getenv("AI_BASE_URL")
+                or os.getenv("BAILIAN_BASE_URL")
+                or BAILIAN_BEIJING_BASE_URL
+            ).rstrip("/"),
             timeout_seconds=float(os.getenv("BAILIAN_TIMEOUT_SECONDS", "60")),
             max_retries=max(0, int(os.getenv("BAILIAN_MAX_RETRIES", "2"))),
             retry_backoff_seconds=max(

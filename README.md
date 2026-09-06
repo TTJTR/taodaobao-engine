@@ -1,4 +1,33 @@
-# xianjintuan-engine
+# 淘到宝引擎 · 企业知识驱动的售前决策平台
+
+面向销售与售前，将资料、客户画像、可信经验和企业能力连接到快速方案、深度研究及专家协作。
+项目强调来源审核、证据快照与后端发布门禁，当前处于 Local First 产品候选阶段。
+
+## 求职作品集
+
+| 方向 | 阅读入口 |
+|---|---|
+| 开发 / AI 应用工程 | [架构、核心实现与验证](portfolio/developer.md) |
+| AI / ToB 产品 | [产品案例、关键取舍与验收](portfolio/product/README.md) |
+| 团队成员各自展示 | [贡献说明与 GitHub 复用](portfolio/contributing.md) |
+
+作品集使用项目级事实；个人职责及实习归属需以各自贡献证据确认。
+
+## Local First 一键部署
+
+Windows 安装 Docker Desktop 后运行：
+
+```powershell
+.\scripts\start-local.ps1
+```
+
+首次启动会创建 `.env` 和本地安全凭据，自动启动前端、API、PostgreSQL、Redis 与 Worker，
+并在 API 容器启动时执行全部 Alembic 迁移。完整配置、局域网访问、备份恢复和外部服务降级见
+[本地部署说明](docs/本地部署说明.md)，问题排查见
+[本地部署故障排查](docs/本地部署故障排查.md)。
+
+当前能做什么、不能承诺什么，以及升级为企业级生产服务所需的安全、可靠性、运维和治理工作见
+[企业级能力边界与升级路线](docs/企业级能力边界与升级路线.md)。
 
 V2 后台与业务后端说明见 [docs/V2后端实现与联调说明.md](docs/V2后端实现与联调说明.md)，
 增量接口见 [docs/openapi-v2-incremental.yaml](docs/openapi-v2-incremental.yaml)，

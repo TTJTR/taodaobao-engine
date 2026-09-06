@@ -121,7 +121,11 @@ async def _connections(session: DatabaseSession, workspace_id: uuid.UUID) -> lis
             "provider": "web-search",
             "label": "公开情报搜索",
             "mode": "live",
-            "status": "configured" if bailian_search_is_configured() else "not_configured",
+            "status": "disabled"
+            if not settings.enable_public_intelligence
+            else "configured"
+            if bailian_search_is_configured()
+            else "not_configured",
             "configurable": True,
             "source": "default",
             "note": "百炼只负责发现公开来源；正文抓取、哈希、快照与人工审批由本系统完成。",
@@ -149,7 +153,9 @@ async def _connections(session: DatabaseSession, workspace_id: uuid.UUID) -> lis
             "provider": "feishu",
             "label": "飞书开放平台",
             "mode": settings.feishu_mode,
-            "status": "configured"
+            "status": "disabled"
+            if not settings.enable_feishu
+            else "configured"
             if settings.feishu_mode == "live"
             and settings.feishu_app_id
             and settings.feishu_app_secret

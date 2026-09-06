@@ -99,7 +99,7 @@ def prompt_value(label: str, current: str, *, secret: bool = False) -> str:
 
 def collect_updates(current: dict[str, str], default_base_url: str) -> dict[str, str]:
     base_url = prompt_value(
-        "公网访问地址（例如 http://8.218.59.190）",
+        "公网访问地址（例如 https://sales.example.com）",
         current.get("APP_PUBLIC_BASE_URL", default_base_url),
     ).rstrip("/")
     app_id = prompt_value("飞书 App ID", current.get("APP_FEISHU_APP_ID", ""))
@@ -136,7 +136,10 @@ def main() -> int:
     parser.add_argument(
         "--env-file", type=Path, default=Path("/opt/taodaobao/runtime.env")
     )
-    parser.add_argument("--base-url", default="http://8.218.59.190")
+    parser.add_argument(
+        "--base-url",
+        default=os.getenv("APP_PUBLIC_BASE_URL", "http://127.0.0.1:3000"),
+    )
     parser.add_argument("--check-only", action="store_true")
     args = parser.parse_args()
 

@@ -276,13 +276,15 @@ def default_bailian_search_api_key() -> str | None:
 
 
 def bailian_search_is_configured() -> bool:
-    return default_bailian_search_api_key() is not None
+    return settings.enable_public_intelligence and default_bailian_search_api_key() is not None
 
 
 async def workspace_search_provider(
     session: AsyncSession,
     workspace_id: uuid.UUID,
 ) -> BailianWebSearchAdapter | None:
+    if not settings.enable_public_intelligence:
+        return None
     row = await get_workspace_connection(session, workspace_id, "web-search")
     if row is not None:
         return BailianWebSearchAdapter(

@@ -40,6 +40,83 @@ class VerifyInvitationRequest(BaseModel):
     invitation_code: str = Field(min_length=1, max_length=256)
 
 
+class LocalLoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=512)
+
+
+@router.get("/auth/modes", summary="查询可用登录方式")
+async def get_auth_modes(request: Request) -> dict[str, object]:
+    local_enabled = settings.auth_mode in {"local", "both"}
+    feishu_enabled = (
+        settings.auth_mode in {"feishu", "both"}
+        and settings.enable_feishu
+        and bool(settings.feishu_app_id and settings.feishu_app_secret)
+    )
+    return success_response(
+        request,
+        {
+            "local": local_enabled,
+            "feishu": feishu_enabled,
+            "demo_data": settings.enable_demo_data,
+        },
+    )
+
+
+@router.post("/auth/local/login", summary="使用本地管理员账户登录")
+async def local_login(
+    payload: LocalLoginRequest,
+    request: Request,
+    response: Response,
+    session: DatabaseSession,
+    codec: SessionCodecDependency,
+    _: str = Depends(require_idempotency_key),
+) -> dict[str, object]:
+    if settings.auth_mode not in {"local", "both"}:
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "本地登录未启用",
+            status_code=503,
+        )
+    configured_username = settings.local_admin_username or ""
+    configured_password = settings.local_admin_password or ""
+    valid = hmac.compare_digest(payload.username, configured_username) and hmac.compare_digest(
+        payload.password, configured_password
+    )
+    if not valid:
+        raise AppError(
+            ErrorCode.AUTH_REQUIRED,
+            "用户名或密码不正确",
+            status_code=401,
+        )
+
+    identity_hash = hashlib.sha256(configured_username.encode()).hexdigest()[:24]
+    users = UserRepository(session, settings.local_workspace_id)
+    user = await users.get_by_feishu_user_id(f"local:{identity_hash}")
+    if user is None:
+        user = await users.create(
+            feishu_user_id=f"local:{identity_hash}",
+            name=configured_username,
+            avatar=None,
+        )
+        await session.commit()
+        await session.refresh(user)
+
+    response.set_cookie(
+        settings.session_cookie_name,
+        codec.encode(user.id, user.workspace_id),
+        max_age=settings.session_ttl_seconds,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+    return success_response(
+        request,
+        {"success": True, "access_mode": "local", "requires_restart": False},
+    )
+
+
 @router.get("/auth/invitation/status", summary="查询邀请码门禁状态")
 async def get_invitation_status(request: Request) -> dict[str, object]:
     return success_response(request, {"required": settings.invitation_required})
@@ -267,6 +344,8 @@ async def start_demo_session(
 
 
 def get_redirect_uri() -> str:
+    if settings.feishu_callback_url:
+        return settings.feishu_callback_url
     return f"{settings.public_base_url.rstrip('/')}{settings.api_prefix}/auth/feishu/callback"
 
 

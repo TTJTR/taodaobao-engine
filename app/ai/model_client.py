@@ -57,13 +57,19 @@ class BailianSettings:
     def from_env(cls, env_file: Path | None = None) -> "BailianSettings":
         if env_file is not None:
             load_env_file(env_file)
-        api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+        api_key = (
+            os.getenv("AI_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or ""
+        ).strip()
         if not api_key:
-            raise ModelClientError("DASHSCOPE_API_KEY is not configured")
+            raise ModelClientError("AI_API_KEY is not configured")
         return cls(
             api_key=api_key,
             chat_model=os.getenv("CHAT_MODEL", "qwen-plus").strip() or "qwen-plus",
-            base_url=os.getenv("BAILIAN_BASE_URL", BAILIAN_BEIJING_BASE_URL).rstrip("/"),
+            base_url=(
+                os.getenv("AI_BASE_URL")
+                or os.getenv("BAILIAN_BASE_URL")
+                or BAILIAN_BEIJING_BASE_URL
+            ).rstrip("/"),
             timeout_seconds=float(os.getenv("BAILIAN_TIMEOUT_SECONDS", "60")),
             max_retries=max(0, int(os.getenv("BAILIAN_MAX_RETRIES", "2"))),
             retry_backoff_seconds=max(

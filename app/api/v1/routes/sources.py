@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Request, status
 
 from app.api.deps import (
     AIEngineDependency,
@@ -10,6 +10,8 @@ from app.api.deps import (
     FeishuAdapterDependency,
     WorkspaceId,
 )
+from app.core.config import settings
+from app.core.errors import AppError, ErrorCode
 from app.core.idempotency import IdempotencyRoute, require_idempotency_key
 from app.core.responses import success_response
 from app.db.models import SourcePurpose, SourceStatus
@@ -70,22 +72,30 @@ async def import_text(
     session: DatabaseSession,
     current_user: CurrentUser,
     workspace_id: WorkspaceId,
-    adapter: FeishuAdapterDependency,
     ai_engine: AIEngineDependency,
+    demo_header: Annotated[str | None, Header(alias="X-Demo-Data")] = None,
     _: str = Depends(require_idempotency_key),
 ) -> dict[str, object]:
+    is_demo = (demo_header or "").strip().lower() in {"1", "true", "yes"}
+    if is_demo and not settings.enable_demo_data:
+        raise AppError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            "演示资料导入未启用",
+            status_code=503,
+        )
     result = await SourceService(session, workspace_id, current_user.id).import_text(
         title=payload.title,
         content=payload.content,
         purpose=payload.purpose,
         customer_profile_id=payload.customer_profile_id,
+        is_demo=is_demo,
     )
     background_tasks.add_task(
         run_source_job,
         result.job.id,
         result.source.id,
         workspace_id,
-        adapter,
+        None,
         ai_engine,
         current_user.feishu_access_token,
     )

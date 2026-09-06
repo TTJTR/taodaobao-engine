@@ -88,9 +88,11 @@ async def test_import_text_creates_source_and_pending_job() -> None:
         content="客户需要两周内完成试点。",
         purpose=SourcePurpose.CUSTOMER_PROFILE,
         customer_profile_id=None,
+        is_demo=True,
     )
 
     assert result.source.type == SourceType.PASTED_TEXT
     assert result.source.content == "客户需要两周内完成试点。"
+    assert result.source.is_demo is True
     assert result.job.target_id == result.source.id
     assert result.job.stage == "pending"

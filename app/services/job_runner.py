@@ -35,7 +35,7 @@ async def run_source_job(
     job_id: uuid.UUID,
     source_id: uuid.UUID,
     workspace_id: uuid.UUID,
-    feishu_adapter: FeishuAdapter,
+    feishu_adapter: FeishuAdapter | None,
     ai_engine: AIEngine,
     access_token: str | None = None,
 ) -> None:
@@ -52,6 +52,8 @@ async def run_source_job(
             await _set_stage(session, job, source, "fetching", SourceStatus.FETCHING)
             collaborators: tuple[FeishuCollaborator, ...] = ()
             if source.type == SourceType.FEISHU_DOC:
+                if feishu_adapter is None:
+                    raise RuntimeError("Feishu adapter is required for a Feishu document source")
                 if access_token is None:
                     document = await feishu_adapter.fetch_document(source.source_url or "")
                 else:
