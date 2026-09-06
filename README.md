@@ -1,118 +1,96 @@
-# 淘到宝引擎 · 企业知识驱动的售前决策平台
+# 淘到宝引擎
 
-面向销售与售前，将资料、客户画像、可信经验和企业能力连接到快速方案、深度研究及专家协作。
-项目强调来源审核、证据快照与后端发布门禁，当前处于 Local First 产品候选阶段。
+企业知识驱动型售前智能决策与协作平台。系统把企业资料、客户画像、已审核历史经验和企业原子能力连接到快速方案、Deep Research、专家协作、情报与招标及方案演练，并通过来源状态、检索快照和后端 Trust Gate 约束 AI 输出。
 
-## 求职作品集
+当前分支 `feat/local-deployment` 是 **Local First 产品候选基线**：适合本机使用、作品集展示和受控试点；尚不能直接承诺为企业级生产服务。详细边界见[企业级能力边界与升级路线](docs/企业级能力边界与升级路线.md)。
 
-| 方向 | 阅读入口 |
-|---|---|
-| 开发 / AI 应用工程 | [架构、核心实现与验证](portfolio/developer.md) |
-| AI / ToB 产品 | [产品案例、关键取舍与验收](portfolio/product/README.md) |
-| 团队成员各自展示 | [贡献说明与 GitHub 复用](portfolio/contributing.md) |
+## 快速开始
 
-作品集使用项目级事实；个人职责及实习归属需以各自贡献证据确认。
-
-## Local First 一键部署
-
-Windows 安装 Docker Desktop 后运行：
+要求：Windows 10/11、Docker Desktop（Linux containers）和 PowerShell 7。
 
 ```powershell
+git clone https://github.com/wxh042/xianjintuan-engine.git xianjintuan-engine-local
+Set-Location .\xianjintuan-engine-local
+git switch feat/local-deployment
 .\scripts\start-local.ps1
 ```
 
-首次启动会创建 `.env` 和本地安全凭据，自动启动前端、API、PostgreSQL、Redis 与 Worker，
-并在 API 容器启动时执行全部 Alembic 迁移。完整配置、局域网访问、备份恢复和外部服务降级见
-[本地部署说明](docs/本地部署说明.md)，问题排查见
-[本地部署故障排查](docs/本地部署故障排查.md)。
+首次启动会创建未跟踪的 `.env`、生成本地安全凭据、构建镜像并自动执行数据库迁移。启动后访问：
 
-当前能做什么、不能承诺什么，以及升级为企业级生产服务所需的安全、可靠性、运维和治理工作见
-[企业级能力边界与升级路线](docs/企业级能力边界与升级路线.md)。
+| 入口 | 默认地址 |
+|---|---|
+| 产品前端 | <http://127.0.0.1:3000> |
+| API | <http://127.0.0.1:8000/api/v1> |
+| API 文档 | <http://127.0.0.1:8000/docs> |
+| 健康检查 | <http://127.0.0.1:8000/api/v1/health> |
 
-V2 后台与业务后端说明见 [docs/V2后端实现与联调说明.md](docs/V2后端实现与联调说明.md)，
-增量接口见 [docs/openapi-v2-incremental.yaml](docs/openapi-v2-incremental.yaml)，
-协作上传规则见 [docs/V2_分支上传与接力规范.md](docs/V2_分支上传与接力规范.md)。
+常用命令：
 
-方案演练 AI 增强见 [docs/V2_方案演练AI增强实现与交接说明.md](docs/V2_方案演练AI增强实现与交接说明.md)，
-演练到展示稿接口建议见 [docs/V2_演练到展示稿增量契约提案.md](docs/V2_演练到展示稿增量契约提案.md)。
-
-AI-driven customer solution generation engine for the Feishu AI competition.
-
-## Backend scaffold
-
-```text
-.
-├── main.py                         # Root ASGI entry point
-├── openapi.yaml                    # Frontend/backend HTTP contract
-├── pyproject.toml
-├── app/
-│   ├── main.py                     # FastAPI app factory
-│   ├── api/v1/
-│   │   ├── router.py               # Versioned router aggregation
-│   │   └── routes/health.py        # Mounted route example
-│   ├── contracts/ai.py             # Dev A / Molly AI boundary
-│   ├── core/
-│   │   ├── config.py
-│   │   ├── errors.py
-│   │   ├── exception_handlers.py
-│   │   ├── idempotency.py
-│   │   ├── middleware.py
-│   │   └── responses.py
-│   ├── db/                         # Models, repositories, migrations
-│   ├── integrations/               # Feishu and model adapters
-│   └── services/                   # Business services and AI Harness
-└── tests/test_health.py
+```powershell
+.\scripts\start-local.ps1 -NoBuild
+.\scripts\status-local.ps1
+.\scripts\logs-local.ps1 -Service app -Follow
+.\scripts\stop-local.ps1
 ```
 
-## Run locally
+完整安装、配置、局域网访问和备份恢复见[本地部署说明](docs/本地部署说明.md)，启动异常见[故障排查](docs/本地部署故障排查.md)。
+
+## 当前运行边界
+
+- PostgreSQL、Redis、上传文件和长任务状态真实持久化，容器重启不会主动清空 Volume。
+- Chat 与 Embedding 分开配置，支持兼容 OpenAI Schema 的服务端 Provider。
+- AI、飞书、公开情报和外部展示服务未配置时明确显示 `not_configured` 或 `disabled`，不会返回 Mock 成功。
+- 示例资料明确标记 `is_demo=true`，但走与真实资料相同的导入、提取和审核流程。
+- 默认只监听 `127.0.0.1`；局域网访问必须主动配置，当前方案不适合直接暴露公网。
+
+## 可信规则
+
+1. 历史经验与企业原子能力分开管理、分开检索。
+2. 只有已审核且来源有效的资产可以参与在线检索。
+3. 原文更新、删除或权限失效后，旧资产暂停检索。
+4. 输出区分 `historical_fact`、`enterprise_capability`、`ai_inference` 和 `pending_confirmation`。
+5. 找不到企业依据时拒绝编造；每次运行保留独立检索快照。
+6. AI 的 `recommended_action` 只是建议，最终动作由后端 Trust Gate 决定。
+
+## 仓库导航
+
+| 目的 | 入口 |
+|---|---|
+| 文档总目录 | [docs/README.md](docs/README.md) |
+| 完整产品 PRD | [docs/product/README.md](docs/product/README.md) |
+| 本地部署 | [docs/本地部署说明.md](docs/本地部署说明.md) |
+| 开发与架构 | [docs/开发文档.md](docs/开发文档.md) |
+| API 契约 | [openapi.yaml](openapi.yaml) 与 `docs/openapi-*-incremental.yaml` |
+| 测试证据 | [evals/README.md](evals/README.md) 与 `docs/test-reports/` |
+| 开发求职作品集 | [portfolio/developer.md](portfolio/developer.md) |
+| 产品求职作品集 | [portfolio/product/README.md](portfolio/product/README.md) |
+| 成员贡献展示 | [portfolio/contributing.md](portfolio/contributing.md) |
+
+目录职责和维护约定见[项目结构与维护约定](docs/项目结构与维护约定.md)。
+
+## 本地非 Docker 开发
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
-uvicorn main:app --reload
-```
-
-V1 使用 pgvector。可先启动独立数据库并执行迁移：
-
-```powershell
 docker compose -f compose.dev.yaml up -d postgres
 $env:APP_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:55433/taodaobao_v1"
 python -m alembic upgrade head
-python scripts/verify_builtin_document_index.py
+uvicorn main:app --reload
 ```
 
-该命令只写入明确标记为虚构的内置验收文档，并调用真实 Embedding、pgvector
-与 `RetrievalService`。缺少数据库或模型配置时输出 `skipped`，不会回退到 Mock。
-详见 [运行时无Mock与内置文档索引验收](docs/运行时无Mock与内置文档索引验收.md)。
+Worker 需另开终端运行：
 
-V1 增量 HTTP 契约见 `docs/openapi-v1-incremental.yaml`；根目录
-`openapi.yaml` 继续作为冻结的 V0.5 前后端契约。
-
-Swagger UI is available at `http://127.0.0.1:8000/docs` and the health endpoint
-at `http://127.0.0.1:8000/api/v1/health`.
-
-V1.1 trustworthy orchestration uses a separate recoverable worker. When not using
-Docker Compose, run it alongside the API:
-
-```bash
+```powershell
 python -m app.cli.worker
 ```
 
-The trust/presentation incremental contract is documented in
-`docs/openapi-v1-incremental.yaml`; implementation and provider modes are described in
-`docs/V1.1后端可信编排与演示承接实现说明.md`.
+## 契约与安全
 
-## Deployment invitation gate
+- 根目录 `openapi.yaml` 是冻结 HTTP 契约。
+- `app/contracts/ai.py` 保留五个既定 `AIEngine` 方法；Embedding 是共享 Provider 能力。
+- `.env`、密钥、数据库、上传文件、日志和备份均不得提交到 Git。
+- 未经明确授权，不向 `main` 或原有基线分支直接推送。
 
-The login page never contains or stores an invitation code. On a Linux deployment,
-enable and rotate the gate with:
-
-```bash
-python3 scripts/configure_invitation.py --enable
-```
-
-The generated code is written to `/root/taodaobao-invitation.txt` with mode `0600`.
-The administrator can share it out of band. Verification creates a signed, short-lived,
-HttpOnly cookie that is consumed when OAuth starts. Inspect or disable the gate with
-`--check` or `--disable`; recreate the application container after changing it.
+本项目的作品集材料描述项目级事实。任何个人职责、实习归属和量化结果都应以真实贡献证据为准。
