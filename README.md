@@ -2,7 +2,7 @@
 
 企业知识驱动型售前智能决策与协作平台。系统把企业资料、客户画像、已审核历史经验和企业原子能力连接到快速方案、Deep Research、专家协作、情报与招标及方案演练，并通过来源状态、检索快照和后端 Trust Gate 约束 AI 输出。
 
-当前分支 `feat/local-deployment` 是 **Local First 产品候选基线**：适合本机使用、作品集展示和受控试点；尚不能直接承诺为企业级生产服务。详细边界见[企业级能力边界与升级路线](docs/企业级能力边界与升级路线.md)。
+当前仓库的 `main` 分支是 **Local First 产品候选基线**：适合本机使用、作品集展示和受控试点；尚不能直接承诺为企业级生产服务。详细边界见[企业级能力边界与升级路线](docs/企业级能力边界与升级路线.md)。
 
 每次推送与 Pull Request 都会运行 GitHub Actions，检查代码、回归测试、Compose 配置，并确认默认镜像不包含 PyTorch、Docling 等重型本地 AI 依赖。
 
@@ -11,9 +11,8 @@
 要求：Windows 10/11、Docker Desktop（Linux containers）和 PowerShell 7。
 
 ```powershell
-git clone https://github.com/wxh042/xianjintuan-engine.git xianjintuan-engine-local
-Set-Location .\xianjintuan-engine-local
-git switch feat/local-deployment
+git clone https://github.com/TTJTR/taodaobao-engine.git
+Set-Location .\taodaobao-engine
 .\scripts\start-local.ps1
 ```
 

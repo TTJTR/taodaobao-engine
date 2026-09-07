@@ -3,6 +3,7 @@ name: Local Docker Baseline
 on:
   push:
     branches:
+      - main
       - feat/local-deployment
   pull_request:
 
