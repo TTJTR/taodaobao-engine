@@ -1,6 +1,7 @@
 name: Local Docker Baseline
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
