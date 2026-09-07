@@ -4,6 +4,8 @@
 
 当前分支 `feat/local-deployment` 是 **Local First 产品候选基线**：适合本机使用、作品集展示和受控试点；尚不能直接承诺为企业级生产服务。详细边界见[企业级能力边界与升级路线](docs/企业级能力边界与升级路线.md)。
 
+每次推送与 Pull Request 都会运行 GitHub Actions，检查代码、回归测试、Compose 配置，并确认默认镜像不包含 PyTorch、Docling 等重型本地 AI 依赖。
+
 ## 快速开始
 
 要求：Windows 10/11、Docker Desktop（Linux containers）和 PowerShell 7。

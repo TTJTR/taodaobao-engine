@@ -1,0 +1,50 @@
+name: Local Docker Baseline
+
+on:
+  push:
+    branches:
+      - feat/local-deployment
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APP_ENV: test
+      APP_AUTH_MODE: feishu
+      APP_ENABLE_FEISHU: "true"
+      APP_ENABLE_PUBLIC_INTELLIGENCE: "true"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Lint application
+        run: python -m ruff check app tests
+
+      - name: Run regression suite
+        run: python -m pytest -q
+
+      - name: Validate Compose configuration
+        run: cp .env.example .env && docker compose config --quiet
+
+      - name: Build lightweight runtime image
+        run: docker build --target runtime --tag taodaobao-local-ci .
+
+      - name: Verify heavy parser packages are absent
+        run: |
+          docker run --rm --entrypoint python taodaobao-local-ci -c \
+            "import importlib.util; names=('torch','torchvision','docling','rapidocr'); missing={name: importlib.util.find_spec(name) is None for name in names}; print(missing); assert all(missing.values())"
