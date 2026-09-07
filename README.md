@@ -59,7 +59,8 @@ Set-Location .\taodaobao-engine
 | 目的 | 入口 |
 |---|---|
 | 文档总目录 | [docs/README.md](docs/README.md) |
-| 完整产品 PRD | [docs/product/README.md](docs/product/README.md) |
+| 当前产品 PRD | [docs/product/淘到宝引擎_本地版产品PRD.md](docs/product/淘到宝引擎_本地版产品PRD.md) |
+| 历史需求索引 | [docs/product/README.md](docs/product/README.md) |
 | 本地部署 | [docs/本地部署说明.md](docs/本地部署说明.md) |
 | 开发与架构 | [docs/开发文档.md](docs/开发文档.md) |
 | API 契约 | [openapi.yaml](openapi.yaml) 与 `docs/openapi-*-incremental.yaml` |
