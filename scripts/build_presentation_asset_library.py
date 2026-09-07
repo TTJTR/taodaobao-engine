@@ -25,7 +25,11 @@ PRESENTON_LICENSE = "licenses/PRESENTON-APACHE-2.0.txt"
 
 
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    content = path.read_bytes()
+    if path.suffix.lower() in {".css", ".html", ".json", ".md", ".svg", ".txt"}:
+        content = content.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        content = content.replace(b"\n", b"\r\n")
+    return hashlib.sha256(content).hexdigest()
 
 
 def png_size(path: Path) -> tuple[int, int]:

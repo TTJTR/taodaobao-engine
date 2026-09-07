@@ -12,6 +12,17 @@ AssetType = Literal["template", "thumbnail", "decoration", "font", "brand", "lic
 CommercialStatus = Literal["allowed", "review_required", "prohibited"]
 BrandStatus = Literal["not_applicable", "confirmed", "pending_brand_confirmation"]
 
+_TEXT_ASSET_MIME_TYPES = frozenset({"application/json", "image/svg+xml"})
+
+
+def asset_digest(path: Path, mime_type: str) -> str:
+    """Hash text assets consistently across Windows and Linux checkouts."""
+    content = path.read_bytes()
+    if mime_type.startswith("text/") or mime_type in _TEXT_ASSET_MIME_TYPES:
+        content = content.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        content = content.replace(b"\n", b"\r\n")
+    return hashlib.sha256(content).hexdigest()
+
 
 class AssetRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -84,7 +95,7 @@ class AssetCatalog:
                 continue
             if not license_path.is_file():
                 errors.append(f"MISSING_LICENSE:{asset.asset_id}")
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            digest = asset_digest(path, asset.mime_type)
             if digest != asset.sha256:
                 errors.append(f"HASH_MISMATCH:{asset.asset_id}")
             hashes.setdefault(digest, []).append(asset.asset_id)

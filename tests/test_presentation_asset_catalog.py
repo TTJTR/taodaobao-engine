@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 
 from app.presentation.assets import AssetCatalog
@@ -10,6 +11,23 @@ def test_checked_in_asset_catalog_is_complete_and_safe() -> None:
     assert catalog.validate() == []
     assert len(catalog.runtime_assets("template")) == 3
     assert not any(asset.asset_type == "brand" for asset in catalog.runtime_assets())
+
+
+def test_asset_hashes_are_stable_with_linux_line_endings(tmp_path: Path) -> None:
+    source = AssetCatalog().root
+    root = tmp_path / "catalog"
+    shutil.copytree(source, root)
+    manifest = AssetCatalog(root).load()
+
+    for asset in manifest.assets:
+        if asset.mime_type.startswith("text/") or asset.mime_type in {
+            "application/json",
+            "image/svg+xml",
+        }:
+            path = root / asset.local_path
+            path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
+
+    assert AssetCatalog(root).validate() == []
 
 
 def test_catalog_rejects_unconfirmed_brand_asset_from_runtime(tmp_path: Path) -> None:
