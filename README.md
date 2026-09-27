@@ -63,6 +63,7 @@ Set-Location .\taodaobao-engine
 | 历史需求索引 | [docs/product/README.md](docs/product/README.md) |
 | 本地部署 | [docs/本地部署说明.md](docs/本地部署说明.md) |
 | 开发与架构 | [docs/开发文档.md](docs/开发文档.md) |
+| 项目与数据架构报告 | [docs/项目架构与数据架构报告.md](docs/项目架构与数据架构报告.md) |
 | API 契约 | [openapi.yaml](openapi.yaml) 与 `docs/openapi-*-incremental.yaml` |
 | 测试证据 | [evals/README.md](evals/README.md) 与 `docs/test-reports/` |
 | 开发求职作品集 | [portfolio/developer.md](portfolio/developer.md) |
